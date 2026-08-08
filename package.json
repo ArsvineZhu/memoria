@@ -1,0 +1,17 @@
+{
+  "name": "memoria",
+  "version": "0.1.0",
+  "description": "AI memory system with TagMemo wave algorithm, RiverMemo topology, EPA semantic analysis, and residual pyramid",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "@dqbd/tiktoken": "^1.0.22",
+    "better-sqlite3": "^12.4.1",
+    "chokidar": "^3.5.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

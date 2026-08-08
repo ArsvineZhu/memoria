@@ -3,5 +3,9 @@ rust-vexus-lite/node_modules/
 rust-vexus-lite/target/
 examples/demo/demo-data/
 examples/real-embed/.env
+/.env
+*.log
+.DS_Store
+Thumbs.db
 *.sqlite
 *.usearch

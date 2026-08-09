@@ -49,7 +49,7 @@ class EmbeddingProvider {
 |----------|------|----------------|
 | 入库 chunk 嵌入 | `src/stages/ingestion/chunk-embedder.js:22` — `embedBatch(chunks)` | 无 options → DashScope 使用默认 `textType: 'document'` |
 | 入库 tag 嵌入 | `src/stages/ingestion/tag-embedder.js:22` — `embedBatch(tags)` | 同上（默认 document） |
-| 检索 query 嵌入 | `src/stages/retrieval/query-embedder.js:21` — `embedBatch(texts, { textType: 'query' })` | **显式传 `textType: 'query'`** |
+| 检索 query 嵌入 | `src/stages/retrieval/query-embedder.js:71` — `embedBatch(texts, { textType: 'query' })` | **显式传 `textType: 'query'`** |
 | TDB 冷知识库 | `src/tdb/tdb-engine.js:244/380` — `embedBatch(batch)` / `embedBatch([qText])` | 无 options（默认 document） |
 
 - DashScope 为不对称检索语义：入库用 `document`、检索用 `query`（源码注释

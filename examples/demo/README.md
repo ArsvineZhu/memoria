@@ -16,7 +16,7 @@ node main.js
 # 或 npm start
 ```
 
-一键运行，零网络、零配置、零外部依赖（无需 API Key），结果可复现。
+零网络、零 API Key，一键运行、结果可复现 —— 运行前提：仓库根已完成 `npm install` 且 `rust-vexus-lite` 预编译二进制就位（随仓库分发）。
 
 ## 文件说明
 

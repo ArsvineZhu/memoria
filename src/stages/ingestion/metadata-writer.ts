@@ -95,8 +95,54 @@ class MetadataWriterStage extends Stage {
       : [];
     const tagNames: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
 
-    // 1. Collect existing chunk ids BEFORE replacement so the vector index
-    //    can remove stale vectors (ids are gone after insertChunks runs).
+    // Prepare serialized rows once for either the atomic or compatibility path.
+    const chunkRows = chunkEntries.map((entry) => ({
+      chunkIndex: entry.chunkIndex,
+      content: entry.content,
+      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
+    }));
+    const tagRows = tagEntries.map((entry) => ({
+      name: entry.name,
+      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
+    }));
+    const sourceJson = serializeDocumentJson(fileInfo.documentSource, "source");
+    const metadataJson = serializeDocumentJson(fileInfo.documentMetadata, "metadata");
+
+    if (typeof metadataStore.replaceDocumentState === "function") {
+      const replacement = await metadataStore.replaceDocumentState({
+        file: {
+          path: relPath,
+          diaryName,
+          checksum,
+          mtime,
+          size,
+          documentId: fileInfo.documentId,
+          revision: fileInfo.revision,
+          sourceJson,
+          metadataJson,
+        },
+        chunks: chunkRows,
+        tags: tagRows,
+        orderedTagNames: tagNames,
+      });
+
+      await this._maybeWriteCheckpoint(
+        fileInfo,
+        { chunkIds: replacement.chunkIds, tagIds: replacement.tagIds },
+        ctx,
+      );
+
+      return {
+        ...fileInfo,
+        fileId: replacement.fileId,
+        chunkIds: replacement.chunkIds,
+        tagIds: replacement.tagIds,
+        removedChunkIds: replacement.removedChunkIds,
+      };
+    }
+
+    // Compatibility path: collect old ids and use the legacy CRUD sequence
+    // only when an injected store does not expose replaceDocumentState.
     let removedChunkIds: number[] = [];
     const existing = await metadataStore.getFileByPath(relPath);
     if (existing) {
@@ -104,7 +150,6 @@ class MetadataWriterStage extends Stage {
       removedChunkIds = oldChunks.map((c) => c.id);
     }
 
-    // 2. Upsert the file row (provider refreshes updated_at).
     const fileId = await metadataStore.upsertFile({
       path: relPath,
       diaryName,
@@ -113,25 +158,15 @@ class MetadataWriterStage extends Stage {
       size,
       documentId: fileInfo.documentId,
       revision: fileInfo.revision,
-      sourceJson: serializeDocumentJson(fileInfo.documentSource, "source"),
-      metadataJson: serializeDocumentJson(fileInfo.documentMetadata, "metadata"),
+      sourceJson,
+      metadataJson,
     });
     if (fileId === null)
       throw new Error(`Unable to persist file metadata for ${relPath}`);
 
-    // 3. Insert chunk rows; vectors are serialized to BLOB buffers.
-    const chunkRows = chunkEntries.map((entry) => ({
-      chunkIndex: entry.chunkIndex,
-      content: entry.content,
-      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
-    }));
     const chunkIds = await metadataStore.insertChunks(fileId, chunkRows);
 
     // 4. Upsert tag rows; ids are aligned with tagEntries.
-    const tagRows = tagEntries.map((entry) => ({
-      name: entry.name,
-      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
-    }));
     const newTagIds = await metadataStore.upsertTags(tagRows);
     const tagIdByName = new Map<string, number>();
     tagEntries.forEach((entry: TagEntry, i: number) => {

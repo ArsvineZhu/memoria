@@ -117,6 +117,49 @@ test("MetadataWriterStage upserts file metadata and returns fileId", async (t) =
   assert.ok(file.updated_at! > 0, "updated_at should be populated");
 });
 
+test("MetadataWriterStage uses the atomic replacement capability when available", async (t) => {
+  const store = newMetadataStore();
+  t.after(() => store.close());
+  const originalReplace = store.replaceDocumentState.bind(store);
+  let calls = 0;
+  store.replaceDocumentState = async (replacement) => {
+    calls += 1;
+    return originalReplace(replacement);
+  };
+
+  const out = await new MetadataWriterStage().process(
+    fileInfo({ documentId: "stage:atomic", revision: "1" }),
+    makeCtx({}, { metadataStore: store }),
+  );
+
+  assert.equal(calls, 1);
+  assert.ok(out.fileId);
+  assert.equal((await store.getChunksByFileId(out.fileId!)).length, 2);
+});
+
+test("MetadataWriterStage keeps the CRUD compatibility path without atomic capability", async (t) => {
+  const store = newMetadataStore();
+  t.after(() => store.close());
+  const compatibilityStore = new Proxy(store, {
+    get(target, property, receiver) {
+      if (property === "replaceDocumentState") return undefined;
+      return Reflect.get(target, property, receiver);
+    },
+  }) as unknown as MetadataStoreContract;
+
+  const out = await new MetadataWriterStage().process(
+    fileInfo({ documentId: "stage:compat", revision: "1" }),
+    makeCtx({}, { metadataStore: compatibilityStore }),
+  );
+
+  assert.ok(out.fileId);
+  assert.equal((await store.getChunksByFileId(out.fileId!)).length, 2);
+  assert.deepStrictEqual(
+    (await store.getFileTags(out.fileId!)).map((tag) => tag.name),
+    ["alpha", "beta"],
+  );
+});
+
 test("MetadataWriterStage writes chunk rows with vectors as BLOBs", async (t) => {
   const store = newMetadataStore();
   t.after(() => store.close());

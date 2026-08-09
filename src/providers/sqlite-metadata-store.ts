@@ -5,6 +5,8 @@ import BetterSqlite3 from "better-sqlite3";
 import type {
   ChunkMetadataInput,
   ChunkRow,
+  DocumentStateReplacement,
+  DocumentStateReplacementResult,
   FileMetadataInput,
   FileRow,
   FileTagRow,
@@ -108,6 +110,10 @@ const SCHEMA_SQL = `
     );
 `;
 
+const METADATA_GENERATION_KEY = "memoria.metadata_generation";
+const VECTOR_GENERATION_KEY = "memoria.vector_generation";
+const VECTOR_DIRTY_KEY = "memoria.vector_dirty";
+
 /**
  * SQLite-backed metadata store using better-sqlite3.
  *
@@ -184,6 +190,15 @@ class SqliteMetadataStore extends MetadataStore {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_files_document_id
         ON files(document_id) WHERE document_id IS NOT NULL;
     `);
+    this.db
+      .prepare("INSERT OR IGNORE INTO kv_store (key, value) VALUES (?, ?)")
+      .run(METADATA_GENERATION_KEY, "0");
+    this.db
+      .prepare("INSERT OR IGNORE INTO kv_store (key, value) VALUES (?, ?)")
+      .run(VECTOR_GENERATION_KEY, "0");
+    this.db
+      .prepare("INSERT OR IGNORE INTO kv_store (key, value) VALUES (?, ?)")
+      .run(VECTOR_DIRTY_KEY, "1");
   }
 
   // ── File CRUD ───────────────────────────────────────────────
@@ -294,6 +309,143 @@ class SqliteMetadataStore extends MetadataStore {
     })();
 
     return ids;
+  }
+
+  async replaceDocumentState(
+    replacement: DocumentStateReplacement,
+  ): Promise<DocumentStateReplacementResult> {
+    const { file, chunks, tags, orderedTagNames } = replacement;
+    const now = Math.floor(Date.now() / 1000);
+
+    const result = this.db.transaction(() => {
+      const existingByDocument = file.documentId
+        ? (this.db
+            .prepare("SELECT * FROM files WHERE document_id = ?")
+            .get(file.documentId) as FileQueryRow | undefined)
+        : undefined;
+      const existing =
+        existingByDocument ||
+        (this.db
+          .prepare("SELECT * FROM files WHERE path = ?")
+          .get(file.path) as FileQueryRow | undefined);
+      const removedChunkIds = existing
+        ? (this.db
+            .prepare("SELECT id FROM chunks WHERE file_id = ? ORDER BY id")
+            .all(existing.id) as Array<{ id: number }>).map((row) => Number(row.id))
+        : [];
+
+      let fileId: number;
+      const fileValues = [
+        file.path,
+        file.diaryName,
+        file.checksum,
+        file.mtime,
+        file.size,
+        now,
+        file.documentId ?? null,
+        file.revision ?? null,
+        file.sourceJson ?? null,
+        file.metadataJson ?? null,
+      ] as const;
+      if (existing) {
+        this.db
+          .prepare(
+            `UPDATE files SET
+              path = ?, diary_name = ?, checksum = ?, mtime = ?, size = ?,
+              updated_at = ?, document_id = ?, revision = ?, source_json = ?,
+              metadata_json = ?
+            WHERE id = ?`,
+          )
+          .run(...fileValues, existing.id);
+        fileId = existing.id;
+      } else {
+        const insertFile = this.db.prepare(
+          `INSERT INTO files (
+            path, diary_name, checksum, mtime, size, updated_at,
+            document_id, revision, source_json, metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        const info = insertFile.run(...fileValues);
+        fileId = Number(info.lastInsertRowid);
+      }
+
+      const deleteChunks = this.db.prepare("DELETE FROM chunks WHERE file_id = ?");
+      deleteChunks.run(fileId);
+      const insertChunk = this.db.prepare(
+        "INSERT INTO chunks (file_id, chunk_index, content, vector) VALUES (?, ?, ?, ?)",
+      );
+      const chunkIds: number[] = [];
+      for (const chunk of chunks) {
+        const info = insertChunk.run(
+          fileId,
+          chunk.chunkIndex,
+          chunk.content,
+          chunk.vector ?? null,
+        );
+        chunkIds.push(Number(info.lastInsertRowid));
+      }
+
+      const insertTag = this.db.prepare(
+        "INSERT OR IGNORE INTO tags (name, vector) VALUES (?, ?)",
+      );
+      const updateTagVector = this.db.prepare("UPDATE tags SET vector = ? WHERE name = ?");
+      const selectTag = this.db.prepare("SELECT id, vector FROM tags WHERE name = ?");
+      const tagIdsByName = new Map<string, number>();
+      const tagIds: number[] = [];
+      for (const tag of tags) {
+        insertTag.run(tag.name, tag.vector ?? null);
+        if (tag.vector !== null) updateTagVector.run(tag.vector, tag.name);
+        const row = selectTag.get(tag.name) as { id: number; vector?: Buffer | null } | undefined;
+        if (!row) continue;
+        const tagId = Number(row.id);
+        tagIds.push(tagId);
+        tagIdsByName.set(tag.name, tagId);
+      }
+
+      const fileTagIds: number[] = [];
+      for (const tagName of orderedTagNames) {
+        let tagId = tagIdsByName.get(tagName);
+        if (tagId === undefined) {
+          const stored = selectTag.get(tagName) as
+            | { id: number; vector?: Buffer | null }
+            | undefined;
+          if (stored?.vector != null) tagId = Number(stored.id);
+        }
+        if (tagId !== undefined) fileTagIds.push(tagId);
+      }
+
+      this.db.prepare("DELETE FROM file_tags WHERE file_id = ?").run(fileId);
+      const insertFileTag = this.db.prepare(
+        "INSERT INTO file_tags (file_id, tag_id, position) VALUES (?, ?, ?)",
+      );
+      fileTagIds.forEach((tagId, index) => {
+        insertFileTag.run(fileId, tagId, index + 1);
+      });
+
+      const generationRow = this.db
+        .prepare("SELECT value FROM kv_store WHERE key = ?")
+        .get(METADATA_GENERATION_KEY) as KeyValueRow | undefined;
+      const currentGeneration = Number.parseInt(generationRow?.value ?? "0", 10);
+      const metadataGeneration =
+        Number.isSafeInteger(currentGeneration) && currentGeneration >= 0
+          ? currentGeneration + 1
+          : 1;
+      const setKv = this.db.prepare(
+        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+      );
+      setKv.run(METADATA_GENERATION_KEY, String(metadataGeneration));
+      setKv.run(VECTOR_DIRTY_KEY, "1");
+
+      return {
+        fileId,
+        chunkIds,
+        tagIds,
+        removedChunkIds,
+        metadataGeneration,
+      };
+    })();
+
+    return result;
   }
 
   override async getChunksByFileId(fileId: number): Promise<ChunkRow[]> {

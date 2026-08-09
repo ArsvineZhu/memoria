@@ -654,6 +654,38 @@ export interface TagMetadataInput {
   vector: Buffer | null;
 }
 
+export interface DocumentStateReplacement {
+  file: {
+    path: string;
+    diaryName: string;
+    checksum: string;
+    mtime: number;
+    size: number;
+    documentId?: string;
+    revision?: string;
+    sourceJson?: string | null;
+    metadataJson?: string | null;
+  };
+  chunks: readonly {
+    chunkIndex: number;
+    content: string;
+    vector: Buffer | null;
+  }[];
+  tags: readonly {
+    name: string;
+    vector: Buffer | null;
+  }[];
+  orderedTagNames: readonly string[];
+}
+
+export interface DocumentStateReplacementResult {
+  fileId: number;
+  chunkIds: number[];
+  tagIds: number[];
+  removedChunkIds: number[];
+  metadataGeneration: number;
+}
+
 export interface HealthStatus {
   healthy: boolean;
   issues: string[];
@@ -674,6 +706,9 @@ export interface MetadataStoreContract {
     fileId: number,
     chunks: readonly ChunkMetadataInput[],
   ): Promise<number[]>;
+  replaceDocumentState?(
+    replacement: DocumentStateReplacement,
+  ): Promise<DocumentStateReplacementResult>;
   getChunksByFileId(fileId: number): Promise<ChunkRow[]>;
   getChunkById(id: number): Promise<ChunkRow | null>;
   getAllChunks(): Promise<ChunkRow[]>;

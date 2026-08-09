@@ -121,6 +121,8 @@ export type {
   ChunkCandidate,
   ChunkEntry,
   DeleteEnvelope,
+  DocumentStateReplacement,
+  DocumentStateReplacementResult,
   EmbeddingOptions,
   EmbeddingProvider,
   EmbeddingProviderContract,

@@ -74,7 +74,7 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
 2. **initialize()（异步，幂等）**：并发调用共享同一次执行（`_initPromise`）：
    按需 dynamic import 并创建缺失 Provider → 绑定 `PipelineContext` → 读
    `rag_params.json` → `_applyRagParamsToConfig` → 读取 generation/dirty。clean
-   fast path 调用 `validatePersistedIndexes()`，由 Vexus 将所有 expected index
+   fast path 调用 `restorePersistedIndexes()`，由 Vexus 将所有 expected index
    原子加载并注册到内存 Map；验证失败或状态 dirty/stale 时先调用可选的
    `resetDerivedState()`，再以 SQLite authority 的 bulk rows 重建并 flush。
 3. **摄入时序（单文档/单文件）**：逻辑文档由引擎生成确定性内部路径并带上
@@ -90,6 +90,21 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
    只有 flush 成功且 vector state 完整时才把 generation 标记 clean，之后关闭内置
    SQLite。任一步 flush/close failure 都会形成 lifecycle failure；若资源仍可重试，
    引擎回到 `ready`，不会伪装成 clean/closed。
+
+### 可靠性不变量（MemoryEngine 与 TDBEngine 共用）
+
+- SQLite authority commits atomically：权威文件、分块、向量 BLOB（以及主引擎的标签关系）在单事务内提交。
+- Partial embeddings never commit：嵌入批次缺项、维度错误或非有限值时，事务不会写入新的文档版本。
+- Persisted vector indexes are derived/rebuildable；权威 SQLite 内容足以重建向量索引。
+- Persisted dirty state is separate from current in-memory completeness：磁盘 generation/dirty 标记与本次进程的向量完整性分别维护。
+- A failed vector mutation blocks normal vector search until reconciliation；失败后的搜索先完成恢复。
+- Reconciliation plans authority state before destructive reset：读取、解码和校验计划成功前，不清空当前 live index。
+- Shutdown rejects new operations and drains already-started public operations：进入 `closing` 后不接收新操作，已开始的操作完成后才关闭资源。
+- Explicit search scope applies to every retrieval source；vector、BM25 与最终 hydration 使用同一解析范围。
+- No explicit scope means all authoritative content indexes/libraries；仅在 scope discovery 不可用时才使用 `Root` compatibility fallback。
+- Time decay has exactly one owner: `TimeDecayStage`；关闭时执行零次，开启时执行一次。
+
+TDB 的 `chunks.vector` 列通过幂等 migration 加入旧库。旧行没有可信向量时，初始化会执行一次受校验的 embedding backfill；backfill 失败会保持 dirty 并让初始化失败，不会报告虚假的 `ready`。
 
 ## 3. 组件分层
 
@@ -113,26 +128,27 @@ search(query, options)
   │
   ├─[1] queryEmbedder        查询嵌入（含查询扩展 queryExpansion、epsilon 掩码）
   ├─[2] queryVectorBridge    发布主查询向量（内部阶段，无同名文件）
-  ├─[3] vectorSearcher       向量召回（日记索引逐源 KNN，按 topK 合并）
-  ├─[4] bm25Searcher         BM25 稀疏召回（全库，按 bm25PoolK 截断）
-  ├─[5] candidateMerger      融合：双路归一化到 [0,1] → 加权和（vectorWeight +
+  ├─[3] searchScopeResolver   解析一次权威索引范围，供所有召回源复用
+  ├─[4] vectorSearcher       向量召回（日记索引逐源 KNN，按 topK 合并）
+  ├─[5] bm25Searcher         BM25 稀疏召回（同一解析范围，按 bm25PoolK 截断）
+  ├─[6] candidateMerger      融合：双路归一化到 [0,1] → 加权和（vectorWeight +
   │                            bm25Weight）→ 去重 → minScore → topK 截断
   │
-  ├─[6] epaProjector         ● EPA 语义深度信号（投影 / 主轴 / 共振）
-  ├─[7] residualPyramid      ● 残差金字塔分解（覆盖度 / 新颖度）
-  ├─[8] tagMemoV9            标签波传播（浪潮激活）           [配置门]
-  ├─[9] tagMemoV10           双尺度场扩散（V10）              [配置门]
-  ├─[10] riverMemo            河流状态累计 + 机态重排            [配置门]
-  ├─[11] tagExpander         标签驱动候选扩展                  [配置门]
-  ├─[12] vectorReshaper      余弦向量重排                      [配置门]
+  ├─[7] epaProjector         ● EPA 语义深度信号（投影 / 主轴 / 共振）
+  ├─[8] residualPyramid      ● 残差金字塔分解（覆盖度 / 新颖度）
+  ├─[9] tagMemoV9            标签波传播（浪潮激活）           [配置门]
+  ├─[10] tagMemoV10           双尺度场扩散（V10）              [配置门]
+  ├─[11] riverMemo            河流状态累计 + 机态重排            [配置门]
+  ├─[12] tagExpander         标签驱动候选扩展                  [配置门]
+  ├─[13] vectorReshaper      余弦向量重排                      [配置门]
   │
-  ├─[13] resultDeduplicator  ● 硬去重 + 语义去重（阈值 0.92）
-  ├─[14] externalReranker    LLM/外部排序器                    [配置门]
-  ├─[15] timeDecay           时效衰减 0.5^(age/半衰期)          [配置门]
-  ├─[16] truncator           topK / 内容长度截断               [配置门]
-  ├─[17] expander            同文件关联块扩展                  [配置门]
+  ├─[14] resultDeduplicator  ● 硬去重 + 语义去重（阈值 0.92）
+  ├─[15] externalReranker    LLM/外部排序器                    [配置门]
+  ├─[16] timeDecay           时效衰减 0.5^(age/半衰期)          [配置门]
+  ├─[17] truncator           topK / 内容长度截断               [配置门]
+  ├─[18] expander            同文件关联块扩展                  [配置门]
   │
-  └─[18] resultFormatter     结果信封（格式化 + 元数据补全）→ results/resultCount
+  └─[19] resultFormatter     结果信封（格式化 + 元数据补全）→ results/resultCount
 ```
 
 - ● = 默认开启（`epaProjectionEnabled=true`、`residualPyramidEnabled=true`、

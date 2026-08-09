@@ -62,7 +62,7 @@ import { createRequire } from 'node:module';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createMemoryEngine } from 'memoria';
+import { createMemoryEngine, TDBEngine } from 'memoria';
 import FilesystemIngestionAdapter from 'memoria/adapters/filesystem';
 import { MemoriaError } from 'memoria/errors';
 import OpenAIEmbeddingProvider from 'memoria/providers/openai';
@@ -70,8 +70,13 @@ import DashScopeEmbeddingProvider from 'memoria/providers/dashscope';
 
 const require = createRequire(import.meta.url);
 const cjs = require('memoria');
+const esm = await import('memoria');
 assert.equal(Object.keys(cjs).length, 41);
+assert.deepEqual(Object.keys(cjs).sort(), Object.keys(esm).sort());
 assert.equal(typeof createMemoryEngine, 'function');
+assert.equal(typeof TDBEngine, 'function');
+assert.equal(typeof cjs.createMemoryEngine, 'function');
+assert.equal(typeof cjs.TDBEngine, 'function');
 assert.equal(typeof FilesystemIngestionAdapter, 'function');
 assert.equal(typeof MemoriaError, 'function');
 assert.equal(typeof OpenAIEmbeddingProvider, 'function');
@@ -79,9 +84,11 @@ assert.equal(typeof DashScopeEmbeddingProvider, 'function');
 
 const root = mkdtempSync(join(tmpdir(), 'memoria-consumer-runtime-'));
 const dimension = 8;
+let embeddingCalls = 0;
 const embeddingProvider = {
   getDimension: () => dimension,
   async embedBatch(texts = []) {
+    embeddingCalls += 1;
     return texts.map(text => new Float32Array(dimension).fill(text.length || 1));
   },
 };
@@ -99,6 +106,15 @@ const ingested = await engine.ingest({
 });
 assert.equal(ingested.documentId, 'consumer:document');
 assert.notEqual(ingested.skipped, true);
+const callsAfterIngest = embeddingCalls;
+const metadataOnly = await engine.upsert({
+  id: 'consumer:document',
+  content: 'packed consumer content',
+  revision: '2',
+  metadata: { source: 'metadata-only' },
+});
+assert.equal(metadataOnly.chunkIds.length, 0);
+assert.equal(embeddingCalls, callsAfterIngest);
 const search = await engine.search('packed consumer');
 assert.ok(search.results.length >= 1);
 assert.equal(search.results[0]?.documentId, 'consumer:document');
@@ -117,6 +133,44 @@ const reopenedRemoved = await reopened.remove('consumer:document');
 assert.equal(reopenedRemoved.deleted, true);
 assert.equal((await reopened.search('packed consumer')).results.length, 0);
 await reopened.close();
+
+const tdbRoot = join(root, 'tdb-knowledge');
+const tdbStorePath = join(root, 'tdb-indices');
+const tdbDbPath = join(root, 'tdb.sqlite');
+const tdbConfig = {
+  tdbEnabled: true,
+  tdbDimension: dimension,
+  tdbRootPath: tdbRoot,
+  tdbStorePath,
+  tdbDbPath,
+  tdbEmbeddingBatchSize: 2,
+};
+const tdbEmbeddingProvider = {
+  getDimension: () => dimension,
+  async embedBatch(texts = []) {
+    return texts.map(text => new Float32Array(dimension).fill(text.length || 1));
+  },
+};
+const tdb = new TDBEngine({ config: tdbConfig, embeddingProvider: tdbEmbeddingProvider });
+assert.equal(await tdb.initialize(), true);
+await tdb.upsertText('packed TDB cold knowledge', {
+  library: 'facts',
+  path: 'facts/packed.md',
+});
+const tdbSearch = await tdb.search('packed TDB cold knowledge');
+assert.ok(tdbSearch.results.length >= 1);
+assert.equal(tdbSearch.results[0]?.library, 'facts');
+await tdb.close();
+
+const reopenedTdb = new TDBEngine({
+  config: tdbConfig,
+  embeddingProvider: tdbEmbeddingProvider,
+});
+assert.equal(await reopenedTdb.initialize(), true);
+const reopenedTdbSearch = await reopenedTdb.search('packed TDB cold knowledge');
+assert.ok(reopenedTdbSearch.results.length >= 1);
+assert.equal(reopenedTdbSearch.results[0]?.library, 'facts');
+await reopenedTdb.close();
 
 const packageRoot = dirname(dirname(require.resolve('memoria')));
 const native = require(join(packageRoot, 'rust-vexus-lite'));

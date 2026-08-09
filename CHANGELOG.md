@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 完成最终可靠性 remediation：partial embedding 不再提交，metadata-only 更新不重嵌入，
+  SQLite document replacement/TDB replacement 原子化；主引擎与 TDB 均增加 active-operation
+  drain、显式生命周期、失败恢复与结构化错误边界。
+- 统一 vector/BM25/hydration 的显式 scope；无 scope 时检索全部 authority index/library，
+  `Root` 仅作为 scope discovery 不可用时的兼容回退；`TimeDecayStage` 是唯一衰减执行者。
+- TDB `chunks.vector` 支持幂等迁移与 legacy backfill；dirty 状态、generation、clean reopen
+  restore 与失败重建均有本地回归覆盖；packed consumer 增加 CJS/ESM、metadata-only、TDB
+  close/reopen 与 deterministic semantic search 验证。
 - 修复 generation clean reopen 的 persisted Vexus index 注册、`indexLoadEnabled=false`
   回退，以及全量 SQLite rebuild 前的 derived-state reset，避免 stale diary index
   复活 ghost vectors；packed consumer 现在覆盖 close → reopen → vector recall。

@@ -121,7 +121,7 @@ clean，并使 `close()` 抛 `MemoriaError("lifecycle", ...)`。内置
 - `memoria.vector_dirty`
 
 当 `vector_dirty=0` 且两个 generation 相等时，走 clean fast path：从 SQLite
-一次读取 expected index names，调用 `validatePersistedIndexes()`。Vexus 会对每个
+一次读取 expected index names，调用 `restorePersistedIndexes()`。Vexus 会对每个
 预期名称检查 `.usearch` 文件、`.meta.json` dimension、native stats dimension，
 并调用 `VexusIndex.load()`；所有 index 成功后才把临时 Map 原子提交到
 `this.indices`。因此 clean reopen 后 search 直接使用已注册的内存 index，search
@@ -149,15 +149,15 @@ MetadataStore 也继续走逐行 fallback；内置 SQLite 始终走 bulk/atomic 
 revision 或 content 改变时替换同一 files 行及其 chunks。`remove(documentId)` 不依赖
 原始文件路径。
 
-## 6. 索引加载边界（getOrCreateIndex 与 clean validation）
+## 6. 索引加载边界（getOrCreateIndex 与 clean restore）
 
 `getOrCreateIndex(indexName)` 只服务于写入时创建/取得一个内存索引；它仍可在
 兼容写路径发现旧文件时尝试 `VexusIndex.load()`，失败则创建新空索引。它不是
 initialize 的 recovery authority，也不是 search 的隐式加载机制。`search()` 只查
-已在 `VexusVectorStore.indices` 中的 index；clean initialize 已通过 validation
+已在 `VexusVectorStore.indices` 中的 index；clean initialize 已通过 restore
 把它们注册，rebuild 则从 SQLite 重新生成。
 
-`validatePersistedIndexes()` 在 `indexLoadEnabled=false` 时直接返回 false，确保
+`restorePersistedIndexes()` 在 `indexLoadEnabled=false` 时直接返回 false，确保
 系统改走 SQLite rebuild。验证采用临时 Map，任一 index 失败都不会提交该轮临时
 加载结果，也不会修改已有 Map。对应回归覆盖 clean close → reopen 的真实向量 recall、
 多 index 原子提交和禁用磁盘加载。
@@ -224,7 +224,11 @@ demo-data/
 ## 10. TDB 冷知识库（简要）
 
 `src/tdb/` 复用同一套持久化约定：`TDBStore`（better-sqlite3，`files`
-表以 `(library, path)` 唯一、`chunks` 存 `library/path` 与节点 id，
-tdb-store.ts:12–40）＋ `VexusVectorStore`（storePath 取
-`config.tdbStorePath`，tdb-engine.ts:81）。TDB 仍复用 close 前 flush；主 MemoryEngine
-的 generation/dirty fast path 与 authority rebuild 规则不自动改变 TDB 专用管线。
+表以 `(library, path)` 唯一、`chunks` 存 `library/path`、节点 id 与 `vector BLOB`）
+＋ `VexusVectorStore`（storePath 取 `config.tdbStorePath`）。TDB 的 `chunks.vector`
+列通过幂等 migration 添加；旧库中 vector 为空的行会在启动恢复时按 batch 重新嵌入，
+并在维度、有限性和批次完整性校验通过后写回 SQLite。backfill 或索引应用失败时
+`tdb.vector_dirty` 保持为 `1`，初始化失败，不会把引擎标记为 ready。clean generation
+且所有 persisted index 可恢复时，TDB 直接调用 `restorePersistedIndexes()`；否则从
+SQLite vector authority 计划并重建。close 前仍会 flush，并只在向量状态完整时标记
+TDB generation clean。

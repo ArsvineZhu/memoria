@@ -79,6 +79,8 @@ test("compiled ESM package preserves the public export surface", async () => {
   assert.deepStrictEqual(Object.keys(esmApi), [...EXPECTED_EXPORTS].sort());
   assert.deepStrictEqual(Object.keys(cjsApi).sort(), Object.keys(esmApi));
   assert.strictEqual(Object.keys(cjsApi).length, 41);
+  assert.equal(typeof esmApi.TDBEngine, "function");
+  assert.strictEqual(cjsApi.TDBEngine, esmApi.TDBEngine);
 });
 
 test("public declarations do not pull the native Vexus type into metadata APIs", async () => {

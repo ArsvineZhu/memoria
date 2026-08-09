@@ -17,6 +17,9 @@
 | 6   | 重启后索引内容缺失（`getOrCreateIndex` 找不到 .usearch，建了空索引）                 | 之前进程未 `close()`（定时器未到）或 `storePath` 被清；懒加载只在*文件存在*时读回（vexus-vector-store.ts:56–73） | 检查 `storePath` 下 `index_*.usearch` 是否存在；优雅停机必须 `engine.close()`/`adapter.shutdown()`（flushPendingSaves）；目录被清则只能重灌                   |
 | 7   | `Failed to load native binding` / `Unsupported ...` 于 rust-vexus-lite               | 本平台无预编译 `.node`（win32-x64-msvc、linux-x64-gnu/musl、linux-arm64-gnu/musl、darwin-arm64 已提供）          | 用含 Rust 工具链环境自行构建：`cd rust-vexus-lite && pnpm exec napi build --platform --release`；跨平台分发时携带对应 `.node` 文件                            |
 | 8   | 记忆召回演示（`examples/real-embed`）无输出、以 `✖ 未找到 EMBED_API_KEY` 退出        | 演示脚本读本目录 `.env`，缺 key 直接 exit 1                                                                      | 按 `README.md`：把 `.env` 放 `examples/real-embed/` 下（`EMBED_API_KEY=sk-...`），执行 `pnpm build:test && node dist-test/examples/real-embed/demo-recall.js` |
+| 9   | 初始化停在 dirty / 报 `integrity`，但 SQLite 文档仍存在                              | 派生向量索引缺失、损坏、generation 不一致，或 legacy TDB vector backfill 失败                                    | 保留 SQLite 与 dirty 状态，修复嵌入/维度或目录权限后重试 `initialize()`；不要手动把 dirty 改为 clean                                                          |
+| 10  | 无 scope 搜索只返回 Root，或 vector 与 BM25 结果范围不一致                           | 使用旧调用方默认值，或 metadata scope discovery 不可用                                                           | 显式检查 `getExpectedVectorIndexNames()` / `getDistinctDiaryNames()`；正常行为是无 scope 覆盖全部 authority，`Root` 仅为兼容回退                              |
+| 11  | close 时新操作失败、已有搜索仍在运行                                                 | 引擎已进入 `closing`，正在 drain active operations                                                               | 等待同一个 `close()` Promise 完成；重复 close 安全，失败时检查 `MemoriaError("lifecycle")` 后重试                                                             |
 
 （若某条与你所在环境不符，先看对应源码行号再操作——不要凭记忆改配置。）
 

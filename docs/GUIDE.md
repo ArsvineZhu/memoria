@@ -273,16 +273,26 @@ continuity: 35, associate: 10, unknown: 0 }`（组合来源优先级，硬去重
 | `tdbExpandDepth`        | `1`                              | TDB 关键词扩展深度     |
 | `tdbTimeDecayEnabled`   | `false`                          | TDB 时间衰减开关       |
 
+TDB 搜索同样遵循 scope precedence：`libraries` 显式范围优先；未指定时检索所有
+authoritative libraries。`chunks.vector` 是 SQLite authority 的持久向量列，旧库
+缺失该列会幂等迁移；旧行缺向量时初始化执行一次完整性校验后的 backfill，失败会
+保持 dirty 并使初始化失败。
+
 ## 4. 检索参数（search 调用面）
 
 `engine.search(query, options)` 的 `options` 会扁平展开进查询载荷，常用：
 
 - `topK` — 最终结果数
-- `diaryNames` / `diaryName` — 限定日记（索引）范围；缺省 `Root`
+- `indexNames` / `diaryNames` / `diaryName` — 显式限定索引范围；vector、BM25 与 hydration 共用
 - `indexNames` / `searchAllIndices` — 精细控制索引选择
 - `tagSearchEnabled`、`tagK` — 标签召回
 - 权重类（`vectorWeight` / `bm25Weight` / `hybridAlpha` / `hybridBeta`）、
   `minScore`、`timeDecayHalfLife` 等会话参数可直接覆盖
+
+Scope precedence：显式 scope → 该 scope；无显式 scope → SQLite authority 发现的全部
+内容索引；只有 scope discovery 不可用时才回退到 `Root`。无 scope 时不再默认只查
+`Root`。`timeDecay` 的唯一执行者是 `TimeDecayStage`：`timeDecayEnabled=false`
+执行零次，启用时执行一次。
 
 返回信封：
 

@@ -52,6 +52,51 @@ const vectorStore: VectorStore = {
   remove: async () => undefined,
 };
 
+const minimalMetadataStore: MetadataStoreContract = {
+  upsertFile: async () => 1,
+  getFileByPath: async () => null,
+  getDistinctDiaryNames: async () => [],
+  getFileByChunkId: async () => null,
+  deleteFile: async () => undefined,
+  insertChunks: async () => [],
+  getChunksByFileId: async () => [],
+  getChunkById: async () => null,
+  getAllChunks: async () => [],
+  upsertTags: async () => [],
+  getTagByName: async () => null,
+  getAllTags: async () => [],
+  setFileTags: async () => undefined,
+  getFileTags: async () => [],
+  getFileIdsByTagId: async () => [],
+  buildCooccurrenceMatrix: async () => new Map(),
+  checkpoint: async () => undefined,
+  healthCheck: async () => ({ healthy: true, issues: [] }),
+};
+
+const optionalMetadataCapabilities: Pick<
+  MetadataStoreContract,
+  | "countFiles"
+  | "getLastIndexedAt"
+  | "getFileByDocumentId"
+  | "replaceDocumentState"
+  | "getSearchCorpus"
+  | "getIndexableChunks"
+  | "getExpectedVectorIndexNames"
+  | "getGenerationState"
+  | "markVectorStateClean"
+> = {};
+const optionalVectorCapabilities: Pick<
+  VectorStore,
+  | "loadIndex"
+  | "saveIndex"
+  | "getIndexStats"
+  | "scheduleIndexSave"
+  | "flushPendingSaves"
+  | "resetDerivedState"
+  | "restorePersistedIndexes"
+  | "replaceIndex"
+> = {};
+
 type DomainMetadataMethods = Pick<
   MetadataStoreContract,
   | "countFiles"
@@ -80,6 +125,9 @@ const compatibilityConfig: MemoryConfigOverrides = {
 void options;
 void stage;
 void vectorStore;
+void minimalMetadataStore;
+void optionalMetadataCapabilities;
+void optionalVectorCapabilities;
 void document;
 void domainMetadataMethods;
 void compatibleMetadataStore;

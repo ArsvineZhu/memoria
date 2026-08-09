@@ -235,6 +235,20 @@ void main().catch((error) => {
 corepack pnpm test
 ```
 
+本地发布门（不依赖 GitHub Actions）：
+
+```bash
+corepack pnpm format:check
+corepack pnpm lint
+corepack pnpm typecheck
+corepack pnpm build
+corepack pnpm typecheck:public
+corepack pnpm test:native
+corepack pnpm verify:pack
+corepack pnpm pack --dry-run
+git diff --check
+```
+
 测试数量以当前命令的实际输出为准；没有 `EMBED_API_KEY` 时，真实 API 集成测试会明确 skip，
 不会把网络不可用伪装成通过。验证覆盖算法、管线、阶段、Provider、TDB、兼容层、逻辑摄入、
 filesystem adapter、恢复和打包 consumer。

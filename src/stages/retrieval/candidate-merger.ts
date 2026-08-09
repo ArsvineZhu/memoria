@@ -8,6 +8,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 
 // Recency decay: score *= 0.5 ^ (age / halfLife), with halfLife in days.
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -202,7 +203,12 @@ class CandidateMergerStage extends Stage {
           }
         }
       } catch (e) {
-        decay = 1;
+        throw asMemoriaError(
+          e,
+          "persistence",
+          "Metadata store failed while applying recency decay.",
+          { retryable: true },
+        );
       }
       decayed.push({
         ...candidate,

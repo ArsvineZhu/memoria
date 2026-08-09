@@ -211,3 +211,60 @@ test("different mutation keys can run concurrently and clean their tails", async
     await engine.close();
   }
 });
+
+test("absolute and relative file mutations share one canonical queue key", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-mutation-file-"));
+  const engine = createMemoryEngine({
+    config: {
+      dimension: DIMENSION,
+      rootPath: root,
+      storePath: join(root, "indices"),
+    },
+    embeddingProvider: embeddingProvider(),
+  });
+  await engine.initialize();
+
+  const events: string[] = [];
+  let markFlushStarted!: () => void;
+  let releaseFlush!: () => void;
+  const flushStarted = new Promise<void>((resolve) => {
+    markFlushStarted = resolve;
+  });
+  const flushRelease = new Promise<void>((resolve) => {
+    releaseFlush = resolve;
+  });
+
+  engine.ingestPipeline.run = async (input) => {
+    events.push("flush-start");
+    markFlushStarted();
+    await flushRelease;
+    events.push("flush-finish");
+    return ingestResult(input);
+  };
+  engine.deletePipeline.run = async (input) => {
+    events.push("delete");
+    return { ...input, deleted: true, removedChunkIds: [] };
+  };
+
+  const absolutePath = join(root, "notes", "a.md");
+  try {
+    const flush = engine.flushBatch({
+      path: absolutePath,
+      content: "same canonical file",
+      mtime: 0,
+      size: Buffer.byteLength("same canonical file", "utf8"),
+    });
+    await flushStarted;
+
+    const deletion = engine.handleDelete("notes/a.md");
+    await Promise.resolve();
+    assert.deepEqual(events, ["flush-start"]);
+
+    releaseFlush();
+    await Promise.all([flush, deletion]);
+    assert.deepEqual(events, ["flush-start", "flush-finish", "delete"]);
+  } finally {
+    releaseFlush();
+    await engine.close();
+  }
+});

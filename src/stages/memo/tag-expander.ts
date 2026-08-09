@@ -9,6 +9,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { decodeVectorBlob } from "../../utils/vector-codec.js";
 import { at } from "../../utils/numerical.js";
 
@@ -145,17 +146,24 @@ class TagExpanderStage extends Stage {
       try {
         fileIds = await metadataStore.getFileIdsByTagId(tagId);
       } catch (e) {
-        console.warn(
-          `[TagExpander] getFileIdsByTagId(${tagId}) failed: ${e instanceof Error ? e.message : String(e)}`,
+        throw asMemoriaError(
+          e,
+          "persistence",
+          "Metadata store failed while expanding a search tag to files.",
+          { retryable: true },
         );
-        continue;
       }
       for (const fileId of fileIds || []) {
         let chunks = [];
         try {
           chunks = await metadataStore.getChunksByFileId(fileId);
         } catch (e) {
-          continue;
+          throw asMemoriaError(
+            e,
+            "persistence",
+            "Metadata store failed while expanding a search file to chunks.",
+            { retryable: true },
+          );
         }
         for (const chunk of chunks || []) {
           const chunkId = Number(chunk.id);
@@ -200,7 +208,12 @@ class TagExpanderStage extends Stage {
       try {
         file = await metadataStore.getFileByChunkId(chunkId);
       } catch (e) {
-        continue;
+        throw asMemoriaError(
+          e,
+          "persistence",
+          "Metadata store failed while resolving candidate tags.",
+          { retryable: true },
+        );
       }
       if (!file) continue;
       if (typeof metadataStore.getFileTags !== "function") continue;
@@ -208,7 +221,12 @@ class TagExpanderStage extends Stage {
       try {
         tags = await metadataStore.getFileTags(file.id);
       } catch (e) {
-        continue;
+        throw asMemoriaError(
+          e,
+          "persistence",
+          "Metadata store failed while loading candidate tags.",
+          { retryable: true },
+        );
       }
       for (const tag of tags || []) {
         const tagId = Number(tag.id);
@@ -234,7 +252,12 @@ class TagExpanderStage extends Stage {
     try {
       tagPool = await metadataStore.getAllTags();
     } catch (e) {
-      return queryVector || null;
+      throw asMemoriaError(
+        e,
+        "persistence",
+        "Metadata store failed while loading tag vectors for expansion.",
+        { retryable: true },
+      );
     }
     const byId = new Map((tagPool || []).map((t) => [Number(t.id), t]));
 

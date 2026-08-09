@@ -41,17 +41,16 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
 createMemoryEngine({config, dbPath, embeddingProvider, ...})
   │
   ├─ 1. mergeConfig(DEFAULT_CONFIG)          ← config 与默认值合并（一层深合并）
-  ├─ 2. 装配 Provider：
-  │      metadataStore  SqliteMetadataStore（dbPath，默认 ':memory:'）
-  │      vectorStore    VexusVectorStore（dimension/storePath/延迟落盘）
-  │      embeddingProvider 默认 OpenAIEmbeddingProvider；可注入替代
-  ├─ 3. PipelineContext 组装（config + 三个 Provider + 可选 ctx 扩展字段）
-  └─ 4. 三条管线构建（IngestPipeline / DeletePipeline / SearchPipeline）
+  ├─ 2. 保存 options、注入的 Provider 与 pipeline definitions
+  │      不创建默认 SQLite/Vexus/OpenAI backend，也不打开 native addon
+  ├─ 3. 创建三条管线定义（IngestPipeline / DeletePipeline / SearchPipeline）
+  └─ 4. state=created；PipelineContext 等待 initialize() 绑定实际 Provider
 
-initialize()        ── 幂等：加载 rag_params.json（可选）→ 将热调参
-                       （语义去重阈值、maxResults、sourcePriority、riverMemo
-                        门）应用进 config → 以 SQLite 为源重建向量索引 →
-                        onReady 回调 → initialized=true
+initialize()        ── 幂等：按需 dynamic import 并创建缺失 Provider → 加载
+                       rag_params.json（可选）并应用热调参 → 读取 generation/dirty
+                       状态；clean 且 persisted indexes 可验证时直接加载并注册它们，
+                       dirty/stale/missing/corrupt 时 reset derived vector state 后
+                       从 SQLite authority 批量重建 → onReady 回调 → ready
 ingest(document)    ── 逻辑内容摄入；按稳定 documentId 幂等 upsert
 ingestBatch(docs)   ── 顺序执行逻辑内容摄入
 remove(documentId)  ── 按逻辑身份删除，不依赖源文件路径
@@ -62,29 +61,35 @@ handleDelete()      ── 删除单文件（行 + 块级联 + 日记索引向�
 deleteFile()        ── handleDelete 的便捷别名
 getStats()          ── { files, chunks, tags, diaries, lastIndexed,
                         vectorStats, healthy, initialized }
-close()             ── 幂等：先 flushPendingSaves()（向量落盘），再关闭 SQLite
+close()             ── 幂等：等待 mutation queue → flushPendingSaves() → 成功后
+                       mark vector state clean → 关闭 SQLite；flush/close failure
+                       通过 lifecycle error 传播并保留可重试状态
 ```
 
 ### 初始化时序细节
 
-1. **构造期（同步）**：配置合并 → Provider 装配 → ctx → **管线与全部默认阶段在此
-   注册**（`IngestPipeline.defaultStages` / `SearchPipeline.defaultStages` /
-   `DeletePipeline.defaultStages`）。引擎此时未就绪（`initialized=false`），
-   未打开数据库。
+1. **构造期（同步）**：配置合并 → 保存注入项与 options → 注册管线及全部默认阶段。
+   此时不创建默认 Provider、不打开 SQLite、不加载 `rust-vexus-lite`；引擎状态为
+   `created`。
 2. **initialize()（异步，幂等）**：并发调用共享同一次执行（`_initPromise`）：
-   读 rag_params.json → `_applyRagParamsToConfig`（去重阈值/结果上限/最少语义
-   候选/sourcePriority 注入）→ `reconcile()` 从 SQLite 重建派生索引 → `onReady`
-   → 置 `initialized=true`。
+   按需 dynamic import 并创建缺失 Provider → 绑定 `PipelineContext` → 读
+   `rag_params.json` → `_applyRagParamsToConfig` → 读取 generation/dirty。clean
+   fast path 调用 `validatePersistedIndexes()`，由 Vexus 将所有 expected index
+   原子加载并注册到内存 Map；验证失败或状态 dirty/stale 时先调用可选的
+   `resetDerivedState()`，再以 SQLite authority 的 bulk rows 重建并 flush。
 3. **摄入时序（单文档/单文件）**：逻辑文档由引擎生成确定性内部路径并带上
    `documentId`、`revision`、source 与 metadata；文件快照由 `FilesystemIngestionAdapter`
    在交给引擎前读取并做稳定性检查。随后 7 个阶段依次执行，最后
-   `CooccurrenceBuilderStage`（默认 no-op）。**双写盘次序**：`MetadataWriterStage`
-   先落 SQLite（files / chunks / tags / file_tags / 可选 kv_store 检查点），
-   `VectorIndexerStage` 后写向量（先删遗留向量再 upsert，日记索引 + global_tags
+   `CooccurrenceBuilderStage`（默认 no-op）。**双写盘次序**：内置
+   `SqliteMetadataStore` 的 `MetadataWriterStage` 通过单事务
+   `replaceDocumentState()` 原子替换 file/chunks/tags/file_tags，并增加 metadata
+   generation、置 `vector_dirty=1`；第三方旧 store 才走兼容 CRUD 路径。随后
+   `VectorIndexerStage` 更新向量（先删遗留向量再 upsert，日记索引 + global_tags
    标签索引），并触发 `scheduleIndexSave`（延迟落盘）。
-4. **shutdown**：`close()` → `vectorStore.flushPendingSaves()`（幂等）→
-   `metadataStore.close()`。重启时先执行元数据重建；磁盘索引仍可作为优化的懒加载
-   来源，但不再是权威状态。
+4. **shutdown**：`close()` 等待 keyed mutation queue，flush 全部内存向量索引；
+   只有 flush 成功且 vector state 完整时才把 generation 标记 clean，之后关闭内置
+   SQLite。任一步 flush/close failure 都会形成 lifecycle failure；若资源仍可重试，
+   引擎回到 `ready`，不会伪装成 clean/closed。
 
 ## 3. 组件分层
 
@@ -200,13 +205,13 @@ memoria/
 
 ## 6. 生命周期关键时序
 
-| 时机             | 动作                       | 说明                                                                               |
-| ---------------- | -------------------------- | ---------------------------------------------------------------------------------- |
-| 构造             | 三个管道 + 全部 stage 注册 | `defaultStages()` 在构造时求值（门函数已评估）                                     |
-| 首次访问         | 向量索引懒加载             | `getOrCreateIndex` 若磁盘存在持久化索引则 `VexusIndex.load`，否则新建              |
-| 摄入             | `flushBatch` 串行执行      | 双写盘：SQLite 先行 → Rust 向量索引；`scheduleIndexSave` 延迟落盘（延迟见 config） |
-| 检索（每次查询） | `search()`                 | 18 阶段（按门裁剪）；去重阶段恒在链中                                              |
-| 删除             | `handleDelete`             | FK 级联删块，向量 Remove + 触发延迟落盘                                            |
-| 关闭             | `close()`                  | `flushPendingSaves()`（失败仅记日志，不阻断）+ 关闭 SQLite；幂等                   |
+| 时机             | 动作                            | 说明                                                                                |
+| ---------------- | ------------------------------- | ----------------------------------------------------------------------------------- |
+| 构造             | 三个管道 + 全部 stage 注册      | 只保存配置/注入项，不创建默认 backend 或 native addon                               |
+| initialize       | Provider lazy-create + recovery | clean generation 验证并注册 persisted indexes；dirty/stale 先 reset 再 bulk rebuild |
+| 摄入             | `flushBatch` 串行执行           | 双写盘：SQLite 先行 → Rust 向量索引；`scheduleIndexSave` 延迟落盘（延迟见 config）  |
+| 检索（每次查询） | `search()`                      | 18 阶段（按门裁剪）；去重阶段恒在链中                                               |
+| 删除             | `handleDelete`                  | FK 级联删块，向量 Remove + 触发延迟落盘                                             |
+| 关闭             | `close()`                       | queue drain → flush → mark clean → SQLite close；失败抛 lifecycle 并可重试          |
 
 验证视角:`tests/engine/test-engine.test.ts`（生命周期）、`tests/pipelines/test-pipelines.test.ts`（布局）、`tests/stages/*`（各阶段独立行为）。

@@ -471,6 +471,16 @@ class MemoryEngine {
     });
   }
 
+  private _fileMutationKey(filePath: string, relPath?: string): string {
+    const identity =
+      typeof relPath === "string" && relPath.length > 0
+        ? relPath
+        : this.config.rootPath && path.isAbsolute(filePath)
+          ? path.relative(this.config.rootPath, filePath)
+          : filePath;
+    return `file:${normalizeMutationPath(identity)}`;
+  }
+
   /** Rebuild derived vector indices from the metadata/content authority. */
   async reconcile(): Promise<ReconciliationReport> {
     this._assertReady("reconcile");
@@ -542,8 +552,9 @@ class MemoryEngine {
       const results: IngestEnvelope[] = [];
       for (const entry of entries) {
         const result = await this._runSerializedMutation(
-          `file:${normalizeMutationPath(entry.path)}`,
+          this._fileMutationKey(entry.path, entry.relPath),
           async () => {
+            const wasComplete = this._vectorStateComplete;
             this._vectorStateComplete = false;
             try {
               const result = await this.ingestPipeline.run(
@@ -558,6 +569,8 @@ class MemoryEngine {
               );
               if (!result.skipped && !this._vectorMutationFailed) {
                 this._vectorStateComplete = true;
+              } else if (result.skipped && !this._vectorMutationFailed) {
+                this._vectorStateComplete = wasComplete;
               }
               return result;
             } catch (error) {
@@ -605,6 +618,7 @@ class MemoryEngine {
           ? Number(document.updatedAt)
           : 0;
         const size = Buffer.byteLength(document.content, "utf8");
+        const wasComplete = this._vectorStateComplete;
         this._vectorStateComplete = false;
         try {
           const result = (await this.ingestPipeline.run(
@@ -625,6 +639,8 @@ class MemoryEngine {
 
           if (!result.skipped && !this._vectorMutationFailed) {
             this._vectorStateComplete = true;
+          } else if (result.skipped && !this._vectorMutationFailed) {
+            this._vectorStateComplete = wasComplete;
           }
           if (!result.skipped && result.fileId != null)
             this._lastIndexedAt = Date.now();
@@ -761,7 +777,7 @@ class MemoryEngine {
     try {
       const source: FileInput = typeof input === "string" ? { path: input } : input;
       return (await this._runSerializedMutation(
-        `file:${normalizeMutationPath(source.path)}`,
+        this._fileMutationKey(source.path, source.relPath),
         async () => {
           const wasComplete = this._vectorStateComplete;
           this._vectorStateComplete = false;
@@ -875,7 +891,9 @@ class MemoryEngine {
       return store.countFiles();
     }
     const chunks = await store.getAllChunks();
-    return new Set(chunks.map((c) => Number(c.fileId)).filter(Number.isFinite)).size;
+    return new Set(
+      chunks.map((c) => Number(c.fileId ?? c.file_id)).filter(Number.isFinite),
+    ).size;
   }
 
   /**

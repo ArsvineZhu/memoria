@@ -60,6 +60,15 @@ type DomainMetadataMethods = Pick<
   | "getIndexableChunks"
 >;
 const domainMetadataMethods = null as unknown as DomainMetadataMethods;
+type LegacyMetadataStore = Omit<
+  MetadataStoreContract,
+  | "countFiles"
+  | "getLastIndexedAt"
+  | "getExpectedVectorIndexNames"
+  | "getIndexableChunks"
+>;
+const legacyMetadataStore = null as unknown as LegacyMetadataStore;
+const compatibleMetadataStore: MetadataStoreContract = legacyMetadataStore;
 const compatibilityContext: PipelineContextOptions = {
   config: {},
   vexusIndex: { nativeCompatibilityEscape: true },
@@ -73,5 +82,6 @@ void stage;
 void vectorStore;
 void document;
 void domainMetadataMethods;
+void compatibleMetadataStore;
 void compatibilityContext;
 void compatibilityConfig;

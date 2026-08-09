@@ -6,6 +6,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
 
 /**
@@ -82,7 +83,12 @@ class ExpanderStage extends Stage {
       try {
         file = await ctx.metadataStore.getFileByChunkId(seedChunkId);
       } catch (error) {
-        continue;
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "Metadata store failed while expanding a search file.",
+          { retryable: true },
+        );
       }
       if (!file) continue;
 
@@ -90,7 +96,12 @@ class ExpanderStage extends Stage {
       try {
         siblings = await ctx.metadataStore.getChunksByFileId(file.id);
       } catch (error) {
-        continue;
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "Metadata store failed while loading expanded search chunks.",
+          { retryable: true },
+        );
       }
       if (!Array.isArray(siblings)) continue;
 

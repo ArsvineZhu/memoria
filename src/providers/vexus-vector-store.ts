@@ -342,7 +342,9 @@ class VexusVectorStore extends VectorStore {
   override async validatePersistedIndexes(
     indexNames: readonly string[],
   ): Promise<boolean> {
+    if (!this.indexLoadEnabled) return false;
     const VexusIndex = getVexusIndex();
+    const loadedIndexes = new Map<string, VexusIndex>();
     for (const indexName of indexNames) {
       const indexPath = this._getIndexPath(indexName);
       if (!this._indexFileExists(indexName)) return false;
@@ -366,9 +368,13 @@ class VexusVectorStore extends VectorStore {
             ? Number(stats.dimensions)
             : Number(stats.dimensions);
         if (Number.isFinite(dimensions) && dimensions !== this.dimension) return false;
+        loadedIndexes.set(indexName, index);
       } catch (_) {
         return false;
       }
+    }
+    for (const [indexName, index] of loadedIndexes) {
+      this.indices.set(indexName, index);
     }
     return true;
   }
@@ -396,6 +402,26 @@ class VexusVectorStore extends VectorStore {
   }
 
   // ── Cleanup ──────────────────────────────────────────────────
+
+  /**
+   * Clear all derived vector state before an authority rebuild.
+   * Only files created by this store's stable index naming convention are
+   * eligible for deletion.
+   */
+  resetDerivedState(): void {
+    for (const timer of this.saveTimers.values()) clearTimeout(timer);
+    this.saveTimers.clear();
+    this.indices.clear();
+
+    if (!fs.existsSync(this.storePath)) return;
+    for (const entry of fs.readdirSync(this.storePath, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (!/^index_[0-9a-f]{32}\.usearch(?:\.meta\.json)?$/.test(entry.name)) {
+        continue;
+      }
+      fs.unlinkSync(path.join(this.storePath, entry.name));
+    }
+  }
 
   /**
    * Flush all pending saves and clear timers.

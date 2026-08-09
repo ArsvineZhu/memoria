@@ -8,6 +8,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { propagate } from "../../algorithms/wave-propagation.js";
 import type {
   WavePropagationResult,
@@ -150,7 +151,12 @@ class TagMemoV9Stage extends Stage {
           try {
             tag = await metadataStore.getTagByName(name);
           } catch (e) {
-            tag = null;
+            throw asMemoriaError(
+              e,
+              "persistence",
+              "Metadata store failed while resolving a TagMemo seed.",
+              { retryable: true },
+            );
           }
         }
         const id = Number(tag && tag.id);
@@ -181,7 +187,12 @@ class TagMemoV9Stage extends Stage {
     try {
       rows = await metadataStore.getAllTags();
     } catch (e) {
-      return names;
+      throw asMemoriaError(
+        e,
+        "persistence",
+        "Metadata store failed while naming TagMemo tags.",
+        { retryable: true },
+      );
     }
     for (const row of rows || []) {
       const id = Number(row && row.id);

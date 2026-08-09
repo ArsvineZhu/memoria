@@ -9,6 +9,7 @@ import type {
 
 import Stage from "../../core/stage.js";
 import { ResidualPyramid } from "../../algorithms/residual-pyramid.js";
+import { asMemoriaError, MemoriaError } from "../../errors.js";
 import type { ResidualTag } from "../../algorithms/residual-pyramid.js";
 
 // Shared global tag vector index name (mirror of VectorIndexerStage).
@@ -93,6 +94,7 @@ class ResidualPyramidStage extends Stage {
         },
       );
     } catch (e) {
+      if (e instanceof MemoriaError) throw e;
       console.warn(
         `[ResidualPyramid] analyze failed: ${e instanceof Error ? e.message : String(e)}`,
       );
@@ -118,7 +120,12 @@ class ResidualPyramidStage extends Stage {
             (row): row is TagRow & { vector: Buffer } => row.vector != null,
           );
         } catch (e) {
-          return [];
+          throw asMemoriaError(
+            e,
+            "persistence",
+            "Metadata store failed while loading tag vectors for residual search.",
+            { retryable: true },
+          );
         }
       };
     }
@@ -135,7 +142,12 @@ class ResidualPyramidStage extends Stage {
               Boolean(tag && tag.vector != null),
             );
         } catch (e) {
-          return [];
+          throw asMemoriaError(
+            e,
+            "persistence",
+            "Metadata store failed while loading tags for residual search.",
+            { retryable: true },
+          );
         }
       };
     }

@@ -8,6 +8,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
 
 // Default BM25 constants (mirror of LightMemo.BM25Ranker).
@@ -87,10 +88,12 @@ class BM25SearcherStage extends Stage {
     try {
       chunks = await metadataStore.getAllChunks();
     } catch (e) {
-      console.warn(
-        `[BM25Searcher] getAllChunks failed: ${e instanceof Error ? e.message : String(e)}`,
+      throw asMemoriaError(
+        e,
+        "persistence",
+        "Metadata store failed while loading chunks for BM25 search.",
+        { retryable: true },
       );
-      return { ...info, bm25Results: [] };
     }
     if (!chunks || chunks.length === 0) {
       return { ...info, bm25Results: [] };

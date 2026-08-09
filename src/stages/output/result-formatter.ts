@@ -8,6 +8,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import * as path from "node:path";
 
 type OutputCandidate = ChunkCandidate & {
@@ -114,14 +115,24 @@ class ResultFormatterStage extends Stage {
       try {
         chunk = await store.getChunkById(id);
       } catch (error) {
-        chunk = null;
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "Metadata store failed while hydrating a search chunk.",
+          { retryable: true },
+        );
       }
     }
     if (chunk && store && typeof store.getFileByChunkId === "function") {
       try {
         file = await store.getFileByChunkId(chunk.id);
       } catch (error) {
-        file = null;
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "Metadata store failed while hydrating a search file.",
+          { retryable: true },
+        );
       }
     }
 
@@ -143,7 +154,12 @@ class ResultFormatterStage extends Stage {
           ? tagRows.map((t) => (t && t.name) || String(t))
           : [];
       } catch (error) {
-        tags = [];
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "Metadata store failed while hydrating search tags.",
+          { retryable: true },
+        );
       }
     }
     if (!Array.isArray(tags)) {

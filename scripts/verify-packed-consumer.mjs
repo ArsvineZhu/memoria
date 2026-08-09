@@ -102,10 +102,21 @@ assert.notEqual(ingested.skipped, true);
 const search = await engine.search('packed consumer');
 assert.ok(search.results.length >= 1);
 assert.equal(search.results[0]?.documentId, 'consumer:document');
-const removed = await engine.remove('consumer:document');
-assert.equal(removed.deleted, true);
-assert.equal((await engine.search('packed consumer')).results.length, 0);
 await engine.close();
+
+const reopened = createMemoryEngine({
+  dbPath: join(root, 'memory.sqlite'),
+  config: { dimension, storePath: join(root, 'indices') },
+  embeddingProvider,
+});
+await reopened.initialize();
+const reopenedSearch = await reopened.search('packed consumer');
+assert.ok(reopenedSearch.results.length >= 1);
+assert.equal(reopenedSearch.results[0]?.documentId, 'consumer:document');
+const reopenedRemoved = await reopened.remove('consumer:document');
+assert.equal(reopenedRemoved.deleted, true);
+assert.equal((await reopened.search('packed consumer')).results.length, 0);
+await reopened.close();
 
 const packageRoot = dirname(dirname(require.resolve('memoria')));
 const native = require(join(packageRoot, 'rust-vexus-lite'));

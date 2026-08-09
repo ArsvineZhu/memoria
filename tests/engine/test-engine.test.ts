@@ -456,6 +456,25 @@ test("injected fake embedding provider is used instead of the network provider",
   await engine.close();
 });
 
+test("_countFiles fallback accepts legacy snake_case chunk rows", async () => {
+  const { engine } = makeEngine();
+  await engine.initialize();
+
+  const legacyStore = engine.metadataStore as unknown as {
+    countFiles?: () => Promise<number>;
+    getAllChunks: () => Promise<
+      Array<{ id: number; file_id: number; content: string }>
+    >;
+  };
+  legacyStore.countFiles = undefined;
+  legacyStore.getAllChunks = async () => [
+    { id: 1, file_id: 42, content: "legacy chunk" },
+  ];
+
+  assert.equal(await engine._countFiles(), 1);
+  await engine.close();
+});
+
 test("custom metadataStore / vectorStore providers are injected verbatim", async () => {
   const storePath = makeTmpDir();
 

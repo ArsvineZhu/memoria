@@ -49,6 +49,37 @@ test("Schema tables are created on construction", () => {
   store.close();
 });
 
+test("close propagates database failures and remains retryable", () => {
+  const store = makeStore();
+  const originalDb = store.db;
+  let attempts = 0;
+  store.db = {
+    close: () => {
+      attempts += 1;
+      throw new Error("simulated database close failure");
+    },
+  } as unknown as TestStore["db"];
+
+  try {
+    assert.throws(() => store.close(), /simulated database close failure/);
+    assert.equal(store._closed, false);
+
+    store.db = originalDb;
+    store.close();
+    assert.equal(attempts, 1);
+    assert.equal(store._closed, true);
+  } finally {
+    store.db = originalDb;
+    if (!store._closed) {
+      try {
+        store.close();
+      } catch {
+        // Best-effort cleanup if the test itself fails.
+      }
+    }
+  }
+});
+
 test("generation state starts dirty and bulk index metadata is available", async () => {
   const store = makeStore();
   const generation = store as unknown as {

@@ -10,6 +10,7 @@ import PipelineContext from "../../src/core/context.js";
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
 import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
 import { EPA } from "../../src/algorithms/epa.js";
+import { MemoriaError } from "../../src/errors.js";
 import { encodeVectorBlob } from "../../src/utils/vector-codec.js";
 import type {
   MetadataStoreContract,
@@ -283,6 +284,37 @@ test("ResidualPyramidStage: breaks gracefully when the search fails mid-analysis
 
   assert.ok(Array.isArray(out.pyramid!.levels));
   assert.ok(out.pyramid!.levels.length >= 1);
+});
+
+test("ResidualPyramidStage propagates metadata failures as persistence errors", async () => {
+  const stage = new ResidualPyramidStage();
+  const ctx = new PipelineContext({
+    config: {
+      dimension: dim,
+      residualPyramidEnabled: true,
+      pyramidMaxLevels: 2,
+      pyramidTopK: 1,
+    },
+    vectorStore: {
+      search: async () => [{ id: 1, score: 0.9 }],
+    } as unknown as VectorStoreContract,
+    metadataStore: {
+      getAllTags: async () => {
+        throw new Error("metadata unavailable");
+      },
+    } as unknown as MetadataStoreContract,
+  });
+
+  await assert.rejects(
+    () => stage.process({ queryVector: vec(1, 0, 0, 0) }, ctx),
+    (error: unknown) => {
+      assert.ok(error instanceof MemoriaError);
+      assert.equal(error.code, "persistence");
+      assert.equal(error.retryable, true);
+      assert.equal((error.cause as Error).message, "metadata unavailable");
+      return true;
+    },
+  );
 });
 
 test("ResidualPyramidStage: disabled via config returns pyramidSkipped", async () => {

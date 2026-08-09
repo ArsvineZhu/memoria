@@ -8,6 +8,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import {
   buildRowOperator,
   solveDualScaledFields,
@@ -233,7 +234,12 @@ class TagMemoV10Stage extends Stage {
     try {
       rows = await metadataStore.getAllTags();
     } catch (e) {
-      return names;
+      throw asMemoriaError(
+        e,
+        "persistence",
+        "Metadata store failed while naming TagMemo tags.",
+        { retryable: true },
+      );
     }
     for (const row of rows || []) {
       const id = Number(row && row.id);
@@ -262,7 +268,12 @@ class TagMemoV10Stage extends Stage {
           try {
             tag = await metadataStore.getTagByName(name);
           } catch (e) {
-            tag = null;
+            throw asMemoriaError(
+              e,
+              "persistence",
+              "Metadata store failed while resolving a TagMemo seed.",
+              { retryable: true },
+            );
           }
         }
         if (tag && Number.isFinite(Number(tag.id))) ids.push(Number(tag.id));
@@ -284,7 +295,12 @@ class TagMemoV10Stage extends Stage {
       const tagRows = await metadataStore.getFileTags(file.id);
       return (tagRows || []).map((row) => Number(row.id)).filter(Number.isFinite);
     } catch (e) {
-      return [];
+      throw asMemoriaError(
+        e,
+        "persistence",
+        "Metadata store failed while resolving candidate TagMemo tags.",
+        { retryable: true },
+      );
     }
   }
 

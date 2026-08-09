@@ -263,6 +263,129 @@ test("validatePersistedIndexes rejects missing, corrupt, and wrong-dimension ind
   }
 });
 
+test("validatePersistedIndexes atomically commits every loaded index", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-validate-load-"));
+  try {
+    const source = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+    });
+    await source.add("loaded-a", 11, vec(1, 0, 0, 0));
+    await source.add("loaded-b", 22, vec(0, 1, 0, 0));
+    await source.saveIndex("loaded-a");
+    await source.saveIndex("loaded-b");
+
+    const reopened = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+    });
+    assert.equal(
+      await reopened.validatePersistedIndexes(["loaded-a", "loaded-b"]),
+      true,
+    );
+    assert.equal((await reopened.getIndexStats("loaded-a")).size, 1);
+    assert.equal((await reopened.getIndexStats("loaded-b")).size, 1);
+    assert.equal(
+      Number((await reopened.search("loaded-b", vec(0, 1, 0, 0), 1))[0]?.id),
+      22,
+    );
+
+    const corruptPath = reopened._getIndexPath("loaded-corrupt");
+    fs.writeFileSync(corruptPath, Buffer.from("not a usearch index"));
+    assert.equal(
+      await reopened.validatePersistedIndexes(["loaded-a", "loaded-corrupt"]),
+      false,
+    );
+    assert.equal(reopened.indices.has("loaded-corrupt"), false);
+    assert.equal(reopened.indices.has("loaded-a"), true);
+  } finally {
+    try {
+      for (const file of fs.readdirSync(tmpDir)) {
+        fs.unlinkSync(path.join(tmpDir, file));
+      }
+      fs.rmdirSync(tmpDir);
+    } catch (_) {}
+  }
+});
+
+test("validatePersistedIndexes refuses disk loading when indexLoadEnabled is false", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-validate-disabled-"));
+  try {
+    const source = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+    });
+    await source.add("disabled-load", 31, vec(1, 0, 0, 0));
+    await source.saveIndex("disabled-load");
+
+    const reopened = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+      indexLoadEnabled: false,
+    });
+    assert.equal(await reopened.validatePersistedIndexes(["disabled-load"]), false);
+    assert.equal(reopened.indices.size, 0);
+  } finally {
+    try {
+      for (const file of fs.readdirSync(tmpDir)) {
+        fs.unlinkSync(path.join(tmpDir, file));
+      }
+      fs.rmdirSync(tmpDir);
+    } catch (_) {}
+  }
+});
+
+test("resetDerivedState clears timers, memory, and only Memoria index files", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-reset-derived-"));
+  try {
+    const store = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+    });
+    store.getOrCreateIndex("reset-me");
+    store.scheduleIndexSave("reset-me");
+    fs.writeFileSync(
+      path.join(tmpDir, "index_0123456789abcdef0123456789abcdef.usearch"),
+      "derived",
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "index_0123456789abcdef0123456789abcdef.usearch.meta.json"),
+      "derived metadata",
+    );
+    fs.writeFileSync(path.join(tmpDir, "keep-me.txt"), "keep");
+
+    store.resetDerivedState();
+
+    assert.equal(store.indices.size, 0);
+    assert.equal(store.saveTimers.size, 0);
+    assert.equal(
+      fs.existsSync(
+        path.join(tmpDir, "index_0123456789abcdef0123456789abcdef.usearch"),
+      ),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(tmpDir, "index_0123456789abcdef0123456789abcdef.usearch.meta.json"),
+      ),
+      false,
+    );
+    assert.equal(fs.existsSync(path.join(tmpDir, "keep-me.txt")), true);
+  } finally {
+    try {
+      for (const file of fs.readdirSync(tmpDir)) {
+        fs.unlinkSync(path.join(tmpDir, file));
+      }
+      fs.rmdirSync(tmpDir);
+    } catch (_) {}
+  }
+});
+
 test("scheduleIndexSave coalesces multiple calls into one timer", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-sched-"));
   try {

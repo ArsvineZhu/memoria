@@ -6,6 +6,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -68,7 +69,12 @@ class TimeDecayStage extends Stage {
           decay = Math.pow(0.5, ageDays / halfLifeDays);
         }
       } catch (error) {
-        decay = 1;
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "Metadata store failed while resolving search recency.",
+          { retryable: true },
+        );
       }
       decayed.push({ ...candidate, score: candidate.score * decay, decay });
     }

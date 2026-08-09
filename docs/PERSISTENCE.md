@@ -2,10 +2,10 @@
 
 > 本文说明 memoria 的存储架构与重启恢复机制：元数据（SQLite，better-sqlite3）
 > 与向量索引（Rust N-API `vexus-lite` 的 `.usearch` 文件）双写落盘、逻辑文档
-> upsert、SQLite 权威重建、flush 时序（`flushBatch` / `indexSaveDelay` /
-> `flushPendingSaves`）、
-> 懒加载磁盘读回（`getOrCreateIndex`）、Rust 侧的原子发布与 Windows 权限
-> 修复历史、真实页面布局示例与清理注意事项。所有行为以
+> upsert、generation/dirty recovery、SQLite 权威重建、flush 时序
+> （`flushBatch` / `indexSaveDelay` / `flushPendingSaves`）、持久化索引验证与
+> 派生状态清理、Rust 侧的原子发布与 Windows 权限修复历史、真实页面布局示例
+> 与清理注意事项。所有行为以
 > `src/engine.ts`、`src/providers/*`、`src/stages/ingestion/*` 与
 > `rust-vexus-lite/src/lib.rs` 源码为准。
 
@@ -77,10 +77,14 @@ WAL 模式意味着 `.sqlite-wal` / `.sqlite-shm` 伴生文件与主库同目录
 flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage（Rust 写）
 ```
 
-1. **SQLite 写**（metadata-writer.ts:36–131）：
-   `upsertFile` → `insertChunks`（先删旧 chunk 再插，:155–179）→
-   `upsertTags` → `setFileTags`。旧 chunk id 在删除前采集为
-   `removedChunkIds`，供下一步清理向量索引（:69–74）。
+1. **SQLite 写**（metadata-writer.ts）：
+   内置 `SqliteMetadataStore` 暴露 `replaceDocumentState()` 时，stage 先准备
+   序列化 rows，再用一个 SQLite transaction 原子完成 file upsert、旧 chunks
+   替换、tags upsert、`file_tags` 重建与 generation/dirty 更新。旧 chunk id 在
+   transaction 内采集并返回为 `removedChunkIds`，供下一步清理向量索引。
+   未实现该 optional capability 的第三方 store 保留
+   `upsertFile → insertChunks → upsertTags → setFileTags` 兼容路径；这不是内置
+   SQLite 的默认路径。
 2. **Rust 写**（vector-indexer.ts:28–74）：
    先按 `removedChunkIds` 删除陈旧向量（防止重嵌文件留下孤儿）；
    chunk 向量按 `diaryName`（无则 `Root`）写索引，tag 向量写
@@ -98,45 +102,65 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
    `persistTagIndex` 为历史兼容构造项（构造保留，:34），当前实现不按它
    门控调度——`global_tags` 同样进入定时保存。
 
-**关闭时序**（engine.ts:356–370）：`close()` 先 `flushPendingSaves()`
-再 `metadataStore.close()`。`flushPendingSaves`（vexus-vector-store.ts:238–257）
-的语义是**保存当前内存中所有已加载索引 + 清空全部定时器**（不只是
-"有定时器"的索引；测试 `tests/providers/test-vexus-vector-store.test.ts:264`
-断言 "persists ALL indices, not only scheduled ones"），单个索引保存失败
-仅 console.error、不阻塞关闭（engine.ts:362–365 同样 catch）。
-生产停机挂钩：`knowledge-base-adapter.shutdown()` = `engine.close()`
-（compat/knowledge-base-adapter.ts:113–115）。
+**关闭时序**（engine.ts）：`close()` 等待 keyed mutation queue，先
+`flushPendingSaves()`，仅在 flush 成功且 vector state 完整时调用
+`markVectorStateClean()`，最后关闭 metadata store。`flushPendingSaves`
+（vexus-vector-store.ts）的语义是**保存当前内存中所有已加载索引 + 清空全部
+定时器**（不只是“有定时器”的索引）；任一保存失败会向 Engine 传播，不能标记
+clean，并使 `close()` 抛 `MemoriaError("lifecycle", ...)`。内置
+`SqliteMetadataStore.close()` 只有 `db.close()` 成功后才设置 `_closed=true`；关闭
+失败保留可重试状态。生产停机挂钩：`knowledge-base-adapter.shutdown()` =
+`engine.close()`（compat/knowledge-base-adapter.ts:113–115）。
 
-## 5. 权威重建与恢复一致性
+## 5. generation/dirty recovery 与权威重建
 
-`MemoryEngine.initialize()` 在引擎变为 ready 前调用 `reconcile()`。
-`src/reconciliation.ts` 只读取 SQLite 的 chunks/tags 与 BLOB 向量，校验维度后通过
-`VexusVectorStore.replaceIndex()` 重建命名索引；因此磁盘索引丢失、旧索引残留或
-vector write 在 metadata commit 后失败，都能在下次启动时恢复。重建报告包含
-`metadataChunks`、`usableVectors`、`skippedVectors` 与 `rebuiltIndexes`。损坏或维度
-不符的 BLOB 会被跳过并记录，而不会伪造可搜索向量。
+`MemoryEngine.initialize()` 先读取 SQLite `kv_store` 中的：
+
+- `memoria.metadata_generation`
+- `memoria.vector_generation`
+- `memoria.vector_dirty`
+
+当 `vector_dirty=0` 且两个 generation 相等时，走 clean fast path：从 SQLite
+一次读取 expected index names，调用 `validatePersistedIndexes()`。Vexus 会对每个
+预期名称检查 `.usearch` 文件、`.meta.json` dimension、native stats dimension，
+并调用 `VexusIndex.load()`；所有 index 成功后才把临时 Map 原子提交到
+`this.indices`。因此 clean reopen 后 search 直接使用已注册的内存 index，search
+本身不负责隐式读盘，也不会把“验证成功但 Map 为空”当作成功。
+
+以下任一条件都会进入全量 rebuild：dirty、generation mismatch、预期文件缺失、
+loader 异常、metadata/native dimension 不匹配，或 `indexLoadEnabled=false`：
+
+1. 如果 vector store 暴露 `resetDerivedState()`，先取消 save timers、清空内存
+   index，并仅删除 `storePath` 根目录下符合 `index_[0-9a-f]{32}.usearch` 及其
+   `.meta.json` 的 Memoria 文件；不递归删除其他文件。这样 SQLite authority 已
+   删除的 diary 不会留下可在未来同名重建时复活的 ghost vectors。
+2. 通过 `getIndexableChunks()` 的一次 bulk query 读取 `chunks JOIN files`，再读取
+   `getAllTags()`；解码有效 BLOB 后按 diary/global_tags 分组，调用
+   `replaceIndex()` 重建全部 expected indexes。
+3. 强制 `flushPendingSaves()`，成功后才把
+   `vector_generation = metadata_generation`、`vector_dirty=0`。任何 rebuild 或
+   save 失败都保持 dirty，并使 initialize 失败；不能宣称 ready。
+
+没有 `resetDerivedState()` 的第三方 vector store 保留现有兼容路径，不要求其
+提供 manifest。没有 `getIndexableChunks()` / expected-name capability 的旧
+MetadataStore 也继续走逐行 fallback；内置 SQLite 始终走 bulk/atomic path。
 
 逻辑文档以 `document_id` 唯一识别；`revision` 相同且内容摘要不变时摄入幂等，
 revision 或 content 改变时替换同一 files 行及其 chunks。`remove(documentId)` 不依赖
 原始文件路径。
 
-## 6. 懒加载恢复（getOrCreateIndex）
+## 6. 索引加载边界（getOrCreateIndex 与 clean validation）
 
-`getOrCreateIndex(indexName)`（vexus-vector-store.ts:51–77）：
-内存 Map 命中直接返回；未命中且 `indexLoadEnabled && _indexFileExists`
-时调用 `VexusIndex.load(path, null, dimension, cap)` 从磁盘读回
-（:57–64）；读回失败（文件损坏/版本不符）打印
-`Failed to load persisted index ... creating fresh one instead`
-并**静默新建空索引**（:65–73）；文件不存在则新建。因此它是启动重建前的
-优化路径，不是权威数据源：
+`getOrCreateIndex(indexName)` 只服务于写入时创建/取得一个内存索引；它仍可在
+兼容写路径发现旧文件时尝试 `VexusIndex.load()`，失败则创建新空索引。它不是
+initialize 的 recovery authority，也不是 search 的隐式加载机制。`search()` 只查
+已在 `VexusVectorStore.indices` 中的 index；clean initialize 已通过 validation
+把它们注册，rebuild 则从 SQLite 重新生成。
 
-- 正常重启：进程内存清空，但 `storePath` 下的 `index_*.usearch` 仍在 →
-  首次 `add`/`search` 自动读回，无需显式 `loadIndex`。
-- 测试锚点：`tests/providers/test-vexus-vector-store.test.ts:304`
-  （`getOrCreateIndex lazily loads a persisted index from disk`）与
-  :331–334（同 storePath 新实例自动加载）。启动时的权威路径由上一节的
-  `reconcile()` 负责；即使 `.usearch` 全部删除，只要 SQLite 和 chunk vector BLOB
-  仍在，索引也会被重建。
+`validatePersistedIndexes()` 在 `indexLoadEnabled=false` 时直接返回 false，确保
+系统改走 SQLite rebuild。验证采用临时 Map，任一 index 失败都不会提交该轮临时
+加载结果，也不会修改已有 Map。对应回归覆盖 clean close → reopen 的真实向量 recall、
+多 index 原子提交和禁用磁盘加载。
 
 ## 7. Rust 侧原子落盘与 Windows 修复历史（rust-vexus-lite/src/lib.rs）
 
@@ -156,10 +180,11 @@ revision 或 content 改变时替换同一 files 行及其 chunks。`remove(docu
    （`retry_windows_file_operation`，:186–213，6 档 20→500ms）。
    Unix 直接 rename + 同步父目录（:255–260）。
 
-任一步失败都会清理临时文件并把错误上抛（:357–359 / :365–367 / :373–375），
-JS 侧 `flushPendingSaves` / `scheduleIndexSave` 捕获并 console.error。
+任一步失败都会清理临时文件并把错误上抛（:357–359 / :365–367 / :373–375）。
+定时保存会记录错误；生命周期 `flushPendingSaves()` 会重新尝试所有已加载索引，
+并把失败传给 Engine，阻止 clean mark 与成功 close。
 
-## 7. 真实页面布局示例
+## 8. 真实页面布局示例
 
 离线验证产物（`examples/demo/demo-data/`，仓库内真实文件）：
 
@@ -179,7 +204,7 @@ demo-data/
 - 向量 + 元数据重启恢复的完整验证路径：`tests/integration/real-dashscope.test.ts:253`
   （真实嵌入下的落盘 + 重开搜索）。
 
-## 8. 清理注意事项
+## 9. 清理注意事项
 
 - **临时索引残留**：崩溃/杀进程可能留下
   `.{文件名}.tmp.*` / `.{文件名}.bak.*` sidecar（lib.rs:148–166 的
@@ -196,10 +221,10 @@ demo-data/
   定时器可能未到期，最后几批向量丢失。优雅停机务必走
   `engine.close()` / `adapter.shutdown()`。
 
-## 9. TDB 冷知识库（简要）
+## 10. TDB 冷知识库（简要）
 
 `src/tdb/` 复用同一套持久化约定：`TDBStore`（better-sqlite3，`files`
 表以 `(library, path)` 唯一、`chunks` 存 `library/path` 与节点 id，
 tdb-store.ts:12–40）＋ `VexusVectorStore`（storePath 取
-`config.tdbStorePath`，tdb-engine.ts:81）。重启恢复路径与主引擎一致
-（懒加载 + close 前 flush）。
+`config.tdbStorePath`，tdb-engine.ts:81）。TDB 仍复用 close 前 flush；主 MemoryEngine
+的 generation/dirty fast path 与 authority rebuild 规则不自动改变 TDB 专用管线。

@@ -274,13 +274,13 @@ class SqliteMetadataStore extends MetadataStore {
     return row ? Number(row.id) : null;
   }
 
-  override async countFiles(): Promise<number> {
+  async countFiles(): Promise<number> {
     const row = this.db.prepare("SELECT COUNT(*) AS c FROM files").get() as
       { c?: number } | undefined;
     return Number(row?.c) || 0;
   }
 
-  override async getLastIndexedAt(): Promise<number | null> {
+  async getLastIndexedAt(): Promise<number | null> {
     const row = this.db.prepare("SELECT MAX(updated_at) AS m FROM files").get() as
       { m?: number | null } | undefined;
     return row?.m == null ? null : Number(row.m) * 1000;
@@ -535,7 +535,7 @@ class SqliteMetadataStore extends MetadataStore {
     }));
   }
 
-  override async getIndexableChunks(): Promise<IndexableChunkRow[]> {
+  async getIndexableChunks(): Promise<IndexableChunkRow[]> {
     const rows = this.db
       .prepare(
         `
@@ -557,7 +557,7 @@ class SqliteMetadataStore extends MetadataStore {
     }));
   }
 
-  override async getExpectedVectorIndexNames(): Promise<string[]> {
+  async getExpectedVectorIndexNames(): Promise<string[]> {
     const names = (
       this.db
         .prepare(
@@ -766,12 +766,8 @@ class SqliteMetadataStore extends MetadataStore {
 
   close(): void {
     if (this._closed) return;
+    this.db.close();
     this._closed = true;
-    try {
-      this.db.close();
-    } catch (_) {
-      // Already closed or error during close - ignore
-    }
   }
 }
 

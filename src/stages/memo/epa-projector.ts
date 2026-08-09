@@ -14,6 +14,7 @@ import type {
 
 import Stage from "../../core/stage.js";
 import { EPA } from "../../algorithms/epa.js";
+import { asMemoriaError } from "../../errors.js";
 import { decodeVectorBlob } from "../../utils/vector-codec.js";
 
 type VectorRow = { vector?: Buffer | Float32Array | null };
@@ -122,10 +123,12 @@ class EPAProjectorStage extends Stage {
     try {
       tags = await metadataStore.getAllTags();
     } catch (e) {
-      console.warn(
-        `[EPAProjector] getAllTags() failed: ${e instanceof Error ? e.message : String(e)}`,
+      throw asMemoriaError(
+        e,
+        "persistence",
+        "Metadata store failed while loading tags for EPA search.",
+        { retryable: true },
       );
-      return null;
     }
     const withVectors = (tags || []).filter(
       (tag): tag is TagRow & { vector: Buffer | Float32Array } => tag.vector != null,
@@ -210,7 +213,12 @@ class EPAProjectorStage extends Stage {
           vector = decodeVectorBlob(row.vector, dimension, `chunk:${chunkId}`);
         }
       } catch (_e) {
-        continue;
+        throw asMemoriaError(
+          _e,
+          "persistence",
+          "Metadata store failed while loading a chunk vector for EPA search.",
+          { retryable: true },
+        );
       }
       if (!vector) continue;
       let projection;

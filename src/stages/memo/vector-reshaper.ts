@@ -8,6 +8,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { dotProduct, magnitude } from "../../algorithms/gram-schmidt.js";
 import { decodeVectorBlob } from "../../utils/vector-codec.js";
 
@@ -106,7 +107,12 @@ class VectorReshaperStage extends Stage {
           traced.skipped += 1;
         }
       } catch (e) {
-        traced.skipped += 1;
+        throw asMemoriaError(
+          e,
+          "persistence",
+          "Metadata store failed while reshaping a search vector.",
+          { retryable: true },
+        );
       }
       reshaped.push({ ...candidate, embeddingSim });
     }

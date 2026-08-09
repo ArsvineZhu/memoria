@@ -575,6 +575,7 @@ export interface VectorStoreContract {
   getIndexStats?(indexName: string): Promise<VectorStoreStats>;
   scheduleIndexSave?(indexName: string): void;
   flushPendingSaves?(): void | Promise<void>;
+  resetDerivedState?(): void | Promise<void>;
   validatePersistedIndexes?(indexNames: readonly string[]): Promise<boolean>;
   replaceIndex?(
     indexName: string,
@@ -696,8 +697,8 @@ export interface MetadataStoreContract {
   /** Exposed for compatibility diagnostics used by the legacy tests/callers. */
   _closed?: boolean;
   upsertFile(fileMeta: FileMetadataInput): Promise<number | null>;
-  countFiles(): Promise<number>;
-  getLastIndexedAt(): Promise<number | null>;
+  countFiles?(): Promise<number>;
+  getLastIndexedAt?(): Promise<number | null>;
   getFileByPath(path: string): Promise<FileRow | null>;
   getFileByDocumentId?(documentId: string): Promise<FileRow | null>;
   getDistinctDiaryNames(): Promise<string[]>;
@@ -713,8 +714,8 @@ export interface MetadataStoreContract {
   getChunksByFileId(fileId: number): Promise<ChunkRow[]>;
   getChunkById(id: number): Promise<ChunkRow | null>;
   getAllChunks(): Promise<ChunkRow[]>;
-  getIndexableChunks(): Promise<IndexableChunkRow[]>;
-  getExpectedVectorIndexNames(): Promise<string[]>;
+  getIndexableChunks?(): Promise<IndexableChunkRow[]>;
+  getExpectedVectorIndexNames?(): Promise<string[]>;
   getGenerationState?(): Promise<GenerationState>;
   markVectorStateClean?(): Promise<void>;
   upsertTags(tags: readonly TagMetadataInput[]): Promise<number[]>;

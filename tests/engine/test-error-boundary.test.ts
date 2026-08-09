@@ -177,6 +177,182 @@ test("search vector failures are not silently downgraded", async () => {
   }
 });
 
+test("search getAllChunks failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("chunks persistence secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  metadataStore.getAllChunks = async () => {
+    throw cause;
+  };
+  try {
+    await engine.initialize();
+    await assert.rejects(
+      () => engine.search("private content"),
+      (error: unknown) => {
+        assertBoundary(error, "persistence", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
+test("search getDistinctDiaryNames failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("diary names persistence secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  engine.config.searchAllIndices = true;
+  metadataStore.getDistinctDiaryNames = async () => {
+    throw cause;
+  };
+  try {
+    await engine.initialize();
+    await assert.rejects(
+      () => engine.search("private content"),
+      (error: unknown) => {
+        assertBoundary(error, "persistence", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
+test("search getChunkById failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("chunk lookup persistence secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  try {
+    await engine.initialize();
+    metadataStore.getAllChunks = async () => [];
+    metadataStore.getChunkById = async () => {
+      throw cause;
+    };
+    engine.vectorStore.search = async () => [{ id: 1, score: 1 }];
+    await assert.rejects(
+      () => engine.search("private content"),
+      (error: unknown) => {
+        assertBoundary(error, "persistence", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
+test("search getFileByChunkId failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("file lookup persistence secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  try {
+    await engine.initialize();
+    metadataStore.getAllChunks = async () => [];
+    metadataStore.getChunkById = async () => ({
+      id: 1,
+      fileId: 1,
+      content: "candidate",
+      vector: null,
+    });
+    metadataStore.getFileByChunkId = async () => {
+      throw cause;
+    };
+    engine.vectorStore.search = async () => [{ id: 1, score: 1 }];
+    await assert.rejects(
+      () => engine.search("private content"),
+      (error: unknown) => {
+        assertBoundary(error, "persistence", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
+test("search tag file lookup failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("tag file lookup persistence secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  engine.config.tagSearchEnabled = true;
+  metadataStore.getAllChunks = async () => [];
+  metadataStore.getFileIdsByTagId = async () => {
+    throw cause;
+  };
+  try {
+    await engine.initialize();
+    engine.vectorStore.search = async (indexName) =>
+      indexName === "global_tags" ? [{ id: 9, score: 1 }] : [];
+    await assert.rejects(
+      () => engine.search("private content"),
+      (error: unknown) => {
+        assertBoundary(error, "persistence", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
+test("search tag chunk lookup failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("tag chunk lookup persistence secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  engine.config.tagSearchEnabled = true;
+  metadataStore.getAllChunks = async () => [];
+  metadataStore.getFileIdsByTagId = async () => [7];
+  metadataStore.getChunksByFileId = async () => {
+    throw cause;
+  };
+  try {
+    await engine.initialize();
+    engine.vectorStore.search = async (indexName) =>
+      indexName === "global_tags" ? [{ id: 9, score: 1 }] : [];
+    await assert.rejects(
+      () => engine.search("private content"),
+      (error: unknown) => {
+        assertBoundary(error, "persistence", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
+test("search getFileTags failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("tag hydration persistence secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  try {
+    await engine.initialize();
+    metadataStore.getAllChunks = async () => [];
+    metadataStore.getChunkById = async () => ({
+      id: 1,
+      fileId: 1,
+      content: "candidate",
+      vector: null,
+    });
+    metadataStore.getFileByChunkId = async () => ({
+      id: 1,
+      path: "candidate.md",
+      diary_name: "Root",
+      checksum: "candidate",
+      mtime: 0,
+      size: 9,
+    });
+    metadataStore.getFileTags = async () => {
+      throw cause;
+    };
+    engine.vectorStore.search = async () => [{ id: 1, score: 1 }];
+    await assert.rejects(
+      () => engine.search("private content"),
+      (error: unknown) => {
+        assertBoundary(error, "persistence", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
 test("remove propagates getFileByDocumentId failures instead of falling back", async () => {
   const cause = new Error("persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
@@ -215,4 +391,41 @@ test("close wraps non-Memoria failures as lifecycle errors", async () => {
   } finally {
     await dispose(engine, metadataStore);
   }
+});
+
+test("SQLite metadata close failure remains retryable through the engine", async () => {
+  const cause = new Error("metadata close failure");
+  const engine = createMemoryEngine({
+    config: { dimension: DIMENSION },
+    vectorStore: makeVectorStore(),
+    embeddingProvider: makeEmbeddingProvider(),
+  });
+  await engine.initialize();
+
+  const metadataStore = engine.metadataStore;
+  const close = metadataStore.close;
+  assert.ok(close);
+  const originalClose = close.bind(metadataStore);
+  let failed = false;
+  metadataStore.close = () => {
+    if (!failed) {
+      failed = true;
+      throw cause;
+    }
+    originalClose();
+  };
+
+  await assert.rejects(
+    () => engine.close(),
+    (error: unknown) => {
+      assertBoundary(error, "lifecycle", cause);
+      return true;
+    },
+  );
+  assert.equal(engine.state, "ready");
+  assert.equal(metadataStore._closed, false);
+
+  await engine.close();
+  assert.equal(engine.state, "closed");
+  assert.equal(metadataStore._closed, true);
 });

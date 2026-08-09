@@ -5,7 +5,6 @@ import type {
   FileRow,
   FileTagRow,
   HealthStatus,
-  IndexableChunkRow,
   MetadataStoreContract,
   TagMetadataInput,
   TagRow,
@@ -26,14 +25,6 @@ class MetadataStore implements MetadataStoreContract {
    */
   async upsertFile(_fileMeta: FileMetadataInput): Promise<number | null> {
     throw new Error("MetadataStore.upsertFile() must be implemented");
-  }
-
-  async countFiles(): Promise<number> {
-    throw new Error("MetadataStore.countFiles() must be implemented");
-  }
-
-  async getLastIndexedAt(): Promise<number | null> {
-    throw new Error("MetadataStore.getLastIndexedAt() must be implemented");
   }
 
   /**
@@ -113,14 +104,6 @@ class MetadataStore implements MetadataStoreContract {
    */
   async getAllChunks(): Promise<ChunkRow[]> {
     throw new Error("MetadataStore.getAllChunks() must be implemented");
-  }
-
-  async getIndexableChunks(): Promise<IndexableChunkRow[]> {
-    throw new Error("MetadataStore.getIndexableChunks() must be implemented");
-  }
-
-  async getExpectedVectorIndexNames(): Promise<string[]> {
-    throw new Error("MetadataStore.getExpectedVectorIndexNames() must be implemented");
   }
 
   // ── Tag CRUD ──

@@ -77,6 +77,9 @@ export async function reconcileVectorIndexes(
 ): Promise<ReconciliationReport> {
   const { metadataStore, vectorStore, dimension } = options;
   try {
+    if (typeof vectorStore.resetDerivedState === "function") {
+      await vectorStore.resetDerivedState();
+    }
     const rows = await loadIndexableChunks(metadataStore);
     const tags = await metadataStore.getAllTags();
     const entriesByIndex = new Map<string, VectorIndexEntry[]>();

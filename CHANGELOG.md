@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- 修复 generation clean reopen 的 persisted Vexus index 注册、`indexLoadEnabled=false`
+  回退，以及全量 SQLite rebuild 前的 derived-state reset，避免 stale diary index
+  复活 ghost vectors；packed consumer 现在覆盖 close → reopen → vector recall。
+- 收紧 search 主链的 MetadataStore persistence error boundary：查询失败现在抛出带
+  `cause`、`retryable=true` 的 `MemoriaError("persistence")`，不再静默返回空结果或
+  跳过 candidate；同时修复 absolute/relative file mutation key 的 canonicalization。
+- 保持新增 MetadataStore capabilities optional，修复 legacy `file_id` fallback、
+  skipped ingest 的 clean-state 保留，以及 SQLite close failure 的传播与重试语义。
+- 同步 ARCHITECTURE/PERSISTENCE 文档，说明 constructor/deferred provider、generation
+  fast path、`replaceDocumentState()` 原子写入和 close/flush failure lifecycle 规则。
 - 完成原生 TypeScript 迁移：Node 24.18.1 / pnpm 11.20.0 / TypeScript 7.0.2、ES2024
   NodeNext、ESM-first `src/index.ts` → `dist/`，并保留历史 `require('memoria')` facade。
 - 增加无 filesystem 依赖的 logical `ingest` / `upsert` / `ingestBatch` / `remove` API，

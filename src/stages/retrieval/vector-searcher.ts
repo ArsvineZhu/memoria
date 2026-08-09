@@ -139,8 +139,11 @@ class VectorSearcherStage extends Stage {
           const names = await metadataStore.getDistinctDiaryNames();
           if (names.length > 0) return names;
         } catch (e) {
-          console.warn(
-            `[VectorSearcher] getDistinctDiaryNames failed: ${e instanceof Error ? e.message : String(e)}`,
+          throw asMemoriaError(
+            e,
+            "persistence",
+            "Metadata store failed while resolving diary indexes.",
+            { retryable: true },
           );
         }
       }
@@ -235,17 +238,24 @@ class VectorSearcherStage extends Stage {
       try {
         fileIds = await metadataStore.getFileIdsByTagId(tagId);
       } catch (e) {
-        console.warn(
-          `[VectorSearcher] getFileIdsByTagId(${tagId}) failed: ${e instanceof Error ? e.message : String(e)}`,
+        throw asMemoriaError(
+          e,
+          "persistence",
+          "Metadata store failed while resolving files for a tag search hit.",
+          { retryable: true },
         );
-        continue;
       }
       for (const fileId of fileIds || []) {
         let chunks = [];
         try {
           chunks = await metadataStore.getChunksByFileId(fileId);
         } catch (e) {
-          continue;
+          throw asMemoriaError(
+            e,
+            "persistence",
+            "Metadata store failed while resolving chunks for a tag search hit.",
+            { retryable: true },
+          );
         }
         for (const chunk of chunks || []) {
           if (chunk.id == null) continue;

@@ -289,6 +289,39 @@ test("logical metadata-only update avoids re-embedding and vector mutation", asy
   }
 });
 
+test("unscoped logical search discovers the Logical vector index", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-logical-scope-"));
+  const embeddingProvider: EmbeddingProviderContract = {
+    getDimension: () => DIMENSION,
+    async embedBatch(texts: readonly string[] = []) {
+      return texts.map(() => {
+        const vector = new Float32Array(DIMENSION);
+        vector[0] = 1;
+        return vector;
+      });
+    },
+  };
+  const engine = createMemoryEngine({
+    config: { dimension: DIMENSION, storePath: root },
+    embeddingProvider,
+  });
+  try {
+    await engine.initialize();
+    await engine.ingest({
+      id: "logical:semantic-scope",
+      content: "unique semantic memory content",
+      revision: "1",
+    });
+    const result = await engine.search("conceptual abstraction", { topK: 5 });
+    assert.ok(
+      result.results.some((row) => row.documentId === "logical:semantic-scope"),
+      "the Logical vector-backed document should be searchable without explicit scope",
+    );
+  } finally {
+    await engine.close();
+  }
+});
+
 test("partial logical embedding fails before any metadata row is committed", async () => {
   const root = mkdtempSync(join(tmpdir(), "memoria-partial-embedding-"));
   const embeddingProvider: EmbeddingProviderContract = {

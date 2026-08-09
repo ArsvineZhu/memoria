@@ -160,6 +160,7 @@ test("SearchPipeline assembles the default gated search chain", () => {
     [
       "queryEmbedder",
       "queryVectorBridge",
+      "searchScopeResolver",
       "vectorSearcher",
       "bm25Searcher",
       "candidateMerger",
@@ -187,6 +188,7 @@ test("SearchPipeline enables memo and postprocess stages when gated", () => {
   assert.deepStrictEqual(names, [
     "queryEmbedder",
     "queryVectorBridge",
+    "searchScopeResolver",
     "vectorSearcher",
     "bm25Searcher",
     "candidateMerger",

@@ -522,6 +522,61 @@ test("BM25SearcherStage reports missing metadataStore and empty corpus", async (
   assert.deepStrictEqual(empty.bm25Results, []);
 });
 
+test("retrieval stages honor one resolved scope across vector and BM25", async () => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const vectorStore = makeVectorStore();
+  const fileA = (await metadataStore.upsertFile({
+    path: "a.md",
+    diaryName: "A",
+    checksum: "a",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const fileB = (await metadataStore.upsertFile({
+    path: "b.md",
+    diaryName: "B",
+    checksum: "b",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const [chunkA] = await metadataStore.insertChunks(fileA, [
+    { chunkIndex: 0, content: "shared keyword A" },
+  ]);
+  const [chunkB] = await metadataStore.insertChunks(fileB, [
+    { chunkIndex: 0, content: "shared keyword B" },
+  ]);
+  await vectorStore.add("A", chunkA, vec(1, 0, 0, 0));
+  await vectorStore.add("B", chunkB, vec(1, 0, 0, 0));
+
+  const ctx = new PipelineContext({
+    config: {},
+    metadataStore,
+    vectorStore,
+  });
+  const vector = await new VectorSearcherStage().process(
+    {
+      queries: [{ text: "q", vector: vec(1, 0, 0, 0) }],
+      resolvedIndexNames: ["A"],
+      topK: 10,
+    },
+    ctx,
+  );
+  assert.deepEqual(vector.vectorResults.map((result) => result.chunkId), [chunkA]);
+
+  const sparse = await new BM25SearcherStage().process(
+    {
+      query: "shared",
+      resolvedIndexNames: ["A"],
+    },
+    ctx,
+  );
+  assert.deepEqual(sparse.bm25Results.map((result) => result.chunkId), [chunkA]);
+
+  metadataStore.close();
+  for (const timer of vectorStore.saveTimers.values()) clearTimeout(timer);
+  vectorStore.saveTimers.clear();
+});
+
 // ── CandidateMergerStage ─────────────────────────────────────────────────
 
 const makeMergeInput = () => ({
@@ -574,7 +629,7 @@ test("CandidateMergerStage honors configurable vector/bm25 weights", async () =>
   assert.strictEqual(alphaOut.mergedCandidates[0].chunkId, 2);
 });
 
-test("CandidateMergerStage applies time decay on file recency", async () => {
+test("CandidateMergerStage leaves recency unchanged for TimeDecayStage", async () => {
   const stage = new CandidateMergerStage();
   const metaStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const nowSec = Math.floor(Date.now() / 1000);
@@ -621,13 +676,10 @@ test("CandidateMergerStage applies time decay on file recency", async () => {
   const out = await stage.process(input, ctx);
 
   const byId = new Map(out.mergedCandidates.map((c) => [c.chunkId, c]));
-  assert.ok(byId.get(oldChunk)!.decay! < 1);
-  assert.ok(byId.get(oldChunk)!.decay! < byId.get(newChunk)!.decay!);
-  assert.strictEqual(
-    out.mergedCandidates[0].chunkId,
-    newChunk,
-    "newer chunk should rank first",
-  );
+  assert.equal(byId.get(oldChunk)!.score, 1);
+  assert.equal(byId.get(newChunk)!.score, 1);
+  assert.equal(byId.get(oldChunk)!.decay, undefined);
+  assert.equal(byId.get(newChunk)!.decay, undefined);
 });
 
 test("CandidateMergerStage honors topK limit and sorts desc", async () => {

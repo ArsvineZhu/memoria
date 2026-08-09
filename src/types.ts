@@ -513,6 +513,9 @@ export interface PipelineData extends UnknownRecord {
   query?: string;
   options?: UnknownRecord;
   diaryNames?: string[];
+  indexNames?: string[];
+  libraries?: string[];
+  resolvedIndexNames?: string[];
   topK?: number;
   queries?: QueryVector[];
   queryVector?: EmbeddingVector;
@@ -563,6 +566,12 @@ export interface VectorStoreStats {
 export interface VectorIndexEntry {
   id: number;
   vector: VectorLike;
+}
+
+export interface SearchCorpusChunk {
+  id: number;
+  content: string;
+  indexName: string;
 }
 
 export interface VectorStoreContract {
@@ -725,6 +734,7 @@ export interface MetadataStoreContract {
   getChunksByFileId(fileId: number): Promise<ChunkRow[]>;
   getChunkById(id: number): Promise<ChunkRow | null>;
   getAllChunks(): Promise<ChunkRow[]>;
+  getSearchCorpus?(indexNames?: readonly string[]): Promise<SearchCorpusChunk[]>;
   getIndexableChunks?(): Promise<IndexableChunkRow[]>;
   getExpectedVectorIndexNames?(): Promise<string[]>;
   getGenerationState?(): Promise<GenerationState>;

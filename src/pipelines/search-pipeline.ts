@@ -5,6 +5,7 @@ import Stage from "../core/stage.js";
 import { at } from "../utils/numerical.js";
 
 import QueryEmbedderStage from "../stages/retrieval/query-embedder.js";
+import SearchScopeResolverStage from "../stages/retrieval/search-scope-resolver.js";
 import VectorSearcherStage from "../stages/retrieval/vector-searcher.js";
 import BM25SearcherStage from "../stages/retrieval/bm25-searcher.js";
 import CandidateMergerStage from "../stages/retrieval/candidate-merger.js";
@@ -168,6 +169,7 @@ class SearchPipeline extends Pipeline {
     const stages = [
       new QueryEmbedderStage(),
       new QueryVectorBridgeStage(),
+      new SearchScopeResolverStage(),
       new VectorSearcherStage(),
       new BM25SearcherStage(),
       new CandidateMergerStage(),

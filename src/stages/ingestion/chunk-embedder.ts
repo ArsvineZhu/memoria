@@ -49,7 +49,7 @@ class ChunkEmbedderStage extends Stage {
     const vectors = requireCompleteEmbeddingBatch(
       chunks,
       rawVectors,
-      Number(ctx.config.dimension),
+      Number(ctx.config.dimension) || ctx.embeddingProvider?.getDimension() || 0,
       "chunk",
     );
 

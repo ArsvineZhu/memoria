@@ -16,6 +16,7 @@ import type {
   HealthStatus,
   TagMetadataInput,
   TagRow,
+  SearchCorpusChunk,
 } from "../types.js";
 
 const requireFromProvider = createRequire(import.meta.url);
@@ -583,6 +584,31 @@ class SqliteMetadataStore extends MetadataStore {
       chunkIndex: r.chunk_index,
       content: r.content,
       vector: r.vector || null,
+    }));
+  }
+
+  async getSearchCorpus(indexNames?: readonly string[]): Promise<SearchCorpusChunk[]> {
+    if (Array.isArray(indexNames) && indexNames.length === 0) return [];
+    let sql = `
+      SELECT c.id, c.content, f.diary_name AS index_name
+      FROM chunks c
+      JOIN files f ON f.id = c.file_id`;
+    const params: string[] = [];
+    if (Array.isArray(indexNames) && indexNames.length > 0) {
+      const placeholders = indexNames.map(() => "?").join(", ");
+      sql += ` WHERE f.diary_name IN (${placeholders})`;
+      params.push(...indexNames.map(String));
+    }
+    sql += " ORDER BY c.id";
+    const rows = this.db.prepare(sql).all(...params) as Array<{
+      id: number;
+      content: string;
+      index_name: string;
+    }>;
+    return rows.map((row) => ({
+      id: Number(row.id),
+      content: row.content,
+      indexName: row.index_name,
     }));
   }
 

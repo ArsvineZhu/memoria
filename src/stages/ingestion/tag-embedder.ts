@@ -49,7 +49,7 @@ class TagEmbedderStage extends Stage {
     const vectors = requireCompleteEmbeddingBatch(
       tags,
       rawVectors,
-      Number(ctx.config.dimension),
+      Number(ctx.config.dimension) || ctx.embeddingProvider?.getDimension() || 0,
       "tag",
     );
 

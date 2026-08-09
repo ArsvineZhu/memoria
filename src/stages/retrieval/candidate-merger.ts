@@ -1,17 +1,12 @@
 import type {
   ChunkCandidate,
   MemoryConfigOverrides,
-  MetadataStoreContract,
   PipelineContextLike,
   PipelineData,
   VectorResult,
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
-import { asMemoriaError } from "../../errors.js";
-
-// Recency decay: score *= 0.5 ^ (age / halfLife), with halfLife in days.
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Fuses vector and BM25 candidate lists into a single ranked result set.
@@ -20,8 +15,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * with configurable weights, cf. hybridAlpha in TDBKnowledge.searchLibrary):
  * raw scores of each source are normalized to [0,1] by their source max,
  * combined as a weighted sum, deduped by chunk id, minScore-filtered,
- * then optionally decayed by file recency (timeDecayHalfLife) and cut to
- * topK.
+ * then cut to topK. Recency is owned exclusively by TimeDecayStage.
  *
  * Input: { vectorResults: [{ indexName, chunkId, score }],
  *          bm25Results: [{ chunkId, score }] }
@@ -32,8 +26,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *   - hybridAlpha      alias for the vector weight (TDBKnowledge naming)
  *   - hybridBeta       alias for the BM25 weight
  *   - minScore         absolute merged-score threshold (default 0)
- *   - timeDecayHalfLife: score half-life in DAYS for recency decay
- *   - timeDecayNow     epoch-ms clock override (tests / determinism)
  *   - topK             max candidates returned (default 5)
  *
  * Output: { mergedCandidates: [{ chunkId, score, source, vectorScore,
@@ -120,18 +112,7 @@ class CandidateMergerStage extends Stage {
       );
     }
 
-    // 4. Optional recency decay via file updated_at / mtime.
-    const halfLifeDays = Number(config.timeDecayHalfLife);
-    if (halfLifeDays > 0 && ctx.metadataStore) {
-      merged = await this._applyTimeDecay(
-        merged,
-        halfLifeDays,
-        config,
-        ctx.metadataStore,
-      );
-    }
-
-    // 5. Sort desc and cap to topK.
+    // 4. Sort desc and cap to topK.
     merged.sort((a, b) => b.score - a.score || a.chunkId - b.chunkId);
     const topK = Math.max(1, Math.round(Number(info.topK ?? config.topK ?? 5)));
     merged = merged.slice(0, topK);
@@ -174,50 +155,6 @@ class CandidateMergerStage extends Stage {
     };
   }
 
-  async _applyTimeDecay(
-    candidates: ChunkCandidate[],
-    halfLifeDays: number,
-    config: MemoryConfigOverrides,
-    metadataStore: MetadataStoreContract,
-  ): Promise<ChunkCandidate[]> {
-    const nowMs = Number(config.timeDecayNow) || Date.now();
-    if (typeof metadataStore.getFileByChunkId !== "function") {
-      return candidates;
-    }
-
-    const decayed: ChunkCandidate[] = [];
-    for (const candidate of candidates) {
-      let decay = 1;
-      try {
-        const file = await metadataStore.getFileByChunkId(candidate.chunkId);
-        if (file) {
-          const updatedSeconds =
-            file.updated_at != null ? Number(file.updated_at) : null;
-          const recencySeconds =
-            updatedSeconds != null && Number.isFinite(updatedSeconds)
-              ? updatedSeconds
-              : Number(file.mtime) || null;
-          if (recencySeconds != null && Number.isFinite(recencySeconds)) {
-            const ageMs = Math.max(0, nowMs - recencySeconds * 1000);
-            decay = Math.pow(0.5, ageMs / (halfLifeDays * DAY_MS));
-          }
-        }
-      } catch (e) {
-        throw asMemoriaError(
-          e,
-          "persistence",
-          "Metadata store failed while applying recency decay.",
-          { retryable: true },
-        );
-      }
-      decayed.push({
-        ...candidate,
-        score: candidate.score * decay,
-        decay,
-      });
-    }
-    return decayed;
-  }
 }
 
 export default CandidateMergerStage;

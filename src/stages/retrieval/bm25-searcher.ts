@@ -4,6 +4,7 @@ import type {
   MemoryConfig,
   PipelineContextLike,
   PipelineData,
+  SearchCorpusChunk,
   Tokenizer,
 } from "../../types.js";
 
@@ -56,7 +57,7 @@ class BM25SearcherStage extends Stage {
     const info = input || {};
     const metadataStore = ctx.metadataStore;
 
-    if (!metadataStore || typeof metadataStore.getAllChunks !== "function") {
+    if (!metadataStore) {
       return { ...info, bm25Results: [], metadataStoreMissing: true };
     }
 
@@ -84,9 +85,28 @@ class BM25SearcherStage extends Stage {
     }
 
     // Corpus: chunk id -> token list.
-    let chunks: ChunkRow[] = [];
+    let chunks: Array<ChunkRow | SearchCorpusChunk> = [];
     try {
-      chunks = await metadataStore.getAllChunks();
+      if (typeof metadataStore.getSearchCorpus === "function") {
+        chunks = await metadataStore.getSearchCorpus(
+          Array.isArray(info.resolvedIndexNames)
+            ? info.resolvedIndexNames
+            : undefined,
+        );
+      } else {
+        const explicitScope =
+          Array.isArray(info.indexNames) ||
+          Array.isArray(info.diaryNames) ||
+          typeof info.diaryName === "string" ||
+          Array.isArray(info.libraries);
+        if (explicitScope && Array.isArray(info.resolvedIndexNames)) {
+          throw new Error("Metadata provider cannot honor scoped search.");
+        }
+        if (typeof metadataStore.getAllChunks !== "function") {
+          return { ...info, bm25Results: [], metadataStoreMissing: true };
+        }
+        chunks = await metadataStore.getAllChunks();
+      }
     } catch (e) {
       throw asMemoriaError(
         e,

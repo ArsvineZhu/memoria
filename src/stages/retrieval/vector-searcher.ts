@@ -66,7 +66,9 @@ class VectorSearcherStage extends Stage {
 
     const config = ctx.config || {};
     const queries: QueryVector[] = Array.isArray(info.queries) ? info.queries : [];
-    const indexNames = await this._resolveIndexNames(info, config, ctx);
+    const indexNames = Array.isArray(info.resolvedIndexNames)
+      ? [...info.resolvedIndexNames]
+      : await this._resolveIndexNames(info, config, ctx);
 
     const finalK = Math.max(1, Math.round(Number(info.topK ?? config.topK ?? 5)));
     const perIndexK = Math.max(
@@ -100,7 +102,7 @@ class VectorSearcherStage extends Stage {
 
       // Optional tag search: tag hits expand to chunks of tagged files.
       if (config.tagSearchEnabled && ctx.metadataStore) {
-        const tagHits = await this._searchTags(vector, config, ctx);
+        const tagHits = await this._searchTags(vector, config, ctx, indexNames);
         for (const hit of tagHits) {
           if (hit.indexName && hit.chunkId != null) {
             this._mergeHit(bestById, hit.indexName, hit.chunkId, hit.score);
@@ -203,6 +205,7 @@ class VectorSearcherStage extends Stage {
     queryVector: EmbeddingVector,
     config: MemoryConfigOverrides,
     ctx: PipelineContextLike,
+    allowedIndexNames?: readonly string[],
   ): Promise<IndexedVectorResult[]> {
     const metadataStore = ctx.metadataStore;
     const tagIndexName = config.tagIndexName || TAG_INDEX_NAME;
@@ -259,6 +262,11 @@ class VectorSearcherStage extends Stage {
         }
         for (const chunk of chunks || []) {
           if (chunk.id == null) continue;
+          if (allowedIndexNames && allowedIndexNames.length > 0) {
+            const file = await metadataStore.getFileByChunkId(chunk.id);
+            const indexName = file?.diary_name || file?.diaryName || "Root";
+            if (!allowedIndexNames.includes(indexName)) continue;
+          }
           expanded.push({
             indexName: tagIndexName,
             chunkId: Number(chunk.id),

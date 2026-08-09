@@ -7,8 +7,14 @@ import type {
   TdbChunkInput,
   TdbChunkRow,
   TdbCorpusChunk,
+  TdbDeleteDocumentStateResult,
+  TdbDocumentStateReplacement,
+  TdbDocumentStateReplacementResult,
   TdbFileRow,
+  TdbGenerationState,
   TdbInsertedChunk,
+  TdbRebuildChunk,
+  SearchCorpusChunk,
   TdbStoreContract,
 } from "../types.js";
 
@@ -66,6 +72,7 @@ interface TdbChunkQueryRow {
   node_id: number;
   text: string;
   checksum: string;
+  vector?: Buffer | null;
 }
 
 interface TdbMetaRow {
@@ -92,6 +99,7 @@ const SCHEMA_SQL = `
         node_id INTEGER NOT NULL,
         text TEXT NOT NULL,
         checksum TEXT NOT NULL,
+        vector BLOB,
         UNIQUE(library, path, chunk_index)
     );
     CREATE TABLE IF NOT EXISTS tdb_meta (
@@ -129,6 +137,28 @@ class TDBStore implements TdbStoreContract {
     this.db.pragma("synchronous = NORMAL");
     this.db.pragma(`busy_timeout = ${this.busyTimeout}`);
     this.db.exec(SCHEMA_SQL);
+    this._migrateSchema();
+    this._initializeGenerationKeys();
+  }
+
+  private _migrateSchema(): void {
+    const columns = this.db
+      .prepare("PRAGMA table_info(chunks)")
+      .all() as Array<{ name?: string }>;
+    if (!columns.some((column) => column.name === "vector")) {
+      this.db.exec("ALTER TABLE chunks ADD COLUMN vector BLOB");
+    }
+  }
+
+  private _initializeGenerationKeys(): void {
+    const insert = this.db.prepare(
+      "INSERT OR IGNORE INTO tdb_meta (key, value) VALUES (?, ?)",
+    );
+    this.db.transaction(() => {
+      insert.run("tdb.metadata_generation", "0");
+      insert.run("tdb.vector_generation", "0");
+      insert.run("tdb.vector_dirty", "1");
+    })();
   }
 
   // ── Files ────────────────────────────────────────────────────────
@@ -177,6 +207,132 @@ class TDBStore implements TdbStoreContract {
       .prepare("SELECT id FROM files WHERE library = ? AND path = ?")
       .get(meta.library, meta.path) as { id?: number } | undefined;
     return row?.id ?? null;
+  }
+
+  async replaceDocumentState(
+    replacement: TdbDocumentStateReplacement,
+  ): Promise<TdbDocumentStateReplacementResult> {
+    const { file, chunks } = replacement;
+    const transaction = this.db.transaction(() => {
+      const oldRows = this.db
+        .prepare(
+          "SELECT id, node_id FROM chunks WHERE library = ? AND path = ? ORDER BY chunk_index",
+        )
+        .all(file.library, file.path) as Array<{ id: number; node_id: number }>;
+
+      this.db
+        .prepare(
+          `
+          INSERT INTO files (library, path, checksum, mtime, size, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(library, path) DO UPDATE SET
+            checksum = excluded.checksum,
+            mtime = excluded.mtime,
+            size = excluded.size,
+            updated_at = excluded.updated_at
+        `,
+        )
+        .run(
+          file.library,
+          file.path,
+          file.checksum,
+          file.mtime,
+          file.size,
+          file.updatedAt,
+        );
+
+      const fileRow = this.db
+        .prepare("SELECT id FROM files WHERE library = ? AND path = ?")
+        .get(file.library, file.path) as { id?: number } | undefined;
+      const fileId = Number(fileRow?.id);
+      if (!Number.isSafeInteger(fileId) || fileId <= 0) {
+        throw new Error("TDB file upsert did not return an id");
+      }
+
+      this.db
+        .prepare("DELETE FROM chunks WHERE library = ? AND path = ?")
+        .run(file.library, file.path);
+
+      const insertChunk = this.db.prepare(`
+        INSERT INTO chunks
+          (library, path, chunk_index, node_id, text, checksum, vector)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const updateNodeId = this.db.prepare(
+        "UPDATE chunks SET node_id = ? WHERE id = ?",
+      );
+      const chunkIds: number[] = [];
+      const nodeIds: number[] = [];
+      chunks.forEach((chunk, index) => {
+        if (!chunk.vector) throw new Error("TDB document chunks require vectors");
+        const inserted = insertChunk.run(
+          file.library,
+          file.path,
+          index,
+          0,
+          chunk.text,
+          chunk.checksum,
+          chunk.vector,
+        );
+        const chunkId = Number(inserted.lastInsertRowid);
+        updateNodeId.run(chunkId, chunkId);
+        chunkIds.push(chunkId);
+        nodeIds.push(chunkId);
+      });
+
+      const metadataGeneration = this._incrementMetadataGeneration();
+      this._setMetaInTransaction("tdb.vector_dirty", "1");
+      return {
+        fileId,
+        chunkIds,
+        nodeIds,
+        removedChunkIds: oldRows.map((row) => row.id),
+        removedNodeIds: oldRows.map((row) => row.node_id),
+        metadataGeneration,
+      };
+    });
+    return transaction();
+  }
+
+  async deleteDocumentState(
+    library: string,
+    path: string,
+  ): Promise<TdbDeleteDocumentStateResult> {
+    const transaction = this.db.transaction(() => {
+      const file = this.db
+        .prepare("SELECT id FROM files WHERE library = ? AND path = ?")
+        .get(library, path) as { id?: number } | undefined;
+      if (file?.id == null) {
+        return {
+          removed: false,
+          fileId: null,
+          chunkIds: [],
+          nodeIds: [],
+          metadataGeneration: this._readMetadataGeneration(),
+        };
+      }
+      const rows = this.db
+        .prepare("SELECT id, node_id FROM chunks WHERE library = ? AND path = ?")
+        .all(library, path) as Array<{ id: number; node_id: number }>;
+      this.db.prepare("DELETE FROM chunks WHERE library = ? AND path = ?").run(
+        library,
+        path,
+      );
+      this.db.prepare("DELETE FROM files WHERE library = ? AND path = ?").run(
+        library,
+        path,
+      );
+      const metadataGeneration = this._incrementMetadataGeneration();
+      this._setMetaInTransaction("tdb.vector_dirty", "1");
+      return {
+        removed: true,
+        fileId: Number(file.id),
+        chunkIds: rows.map((row) => row.id),
+        nodeIds: rows.map((row) => row.node_id),
+        metadataGeneration,
+      };
+    });
+    return transaction();
   }
 
   /**
@@ -231,18 +387,10 @@ class TDBStore implements TdbStoreContract {
     library: string,
     path: string,
   ): Promise<{ chunkIds: number[]; nodeIds: number[] }> {
-    const chunkRows = this.db
-      .prepare("SELECT id, node_id FROM chunks WHERE library = ? AND path = ?")
-      .all(library, path) as Array<{ id: number; node_id: number }>;
-    this.db
-      .prepare("DELETE FROM chunks WHERE library = ? AND path = ?")
-      .run(library, path);
-    this.db
-      .prepare("DELETE FROM files WHERE library = ? AND path = ?")
-      .run(library, path);
+    const result = await this.deleteDocumentState(library, path);
     return {
-      chunkIds: chunkRows.map((r) => r.id),
-      nodeIds: chunkRows.map((r) => r.node_id),
+      chunkIds: result.chunkIds,
+      nodeIds: result.nodeIds,
     };
   }
 
@@ -268,13 +416,22 @@ class TDBStore implements TdbStoreContract {
       .run(library, path);
 
     const insert = this.db.prepare(`
-        INSERT INTO chunks (library, path, chunk_index, node_id, text, checksum)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO chunks
+          (library, path, chunk_index, node_id, text, checksum, vector)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     const rows = this.db.transaction((): TdbInsertedChunk[] => {
       const result: TdbInsertedChunk[] = [];
       chunks.forEach((chunk, index) => {
-        const info = insert.run(library, path, index, 0, chunk.text, chunk.checksum);
+        const info = insert.run(
+          library,
+          path,
+          index,
+          0,
+          chunk.text,
+          chunk.checksum,
+          chunk.vector ?? null,
+        );
         const chunkId = Number(info.lastInsertRowid);
         this.db
           .prepare("UPDATE chunks SET node_id = ? WHERE id = ?")
@@ -294,10 +451,13 @@ class TDBStore implements TdbStoreContract {
   async getChunks(library: string, path: string): Promise<TdbChunkRow[]> {
     const rows = this.db
       .prepare(
-        "SELECT id, chunk_index, node_id, text, checksum FROM chunks WHERE library = ? AND path = ? ORDER BY chunk_index",
+        "SELECT id, chunk_index, node_id, text, checksum, vector FROM chunks WHERE library = ? AND path = ? ORDER BY chunk_index",
       )
       .all(library, path) as Array<
-      Pick<TdbChunkQueryRow, "id" | "chunk_index" | "node_id" | "text" | "checksum">
+        Pick<
+          TdbChunkQueryRow,
+          "id" | "chunk_index" | "node_id" | "text" | "checksum" | "vector"
+        >
     >;
     return rows.map((r) => ({
       library,
@@ -307,6 +467,7 @@ class TDBStore implements TdbStoreContract {
       nodeId: r.node_id,
       text: r.text,
       checksum: r.checksum,
+      vector: r.vector ?? null,
     }));
   }
 
@@ -317,7 +478,7 @@ class TDBStore implements TdbStoreContract {
   async getChunkById(id: number): Promise<TdbChunkRow | null> {
     const row = this.db
       .prepare(
-        "SELECT id, library, path, chunk_index, node_id, text, checksum FROM chunks WHERE id = ?",
+        "SELECT id, library, path, chunk_index, node_id, text, checksum, vector FROM chunks WHERE id = ?",
       )
       .get(Number(id)) as TdbChunkQueryRow | undefined;
     if (!row) return null;
@@ -329,6 +490,7 @@ class TDBStore implements TdbStoreContract {
       nodeId: row.node_id,
       text: row.text,
       checksum: row.checksum,
+      vector: row.vector ?? null,
     };
   }
 
@@ -338,9 +500,32 @@ class TDBStore implements TdbStoreContract {
    */
   async getAllChunks(): Promise<TdbCorpusChunk[]> {
     const rows = this.db
-      .prepare("SELECT id, text FROM chunks ORDER BY id")
-      .all() as Array<{ id: number; text: string }>;
-    return rows.map((r) => ({ id: r.id, content: r.text }));
+      .prepare("SELECT id, library, text FROM chunks ORDER BY id")
+      .all() as Array<{ id: number; library: string; text: string }>;
+    return rows.map((r) => ({ id: r.id, content: r.text, indexName: r.library }));
+  }
+
+  async getSearchCorpus(libraries?: readonly string[]): Promise<SearchCorpusChunk[]> {
+    const names = Array.isArray(libraries)
+      ? [...new Set(libraries.map((name) => String(name).trim()).filter(Boolean))]
+      : [];
+    let sql = "SELECT id, library, text FROM chunks";
+    const params: string[] = [];
+    if (names.length > 0) {
+      sql += ` WHERE library IN (${names.map(() => "?").join(", ")})`;
+      params.push(...names);
+    }
+    sql += " ORDER BY id";
+    const rows = this.db.prepare(sql).all(...params) as Array<{
+      id: number;
+      library: string;
+      text: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      content: row.text,
+      indexName: row.library,
+    }));
   }
 
   // ── Libraries ────────────────────────────────────────────────────
@@ -363,6 +548,52 @@ class TDBStore implements TdbStoreContract {
     return this.listLibraries();
   }
 
+  async getExpectedVectorIndexNames(): Promise<string[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT DISTINCT library FROM chunks WHERE vector IS NOT NULL ORDER BY library",
+      )
+      .all() as Array<{ library: string }>;
+    return rows.map((row) => row.library).filter(Boolean);
+  }
+
+  async getTdbRebuildChunks(): Promise<TdbRebuildChunk[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT id, node_id, library, text, vector FROM chunks ORDER BY id",
+      )
+      .all() as Array<{
+      id: number;
+      node_id: number;
+      library: string;
+      text: string;
+      vector?: Buffer | null;
+    }>;
+    return rows.map((row) => ({
+      chunkId: row.id,
+      nodeId: row.node_id,
+      library: row.library,
+      text: row.text,
+      vector: row.vector ?? null,
+    }));
+  }
+
+  async updateChunkVectors(
+    entries: readonly { chunkId: number; vector: Buffer }[],
+  ): Promise<void> {
+    const update = this.db.prepare("UPDATE chunks SET vector = ? WHERE id = ?");
+    this.db.transaction(() => {
+      for (const entry of entries) update.run(entry.vector, entry.chunkId);
+    })();
+  }
+
+  async countFiles(): Promise<number> {
+    const row = this.db.prepare("SELECT COUNT(*) AS c FROM files").get() as {
+      c?: number;
+    };
+    return Number(row?.c) || 0;
+  }
+
   // ── KV ───────────────────────────────────────────────────────────
 
   async getMeta(key: string): Promise<string | null> {
@@ -372,9 +603,52 @@ class TDBStore implements TdbStoreContract {
   }
 
   async setMeta(key: string, value: string): Promise<void> {
+    this._setMetaInTransaction(key, String(value));
+  }
+
+  private _setMetaInTransaction(key: string, value: string): void {
     this.db
-      .prepare("INSERT OR REPLACE INTO tdb_meta (key, value) VALUES (?, ?)")
+      .prepare(
+        `INSERT INTO tdb_meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
       .run(key, String(value));
+  }
+
+  private _readMetadataGeneration(): number {
+    const row = this.db
+      .prepare("SELECT value FROM tdb_meta WHERE key = ?")
+      .get("tdb.metadata_generation") as TdbMetaRow | undefined;
+    const value = Number(row?.value);
+    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  }
+
+  private _incrementMetadataGeneration(): number {
+    const next = this._readMetadataGeneration() + 1;
+    this._setMetaInTransaction("tdb.metadata_generation", String(next));
+    return next;
+  }
+
+  async getTdbGenerationState(): Promise<TdbGenerationState> {
+    const metadataGeneration = this._readMetadataGeneration();
+    const vectorGenerationValue = Number(await this.getMeta("tdb.vector_generation"));
+    const dirtyValue = await this.getMeta("tdb.vector_dirty");
+    return {
+      metadataGeneration,
+      vectorGeneration: Number.isFinite(vectorGenerationValue)
+        ? Math.max(0, Math.floor(vectorGenerationValue))
+        : 0,
+      vectorDirty: dirtyValue !== "0",
+    };
+  }
+
+  async markTdbVectorStateClean(): Promise<void> {
+    const transaction = this.db.transaction(() => {
+      const generation = this._readMetadataGeneration();
+      this._setMetaInTransaction("tdb.vector_generation", String(generation));
+      this._setMetaInTransaction("tdb.vector_dirty", "0");
+    });
+    transaction();
   }
 
   // ── Health / lifecycle ───────────────────────────────────────────

@@ -895,6 +895,7 @@ export interface TdbDeleteEnvelope extends UnknownRecord {
   path?: string;
   fileId?: number;
   removedChunkIds?: number[];
+  removedNodeIds?: number[];
 }
 
 export interface TdbStats extends UnknownRecord {
@@ -928,11 +929,13 @@ export interface TdbChunkRow {
   nodeId: number;
   text: string;
   checksum: string;
+  vector?: Buffer | null;
 }
 
 export interface TdbChunkInput {
   text: string;
   checksum: string;
+  vector?: Buffer | null;
 }
 
 export interface TdbInsertedChunk {
@@ -943,6 +946,54 @@ export interface TdbInsertedChunk {
 export interface TdbCorpusChunk {
   id: number;
   content: string;
+  indexName?: string;
+}
+
+export interface TdbDocumentStateReplacement {
+  file: {
+    library: string;
+    path: string;
+    checksum: string;
+    mtime: number;
+    size: number;
+    updatedAt: number;
+  };
+  chunks: readonly {
+    text: string;
+    checksum: string;
+    vector: Buffer;
+  }[];
+}
+
+export interface TdbDocumentStateReplacementResult {
+  fileId: number;
+  chunkIds: number[];
+  nodeIds: number[];
+  removedChunkIds: number[];
+  removedNodeIds: number[];
+  metadataGeneration: number;
+}
+
+export interface TdbDeleteDocumentStateResult {
+  removed: boolean;
+  fileId: number | null;
+  chunkIds: number[];
+  nodeIds: number[];
+  metadataGeneration: number;
+}
+
+export interface TdbGenerationState {
+  metadataGeneration: number;
+  vectorGeneration: number;
+  vectorDirty: boolean;
+}
+
+export interface TdbRebuildChunk {
+  chunkId: number;
+  nodeId: number;
+  library: string;
+  text: string;
+  vector: Buffer | null;
 }
 
 export interface TdbStoreContract {
@@ -965,6 +1016,13 @@ export interface TdbStoreContract {
     library: string,
     path: string,
   ): Promise<{ chunkIds: number[]; nodeIds: number[] }>;
+  replaceDocumentState(
+    replacement: TdbDocumentStateReplacement,
+  ): Promise<TdbDocumentStateReplacementResult>;
+  deleteDocumentState(
+    library: string,
+    path: string,
+  ): Promise<TdbDeleteDocumentStateResult>;
   insertChunks(
     library: string,
     path: string,
@@ -973,6 +1031,15 @@ export interface TdbStoreContract {
   getChunks(library: string, path: string): Promise<TdbChunkRow[]>;
   getChunkById(id: number): Promise<TdbChunkRow | null>;
   getAllChunks(): Promise<TdbCorpusChunk[]>;
+  getSearchCorpus(libraries?: readonly string[]): Promise<SearchCorpusChunk[]>;
+  getExpectedVectorIndexNames(): Promise<string[]>;
+  getTdbGenerationState(): Promise<TdbGenerationState>;
+  markTdbVectorStateClean(): Promise<void>;
+  getTdbRebuildChunks(): Promise<TdbRebuildChunk[]>;
+  updateChunkVectors(
+    entries: readonly { chunkId: number; vector: Buffer }[],
+  ): Promise<void>;
+  countFiles(): Promise<number>;
   listLibraries(): Promise<string[]>;
   getDistinctDiaryNames(): Promise<string[]>;
   getMeta(key: string): Promise<string | null>;

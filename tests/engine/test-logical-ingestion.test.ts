@@ -22,6 +22,7 @@ interface LogicalDocumentInput {
 }
 
 interface LogicalEngine {
+  initialize(): Promise<void>;
   ingest(document: LogicalDocumentInput): Promise<UnknownRecord>;
   upsert(document: LogicalDocumentInput): Promise<UnknownRecord>;
   ingestBatch(documents: readonly LogicalDocumentInput[]): Promise<UnknownRecord[]>;
@@ -68,6 +69,7 @@ function makeEngine(): {
 
 test("logical ingestion does not require a filesystem path and persists source metadata", async () => {
   const { engine } = makeEngine();
+  await engine.initialize();
   const document = {
     id: "conversation:alpha:message:1",
     content: "A logical memory without a file path.",
@@ -96,6 +98,7 @@ test("logical ingestion does not require a filesystem path and persists source m
 
 test("logical re-ingestion is idempotent and upsert replaces one identity", async () => {
   const { engine } = makeEngine();
+  await engine.initialize();
   const first = {
     id: "memory:stable-id",
     content: "first revision",
@@ -124,6 +127,7 @@ test("logical re-ingestion is idempotent and upsert replaces one identity", asyn
 
 test("logical batch ingestion and remove are identity-based and idempotent", async () => {
   const { engine } = makeEngine();
+  await engine.initialize();
   const documents = [
     { id: "batch:1", content: "first batch item" },
     { id: "batch:2", content: "second batch item" },

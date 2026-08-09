@@ -1,7 +1,8 @@
 "use strict";
 
 import MetadataStore from "../interfaces/metadata-store.js";
-import BetterSqlite3 from "better-sqlite3";
+import { createRequire } from "node:module";
+import type BetterSqlite3 from "better-sqlite3";
 import type {
   ChunkMetadataInput,
   ChunkRow,
@@ -15,7 +16,22 @@ import type {
   TagRow,
 } from "../types.js";
 
-let DatabaseCtor: typeof BetterSqlite3 | null = BetterSqlite3;
+const requireFromProvider = createRequire(import.meta.url);
+let DatabaseCtor: typeof BetterSqlite3 | null = null;
+
+function loadDatabaseCtor(): typeof BetterSqlite3 | null {
+  if (DatabaseCtor) return DatabaseCtor;
+  try {
+    const loaded = requireFromProvider("better-sqlite3") as
+      | typeof BetterSqlite3
+      | { default?: typeof BetterSqlite3 };
+    DatabaseCtor =
+      typeof loaded === "function" ? loaded : (loaded.default ?? null);
+  } catch (_) {
+    DatabaseCtor = null;
+  }
+  return DatabaseCtor;
+}
 
 interface SqliteConfig {
   dbPath?: string;
@@ -141,7 +157,8 @@ class SqliteMetadataStore extends MetadataStore {
   constructor(config: SqliteConfig = {}) {
     super();
 
-    if (!DatabaseCtor) {
+    const Database = loadDatabaseCtor();
+    if (!Database) {
       throw new Error(
         "better-sqlite3 is not available. Install it with: pnpm add better-sqlite3",
       );
@@ -153,7 +170,7 @@ class SqliteMetadataStore extends MetadataStore {
     this.busyRetryDelay = config.busyRetryDelay || 100;
     this._closed = false;
 
-    this.db = new DatabaseCtor(this.dbPath);
+    this.db = new Database(this.dbPath);
     this._configureConnection();
     this._initializeSchema();
   }

@@ -1,6 +1,7 @@
 "use strict";
 
-import BetterSqlite3 from "better-sqlite3";
+import { createRequire } from "node:module";
+import type BetterSqlite3 from "better-sqlite3";
 import type {
   HealthStatus,
   TdbChunkInput,
@@ -26,7 +27,22 @@ import type {
  * underlying better-sqlite3 calls are synchronous.
  */
 
-let DatabaseCtor: typeof BetterSqlite3 | null = BetterSqlite3;
+const requireFromStore = createRequire(import.meta.url);
+let DatabaseCtor: typeof BetterSqlite3 | null = null;
+
+function loadDatabaseCtor(): typeof BetterSqlite3 | null {
+  if (DatabaseCtor) return DatabaseCtor;
+  try {
+    const loaded = requireFromStore("better-sqlite3") as
+      | typeof BetterSqlite3
+      | { default?: typeof BetterSqlite3 };
+    DatabaseCtor =
+      typeof loaded === "function" ? loaded : (loaded.default ?? null);
+  } catch (_) {
+    DatabaseCtor = null;
+  }
+  return DatabaseCtor;
+}
 
 interface TdbStoreConfig {
   dbPath?: string;
@@ -100,7 +116,8 @@ class TDBStore implements TdbStoreContract {
    * @param {number} [config.busyTimeout]   - SQLite busy_timeout in ms (default 10000)
    */
   constructor(config: TdbStoreConfig = {}) {
-    if (!DatabaseCtor) {
+    const Database = loadDatabaseCtor();
+    if (!Database) {
       throw new Error(
         "better-sqlite3 is not available. Install it with: pnpm add better-sqlite3",
       );
@@ -109,7 +126,7 @@ class TDBStore implements TdbStoreContract {
     this.busyTimeout = config.busyTimeout || 10000;
     this._closed = false;
 
-    this.db = new DatabaseCtor(this.dbPath);
+    this.db = new Database(this.dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.db.pragma(`busy_timeout = ${this.busyTimeout}`);

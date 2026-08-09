@@ -8,12 +8,10 @@ import PipelineContext from "./core/context.js";
 import IngestPipeline from "./pipelines/ingest-pipeline.js";
 import DeletePipeline from "./pipelines/delete-pipeline.js";
 import SearchPipeline from "./pipelines/search-pipeline.js";
-import OpenAIEmbeddingProvider from "./providers/openai-embedding-provider.js";
-import VexusVectorStore from "./providers/vexus-vector-store.js";
-import SqliteMetadataStore from "./providers/sqlite-metadata-store.js";
 import type {
   DatabaseLike,
   DeleteEnvelope,
+  EmbeddingProviderContract,
   FileInput,
   IngestEnvelope,
   MemoryConfig,
@@ -39,7 +37,8 @@ interface RuntimeMetadataStore extends MetadataStoreContract {
 
 interface RuntimeVectorStore extends VectorStoreContract {
   indices?: Map<string, unknown>;
-  flushPendingSaves?: () => void;
+  flushPendingSaves?: () => void | Promise<void>;
+  close?: () => void | Promise<void>;
 }
 
 export interface EngineStats {
@@ -52,6 +51,8 @@ export interface EngineStats {
   healthy: { healthy: boolean; issues: string[] };
   initialized: boolean;
 }
+
+export type EngineState = "created" | "initializing" | "ready" | "closing" | "closed";
 
 function isRecord(value: unknown): value is UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -108,15 +109,19 @@ class MemoryEngine {
   name: string;
   options: MemoryEngineOptions;
   config: MemoryConfig;
-  metadataStore: RuntimeMetadataStore;
-  vectorStore: RuntimeVectorStore;
-  embeddingProvider: import("./types.js").EmbeddingProviderContract;
-  ctx: PipelineContext;
+  metadataStore!: RuntimeMetadataStore;
+  vectorStore!: RuntimeVectorStore;
+  embeddingProvider!: EmbeddingProviderContract;
+  ctx!: PipelineContext;
   ingestPipeline: IngestPipeline;
   deletePipeline: DeletePipeline;
   searchPipeline: SearchPipeline;
-  initialized: boolean;
+  state: EngineState;
   private _initPromise: Promise<void> | null;
+  private _closePromise: Promise<void> | null;
+  private _ownsMetadataStore = false;
+  private _ownsVectorStore = false;
+  private _ownsEmbeddingProvider = false;
   private readonly _mutationTails = new Map<string, Promise<void>>();
   _closed: boolean;
   ragParams: UnknownRecord;
@@ -147,54 +152,32 @@ class MemoryEngine {
       this.config.dbPath = options.dbPath;
     }
 
-    // 2. Providers — injected instances win; otherwise build the defaults.
-    this.metadataStore = (options.metadataStore ||
-      new SqliteMetadataStore({
-        dbPath: this.config.dbPath,
-        dimension: this.config.dimension,
-        busyTimeout: this.config.busyTimeout,
-        busyRetryDelay: this.config.busyRetryDelay,
-      })) as RuntimeMetadataStore;
-    this.vectorStore = (options.vectorStore ||
-      new VexusVectorStore({
-        dimension: this.config.dimension,
-        storePath: this.config.storePath,
-        tagIndexCapacity: this.config.tagIndexCapacity,
-        indexSaveDelay: this.config.indexSaveDelay,
-        tagIndexSaveDelay: this.config.tagIndexSaveDelay,
-        persistTagIndex: this.config.persistTagIndex,
-      })) as RuntimeVectorStore;
-    this.embeddingProvider =
-      options.embeddingProvider ||
-      new OpenAIEmbeddingProvider({
-        apiUrl: this.config.apiUrl,
-        apiKey: this.config.apiKey,
-        model: this.config.model,
-        modelSig: this.config.modelSig,
-        dimension: this.config.dimension,
-        maxBatchItems: this.config.maxBatchItems,
-        maxToken: this.config.maxToken,
-        concurrency: this.config.concurrency,
-        fallbackModels: this.config.fallbackModels,
-      });
+    // Providers and the shared context are deliberately deferred until
+    // initialize(). Injected instances are safe to retain here because they
+    // have already been created by the caller; default backends are not.
+    const injectedMetadataStore = options.metadataStore || options.ctx?.metadataStore;
+    if (injectedMetadataStore) {
+      this.metadataStore = injectedMetadataStore as RuntimeMetadataStore;
+    }
+    const injectedVectorStore = options.vectorStore || options.ctx?.vectorStore;
+    if (injectedVectorStore) {
+      this.vectorStore = injectedVectorStore as RuntimeVectorStore;
+    }
+    const injectedEmbeddingProvider =
+      options.embeddingProvider || options.ctx?.embeddingProvider;
+    if (injectedEmbeddingProvider) {
+      this.embeddingProvider = injectedEmbeddingProvider;
+    }
 
-    // 3. Shared pipeline context (DI container for every stage).
-    this.ctx = new PipelineContext({
-      config: this.config,
-      embeddingProvider: this.embeddingProvider,
-      vectorStore: this.vectorStore,
-      metadataStore: this.metadataStore,
-      ...(options.ctx || {}),
-    });
-
-    // 4. Pipelines.
+    // Pipelines are pure stage graphs and do not open native resources.
     this.ingestPipeline = new IngestPipeline(this.config, options.ingestOptions || {});
     this.deletePipeline = new DeletePipeline(this.config, options.deleteOptions || {});
     this.searchPipeline = new SearchPipeline(this.config, options.searchOptions || {});
 
-    // 5. Lifecycle + session statistics.
-    this.initialized = false;
+    // Lifecycle + session statistics.
+    this.state = "created";
     this._initPromise = null;
+    this._closePromise = null;
     this._closed = false;
     this.ragParams = {};
     this._lastIndexedAt = null;
@@ -206,11 +189,35 @@ class MemoryEngine {
    * mark the engine ready. Idempotent (concurrent calls share one run).
    * @returns {Promise<void>}
    */
-  async initialize(): Promise<void> {
-    if (this.initialized) return this._initPromise || undefined;
-    if (this._initPromise) return this._initPromise;
+  get initialized(): boolean {
+    return this.state === "ready";
+  }
 
-    this._initPromise = (async () => {
+  async initialize(): Promise<void> {
+    if (this.state === "ready") return;
+    if (this.state === "initializing") {
+      await this._initPromise;
+      return;
+    }
+    if (this.state === "closing" || this.state === "closed") {
+      throw new MemoriaError(
+        "lifecycle",
+        `MemoryEngine cannot initialize while it is ${this.state}.`,
+      );
+    }
+
+    this.state = "initializing";
+    this._closed = false;
+    const initialization = (async () => {
+      await this._ensureProviders();
+      this.ctx = new PipelineContext({
+        ...(this.options.ctx || {}),
+        config: this.config,
+        embeddingProvider: this.embeddingProvider,
+        vectorStore: this.vectorStore,
+        metadataStore: this.metadataStore,
+      });
+
       const { ragParamsPath, ragParams: ragOverrides } = this.options;
       this.ragParams = await loadRagParams({
         path: ragParamsPath,
@@ -218,21 +225,133 @@ class MemoryEngine {
       });
 
       this._applyRagParamsToConfig(this.ragParams);
-      this.lastReconciliation = await this.reconcile();
+      this.lastReconciliation = await this._reconcileInternal();
       if (this.options.onReady && typeof this.options.onReady === "function") {
         await this.options.onReady(this);
       }
-      this.initialized = true;
+      this.state = "ready";
     })();
+    this._initPromise = initialization;
 
     try {
-      await this._initPromise;
+      await initialization;
+      this._initPromise = null;
     } catch (error) {
       this._initPromise = null;
-      this.initialized = false;
+      try {
+        await this._disposeOwnedResources(true);
+      } catch (_) {
+        // Preserve the initialization failure; cleanup is best effort.
+      }
+      this.ctx = undefined as unknown as PipelineContext;
+      this.state = "created";
+      this._closed = false;
       throw error;
     }
-    return undefined;
+  }
+
+  private async _ensureProviders(): Promise<void> {
+    if (!this.metadataStore) {
+      const { default: SqliteMetadataStore } = await import(
+        "./providers/sqlite-metadata-store.js"
+      );
+      this.metadataStore = new SqliteMetadataStore({
+        dbPath: this.config.dbPath,
+        dimension: this.config.dimension,
+        busyTimeout: this.config.busyTimeout,
+        busyRetryDelay: this.config.busyRetryDelay,
+      }) as RuntimeMetadataStore;
+      this._ownsMetadataStore = true;
+    }
+    if (!this.vectorStore) {
+      const { default: VexusVectorStore } = await import(
+        "./providers/vexus-vector-store.js"
+      );
+      this.vectorStore = new VexusVectorStore({
+        dimension: this.config.dimension,
+        storePath: this.config.storePath,
+        tagIndexCapacity: this.config.tagIndexCapacity,
+        indexSaveDelay: this.config.indexSaveDelay,
+        tagIndexSaveDelay: this.config.tagIndexSaveDelay,
+        persistTagIndex: this.config.persistTagIndex,
+        indexLoadEnabled: this.config.indexLoadEnabled,
+      }) as RuntimeVectorStore;
+      this._ownsVectorStore = true;
+    }
+    if (!this.embeddingProvider) {
+      const { default: OpenAIEmbeddingProvider } = await import(
+        "./providers/openai-embedding-provider.js"
+      );
+      this.embeddingProvider = new OpenAIEmbeddingProvider({
+        apiUrl: this.config.apiUrl,
+        apiKey: this.config.apiKey,
+        model: this.config.model,
+        modelSig: this.config.modelSig,
+        dimension: this.config.dimension,
+        maxBatchItems: this.config.maxBatchItems,
+        maxToken: this.config.maxToken,
+        concurrency: this.config.concurrency,
+        fallbackModels: this.config.fallbackModels,
+      });
+      this._ownsEmbeddingProvider = true;
+    }
+  }
+
+  private _assertReady(operation: string): void {
+    if (
+      this.state !== "ready" ||
+      !this.metadataStore ||
+      !this.vectorStore ||
+      !this.embeddingProvider ||
+      !this.ctx
+    ) {
+      throw new MemoriaError(
+        "lifecycle",
+        `MemoryEngine must be ready before ${operation}; current state is ${this.state}.`,
+      );
+    }
+  }
+
+  private async _reconcileInternal(): Promise<ReconciliationReport> {
+    return reconcileVectorIndexes({
+      metadataStore: this.metadataStore,
+      vectorStore: this.vectorStore,
+      dimension: this.config.dimension,
+    });
+  }
+
+  private async _flushVectorStore(): Promise<void> {
+    if (this.vectorStore && typeof this.vectorStore.flushPendingSaves === "function") {
+      await this.vectorStore.flushPendingSaves();
+    }
+  }
+
+  private async _disposeOwnedResources(resetReferences: boolean): Promise<void> {
+    const vectorStore = this.vectorStore;
+    const metadataStore = this.metadataStore;
+    const vectorOwned = this._ownsVectorStore;
+    const metadataOwned = this._ownsMetadataStore;
+    const embeddingOwned = this._ownsEmbeddingProvider;
+
+    if (vectorOwned && vectorStore && typeof vectorStore.close === "function") {
+      await vectorStore.close();
+    }
+    if (metadataOwned && metadataStore && typeof metadataStore.close === "function") {
+      await metadataStore.close();
+    }
+
+    this._ownsVectorStore = false;
+    this._ownsMetadataStore = false;
+    this._ownsEmbeddingProvider = false;
+    if (resetReferences) {
+      if (vectorOwned) this.vectorStore = undefined as unknown as RuntimeVectorStore;
+      if (metadataOwned) {
+        this.metadataStore = undefined as unknown as RuntimeMetadataStore;
+      }
+      if (embeddingOwned) {
+        this.embeddingProvider = undefined as unknown as EmbeddingProviderContract;
+      }
+    }
   }
 
   private _runSerializedMutation<T>(
@@ -256,11 +375,8 @@ class MemoryEngine {
 
   /** Rebuild derived vector indices from the metadata/content authority. */
   async reconcile(): Promise<ReconciliationReport> {
-    return reconcileVectorIndexes({
-      metadataStore: this.metadataStore,
-      vectorStore: this.vectorStore,
-      dimension: this.config.dimension,
-    });
+    this._assertReady("reconcile");
+    return this._reconcileInternal();
   }
 
   /**
@@ -316,6 +432,7 @@ class MemoryEngine {
   async flushBatch(
     files?: FileInput | readonly FileInput[] | string,
   ): Promise<IngestEnvelope[]> {
+    this._assertReady("flushBatch");
     const entries = normalizeFiles(files);
     const results: IngestEnvelope[] = [];
     for (const entry of entries) {
@@ -346,6 +463,7 @@ class MemoryEngine {
    * flushBatch(), while this method is the core content-centered contract.
    */
   async ingest(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+    this._assertReady("ingest");
     if (!document || typeof document !== "object") {
       throw new MemoriaError("ingestion", "A logical document object is required.");
     }
@@ -393,13 +511,15 @@ class MemoryEngine {
   }
 
   /** Explicit replacement spelling for callers that do not use revisioned ingest. */
-  upsert(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+  async upsert(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+    this._assertReady("upsert");
     return this.ingest(document);
   }
 
   async ingestBatch(
     documents: readonly MemoryDocumentInput[],
   ): Promise<MemoryDocumentIngestResult[]> {
+    this._assertReady("ingestBatch");
     if (!Array.isArray(documents)) {
       throw new MemoriaError("ingestion", "Logical document batch must be an array.");
     }
@@ -410,6 +530,7 @@ class MemoryEngine {
 
   /** Remove a logical document by stable identity, without requiring its source path. */
   async remove(documentId: string): Promise<MemoryDocumentDeleteResult> {
+    this._assertReady("remove");
     const normalizedId = normalizeDocumentId(documentId);
     return this._runSerializedMutation(`document:${normalizedId}`, async () => {
       const storagePath = logicalDocumentPath(normalizedId);
@@ -441,7 +562,10 @@ class MemoryEngine {
    * @param {Array|object|undefined} files
    * @returns {Promise<Array<object>>}
    */
-  flush(files?: FileInput | readonly FileInput[] | string): Promise<IngestEnvelope[]> {
+  async flush(
+    files?: FileInput | readonly FileInput[] | string,
+  ): Promise<IngestEnvelope[]> {
+    this._assertReady("flush");
     return this.flushBatch(files);
   }
 
@@ -458,6 +582,7 @@ class MemoryEngine {
     query: string | PipelineData,
     options: UnknownRecord = {},
   ): Promise<SearchEnvelope> {
+    this._assertReady("search");
     const input: PipelineData = {
       ...(isRecord(query) ? query : { query }),
     };
@@ -472,6 +597,7 @@ class MemoryEngine {
    * @returns {Promise<object>} delete envelope { deleted, fileId, removedChunkIds, ... }
    */
   async handleDelete(input: string | FileInput): Promise<DeleteEnvelope> {
+    this._assertReady("handleDelete");
     const source: FileInput = typeof input === "string" ? { path: input } : input;
     return this._runSerializedMutation(
       `file:${normalizeMutationPath(source.path)}`,
@@ -493,7 +619,8 @@ class MemoryEngine {
    * @param {string} filePath
    * @returns {Promise<object>}
    */
-  deleteFile(filePath: string): Promise<DeleteEnvelope> {
+  async deleteFile(filePath: string): Promise<DeleteEnvelope> {
+    this._assertReady("deleteFile");
     return this.handleDelete({ path: filePath });
   }
 
@@ -504,6 +631,7 @@ class MemoryEngine {
    *   healthy:boolean, initialized:boolean}>}
    */
   async getStats(): Promise<EngineStats> {
+    this._assertReady("getStats");
     const store = this.metadataStore;
     const chunks = (await store.getAllChunks()) || [];
     const tags = (await store.getAllTags()) || [];
@@ -603,21 +731,42 @@ class MemoryEngine {
    * Idempotent.
    * @returns {Promise<void>}
    */
-  async close() {
-    if (this._closed) return;
-    this._closed = true;
-    if (this.vectorStore && typeof this.vectorStore.flushPendingSaves === "function") {
-      try {
-        this.vectorStore.flushPendingSaves();
-      } catch (e) {
-        // Index persistence failures must not block shutdown.
-        console.error(
-          `[MemoryEngine] flush pending saves failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+  async close(): Promise<void> {
+    if (this.state === "closed") return;
+    if (this._closePromise) return this._closePromise;
+
+    const closing = (async () => {
+      if (this.state === "initializing" && this._initPromise) {
+        await this._initPromise;
       }
-    }
-    if (this.metadataStore && typeof this.metadataStore.close === "function") {
-      this.metadataStore.close();
+
+      if (this.state === "closed") return;
+      if (this.state === "created") {
+        await this._disposeOwnedResources(false);
+        this.state = "closed";
+        this._closed = true;
+        return;
+      }
+
+      this.state = "closing";
+      await Promise.all([...this._mutationTails.values()]);
+      await this._flushVectorStore();
+      await this._disposeOwnedResources(false);
+      this.state = "closed";
+      this._closed = true;
+    })();
+    this._closePromise = closing;
+
+    try {
+      await closing;
+    } catch (error) {
+      if (this.state === "closing") {
+        this.state = "ready";
+        this._closed = false;
+      }
+      throw error;
+    } finally {
+      this._closePromise = null;
     }
   }
 }

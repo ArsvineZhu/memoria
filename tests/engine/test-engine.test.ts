@@ -235,20 +235,28 @@ test("loadRagParams rejects malformed roots", async () => {
 
 // ── Engine factory & wiring ──────────────────────────────────────────
 
-test("createMemoryEngine builds a MemoryEngine with default wiring", () => {
+test("createMemoryEngine defers default wiring until initialize", async () => {
   const engine = createMemoryEngine({ config: { dimension: DIM } });
   assert.ok(engine instanceof MemoryEngine);
   assert.strictEqual(engine.name, "memoryEngine");
-  assert.ok(engine.ctx, "context built");
+  assert.strictEqual(
+    (engine as unknown as { ctx?: unknown }).ctx,
+    undefined,
+    "context is deferred",
+  );
   assert.ok(engine.ingestPipeline);
   assert.ok(engine.deletePipeline);
   assert.ok(engine.searchPipeline);
+  assert.strictEqual(engine.initialized, false);
+
+  await engine.initialize();
+  assert.ok(engine.ctx, "context built after initialize");
   assert.ok(engine.ctx.metadataStore);
   assert.ok(engine.ctx.vectorStore);
   assert.ok(engine.ctx.embeddingProvider);
   assert.strictEqual(engine.ctx.config.dimension, DIM);
   assert.strictEqual(engine.ctx.vectorStore.dimension, DIM);
-  assert.strictEqual(engine.initialized, false);
+  await engine.close();
 });
 
 test("initialize() is idempotent and exposes ragParams", async () => {
@@ -432,20 +440,20 @@ test("injected fake embedding provider is used instead of the network provider",
     config: { dimension: DIM, rootPath: root },
     embeddingProvider: fake,
   });
+
+  await engine.initialize();
   assert.strictEqual(engine.ctx.embeddingProvider, fake);
   assert.ok(
     !(engine.ctx.embeddingProvider as EmbeddingProviderContract & { apiUrl?: string })
       .apiUrl,
     "network provider not constructed",
   );
-
-  await engine.initialize();
   const results = await engine.flushBatch([{ path: abs }]);
   const firstResult = at(results, 0, "ingest results");
   assert.ok(firstResult.chunkIds && firstResult.chunkIds.length >= 1);
   const out = await engine.search("量子计算");
   assert.ok(out.results.length >= 1);
-  engine.close();
+  await engine.close();
 });
 
 test("custom metadataStore / vectorStore providers are injected verbatim", async () => {
@@ -459,9 +467,10 @@ test("custom metadataStore / vectorStore providers are injected verbatim", async
     metadataStore,
     vectorStore,
   });
+  await engine.initialize();
   assert.strictEqual(engine.ctx.metadataStore, metadataStore);
   assert.strictEqual(engine.ctx.vectorStore, vectorStore);
-  engine.close();
+  await engine.close();
 });
 
 test("close() flushes pending saves and closes the metadata store idempotently", async () => {

@@ -60,9 +60,14 @@ function loadNativeModule(): VexusNativeModule {
   }
 }
 
-const nativeModule = loadNativeModule();
+let nativeModule: VexusNativeModule | null = null;
 
-export const { VexusIndex } = nativeModule;
+/** Load the Rust binding only when a concrete native-backed index is needed. */
+export function getVexusIndex(): VexusNativeModule["VexusIndex"] {
+  nativeModule ??= loadNativeModule();
+  return nativeModule.VexusIndex;
+}
+
 export type VexusIndex = InstanceType<VexusNativeModule["VexusIndex"]>;
 
 export type {

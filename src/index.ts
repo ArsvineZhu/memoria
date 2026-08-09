@@ -117,6 +117,8 @@ export {
   extractTags,
 };
 
+export type { EngineState } from "./engine.js";
+
 export type {
   ChunkCandidate,
   ChunkEntry,

@@ -5,7 +5,8 @@ import * as fs from "node:fs";
 import * as crypto from "node:crypto";
 import VectorStore from "../interfaces/vector-store.js";
 
-import { VexusIndex } from "../native/vexus-lite.js";
+import { getVexusIndex } from "../native/vexus-lite.js";
+import type { VexusIndex } from "../native/vexus-lite.js";
 import type {
   VectorHit,
   VectorIndexEntry,
@@ -114,6 +115,7 @@ class VexusVectorStore extends VectorStore {
     if (existing) {
       return existing;
     }
+    const VexusIndex = getVexusIndex();
     const cap = capacity ?? this.defaultCapacity;
     let index = null;
     if (this.indexLoadEnabled && this._indexFileExists(indexName)) {
@@ -284,6 +286,7 @@ class VexusVectorStore extends VectorStore {
       this.saveTimers.delete(indexName);
     }
     const capacity = Math.max(this.defaultCapacity, entries.length, 1);
+    const VexusIndex = getVexusIndex();
     const index = new VexusIndex(this.dimension, capacity);
     for (const entry of entries) {
       assertVectorDimension(
@@ -303,6 +306,7 @@ class VexusVectorStore extends VectorStore {
 
   override async loadIndex(indexName: string, filePath: string): Promise<VexusIndex> {
     const resolvedPath = filePath || this._getIndexPath(indexName);
+    const VexusIndex = getVexusIndex();
     const index = VexusIndex.load(
       resolvedPath,
       null,

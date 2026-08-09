@@ -6,6 +6,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
 
 // Global tag vector index name (mirror of KnowledgeBaseManager.tagIndex).
@@ -107,11 +108,25 @@ class VectorIndexerStage extends Stage {
       // remove-then-add upsert so re-embedding stays idempotent.
       const message = e instanceof Error ? e.message : String(e);
       if (/duplicate/i.test(message)) {
-        await this._safeRemove(vectorStore, indexName, id);
-        await vectorStore.add(indexName, id, vector);
+        try {
+          await this._safeRemove(vectorStore, indexName, id);
+          await vectorStore.add(indexName, id, vector);
+        } catch (retryError) {
+          throw asMemoriaError(
+            retryError,
+            "vector_backend",
+            "Vector store failed while replacing a vector.",
+            { retryable: true },
+          );
+        }
         return;
       }
-      throw e;
+      throw asMemoriaError(
+        e,
+        "vector_backend",
+        "Vector store failed while writing a vector.",
+        { retryable: true },
+      );
     }
   }
 
@@ -129,7 +144,12 @@ class VectorIndexerStage extends Stage {
       if (/not found|missing|absent/i.test(message)) {
         return;
       }
-      throw e;
+      throw asMemoriaError(
+        e,
+        "vector_backend",
+        "Vector store failed while removing a vector.",
+        { retryable: true },
+      );
     }
   }
 }

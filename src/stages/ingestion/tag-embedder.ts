@@ -6,6 +6,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
 
 /**
@@ -28,7 +29,16 @@ class TagEmbedderStage extends Stage {
 
     let vectors: Array<EmbeddingVector | null> = [];
     if (tags.length > 0 && ctx.embeddingProvider) {
-      vectors = await ctx.embeddingProvider.embedBatch(tags);
+      try {
+        vectors = await ctx.embeddingProvider.embedBatch(tags);
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "embedding",
+          "Embedding provider failed while embedding tags.",
+          { retryable: true },
+        );
+      }
     }
 
     const tagEntries: TagEntry[] = [];

@@ -7,6 +7,7 @@ import type {
 import * as path from "node:path";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 
 /**
  * Removes a single file from the knowledge base: file row, chunk rows and
@@ -99,7 +100,12 @@ class FileDeleterStage extends Stage {
       if (/not found|missing|absent/i.test(message)) {
         return;
       }
-      throw e;
+      throw asMemoriaError(
+        e,
+        "vector_backend",
+        "Vector store failed while deleting a vector.",
+        { retryable: true },
+      );
     }
   }
 }

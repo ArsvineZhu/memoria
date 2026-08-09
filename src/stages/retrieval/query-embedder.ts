@@ -7,6 +7,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
 
 /**
@@ -87,8 +88,11 @@ class QueryEmbedderStage extends Stage {
     try {
       vectors = await embeddingProvider.embedBatch(texts, { textType: "query" });
     } catch (e) {
-      console.warn(
-        `[QueryEmbedder] Embedding failed: ${e instanceof Error ? e.message : String(e)}`,
+      throw asMemoriaError(
+        e,
+        "embedding",
+        "Embedding provider failed while embedding a query.",
+        { retryable: true },
       );
     }
 

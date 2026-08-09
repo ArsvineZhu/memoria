@@ -6,6 +6,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
 
 /**
@@ -28,7 +29,16 @@ class ChunkEmbedderStage extends Stage {
 
     let vectors: Array<EmbeddingVector | null> = [];
     if (chunks.length > 0 && ctx.embeddingProvider) {
-      vectors = await ctx.embeddingProvider.embedBatch(chunks);
+      try {
+        vectors = await ctx.embeddingProvider.embedBatch(chunks);
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "embedding",
+          "Embedding provider failed while embedding document chunks.",
+          { retryable: true },
+        );
+      }
     }
 
     const chunkEntries: ChunkEntry[] = [];

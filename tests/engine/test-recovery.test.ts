@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import { createMemoryEngine } from "../../src/index.js";
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
+import { MemoriaError } from "../../src/errors.js";
 import type {
   EmbeddingProviderContract,
   VectorHit,
@@ -97,6 +98,18 @@ function embeddingProvider(): EmbeddingProviderContract {
   };
 }
 
+function assertWrappedFailure(error: unknown, code: MemoriaError["code"], message: string) {
+  assert.ok(error instanceof MemoriaError);
+  assert.equal(error.code, code);
+  assert.equal(
+    (error as Error & { cause?: unknown }).cause instanceof Error
+      ? (error as Error & { cause: Error }).cause.message
+      : undefined,
+    message,
+  );
+  return true;
+}
+
 function failingVectorStore(): VectorStoreContract {
   return {
     async add(): Promise<void> {
@@ -132,7 +145,7 @@ test("metadata remains recoverable when vector write fails after DB persistence"
   await first.initialize();
   await assert.rejects(
     () => first.ingest({ id: "crash:vector-before", content: "persist me" }),
-    /simulated vector write crash/,
+    (error: unknown) => assertWrappedFailure(error, "vector_backend", "simulated vector write crash"),
   );
   await first.close();
 
@@ -293,7 +306,7 @@ test("failed vector writes leave vector_dirty set after close", async () => {
   await engine.initialize();
   await assert.rejects(
     () => engine.ingest({ id: "dirty:write-failure", content: "persist me" }),
-    /simulated vector write crash/,
+    (error: unknown) => assertWrappedFailure(error, "vector_backend", "simulated vector write crash"),
   );
   await engine.close();
 
@@ -316,7 +329,10 @@ test("failed vector persistence does not clear dirty and remains retryable", asy
   await engine.ingest({ id: "dirty:flush-failure", content: "persist me" });
   vectorStore.flushError = new Error("simulated persistence failure");
 
-  await assert.rejects(() => engine.close(), /simulated persistence failure/);
+  await assert.rejects(
+    () => engine.close(),
+    (error: unknown) => assertWrappedFailure(error, "lifecycle", "simulated persistence failure"),
+  );
   assert.equal(engine.state, "ready");
   assert.equal(await metadataStore.getKv?.("memoria.vector_dirty"), "1");
 

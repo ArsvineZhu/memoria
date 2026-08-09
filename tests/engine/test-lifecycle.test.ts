@@ -197,7 +197,17 @@ test("failed initialization cleans owned state and returns to created", async ()
   });
 
   try {
-    await assert.rejects(() => engine.initialize(), /ready hook failed/);
+    await assert.rejects(() => engine.initialize(), (error: unknown) => {
+      assert.ok(error instanceof MemoriaError);
+      assert.strictEqual(error.code, "configuration");
+      assert.strictEqual(
+        (error as Error & { cause?: unknown }).cause instanceof Error
+          ? (error as Error & { cause: Error }).cause.message
+          : undefined,
+        "ready hook failed",
+      );
+      return true;
+    });
     assert.strictEqual(engine.state, "created");
     assert.strictEqual(engine.initialized, false);
     assert.strictEqual(metadataStore._closed, false);

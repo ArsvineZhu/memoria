@@ -25,7 +25,7 @@ import type {
   UnknownRecord,
   VectorStoreContract,
 } from "./types.js";
-import { MemoriaError } from "./errors.js";
+import { asMemoriaError, MemoriaError } from "./errors.js";
 import { logicalDocumentPath, normalizeDocumentId } from "./utils/logical-document.js";
 import { reconcileVectorIndexes } from "./reconciliation.js";
 
@@ -248,54 +248,86 @@ class MemoryEngine {
       this.ctx = undefined as unknown as PipelineContext;
       this.state = "created";
       this._closed = false;
-      throw error;
+      throw asMemoriaError(
+        error,
+        "configuration",
+        "MemoryEngine initialization failed.",
+        { retryable: true },
+      );
     }
   }
 
   private async _ensureProviders(): Promise<void> {
     if (!this.metadataStore) {
-      const { default: SqliteMetadataStore } = await import(
-        "./providers/sqlite-metadata-store.js"
-      );
-      this.metadataStore = new SqliteMetadataStore({
-        dbPath: this.config.dbPath,
-        dimension: this.config.dimension,
-        busyTimeout: this.config.busyTimeout,
-        busyRetryDelay: this.config.busyRetryDelay,
-      }) as RuntimeMetadataStore;
-      this._ownsMetadataStore = true;
+      try {
+        const { default: SqliteMetadataStore } = await import(
+          "./providers/sqlite-metadata-store.js"
+        );
+        this.metadataStore = new SqliteMetadataStore({
+          dbPath: this.config.dbPath,
+          dimension: this.config.dimension,
+          busyTimeout: this.config.busyTimeout,
+          busyRetryDelay: this.config.busyRetryDelay,
+        }) as RuntimeMetadataStore;
+        this._ownsMetadataStore = true;
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "Failed to create the default metadata store.",
+          { retryable: true },
+        );
+      }
     }
     if (!this.vectorStore) {
-      const { default: VexusVectorStore } = await import(
-        "./providers/vexus-vector-store.js"
-      );
-      this.vectorStore = new VexusVectorStore({
-        dimension: this.config.dimension,
-        storePath: this.config.storePath,
-        tagIndexCapacity: this.config.tagIndexCapacity,
-        indexSaveDelay: this.config.indexSaveDelay,
-        tagIndexSaveDelay: this.config.tagIndexSaveDelay,
-        persistTagIndex: this.config.persistTagIndex,
-        indexLoadEnabled: this.config.indexLoadEnabled,
-      }) as RuntimeVectorStore;
-      this._ownsVectorStore = true;
+      try {
+        const { default: VexusVectorStore } = await import(
+          "./providers/vexus-vector-store.js"
+        );
+        this.vectorStore = new VexusVectorStore({
+          dimension: this.config.dimension,
+          storePath: this.config.storePath,
+          tagIndexCapacity: this.config.tagIndexCapacity,
+          indexSaveDelay: this.config.indexSaveDelay,
+          tagIndexSaveDelay: this.config.tagIndexSaveDelay,
+          persistTagIndex: this.config.persistTagIndex,
+          indexLoadEnabled: this.config.indexLoadEnabled,
+        }) as RuntimeVectorStore;
+        this._ownsVectorStore = true;
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "vector_backend",
+          "Failed to create the default vector backend.",
+          { retryable: true },
+        );
+      }
     }
     if (!this.embeddingProvider) {
-      const { default: OpenAIEmbeddingProvider } = await import(
-        "./providers/openai-embedding-provider.js"
-      );
-      this.embeddingProvider = new OpenAIEmbeddingProvider({
-        apiUrl: this.config.apiUrl,
-        apiKey: this.config.apiKey,
-        model: this.config.model,
-        modelSig: this.config.modelSig,
-        dimension: this.config.dimension,
-        maxBatchItems: this.config.maxBatchItems,
-        maxToken: this.config.maxToken,
-        concurrency: this.config.concurrency,
-        fallbackModels: this.config.fallbackModels,
-      });
-      this._ownsEmbeddingProvider = true;
+      try {
+        const { default: OpenAIEmbeddingProvider } = await import(
+          "./providers/openai-embedding-provider.js"
+        );
+        this.embeddingProvider = new OpenAIEmbeddingProvider({
+          apiUrl: this.config.apiUrl,
+          apiKey: this.config.apiKey,
+          model: this.config.model,
+          modelSig: this.config.modelSig,
+          dimension: this.config.dimension,
+          maxBatchItems: this.config.maxBatchItems,
+          maxToken: this.config.maxToken,
+          concurrency: this.config.concurrency,
+          fallbackModels: this.config.fallbackModels,
+        });
+        this._ownsEmbeddingProvider = true;
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "configuration",
+          "Failed to create the default embedding provider.",
+          { retryable: true },
+        );
+      }
     }
   }
 
@@ -445,7 +477,16 @@ class MemoryEngine {
   /** Rebuild derived vector indices from the metadata/content authority. */
   async reconcile(): Promise<ReconciliationReport> {
     this._assertReady("reconcile");
-    return this._reconcileInternal();
+    try {
+      return await this._reconcileInternal();
+    } catch (error) {
+      throw asMemoriaError(
+        error,
+        "integrity",
+        "MemoryEngine reconciliation failed.",
+        { retryable: true },
+      );
+    }
   }
 
   /**
@@ -502,40 +543,46 @@ class MemoryEngine {
     files?: FileInput | readonly FileInput[] | string,
   ): Promise<IngestEnvelope[]> {
     this._assertReady("flushBatch");
-    const entries = normalizeFiles(files);
-    const results: IngestEnvelope[] = [];
-    for (const entry of entries) {
-      const result = await this._runSerializedMutation(
-        `file:${normalizeMutationPath(entry.path)}`,
-        async () => {
-          this._vectorStateComplete = false;
-          try {
-            const result = await this.ingestPipeline.run(
-              {
-                path: entry.path,
-                relPath: entry.relPath,
-                content: entry.content,
-                mtime: entry.mtime,
-                size: entry.size,
-              },
-              this.ctx,
-            );
-            if (!result.skipped && !this._vectorMutationFailed) {
-              this._vectorStateComplete = true;
+    try {
+      const entries = normalizeFiles(files);
+      const results: IngestEnvelope[] = [];
+      for (const entry of entries) {
+        const result = await this._runSerializedMutation(
+          `file:${normalizeMutationPath(entry.path)}`,
+          async () => {
+            this._vectorStateComplete = false;
+            try {
+              const result = await this.ingestPipeline.run(
+                {
+                  path: entry.path,
+                  relPath: entry.relPath,
+                  content: entry.content,
+                  mtime: entry.mtime,
+                  size: entry.size,
+                },
+                this.ctx,
+              );
+              if (!result.skipped && !this._vectorMutationFailed) {
+                this._vectorStateComplete = true;
+              }
+              return result;
+            } catch (error) {
+              this._vectorMutationFailed = true;
+              throw error;
             }
-            return result;
-          } catch (error) {
-            this._vectorMutationFailed = true;
-            throw error;
-          }
-        },
-      );
-      results.push(result as IngestEnvelope);
-      if (result && !result.skipped && result.fileId != null) {
-        this._lastIndexedAt = Date.now();
+          },
+        );
+        results.push(result as IngestEnvelope);
+        if (result && !result.skipped && result.fileId != null) {
+          this._lastIndexedAt = Date.now();
+        }
       }
+      return results;
+    } catch (error) {
+      throw asMemoriaError(error, "ingestion", "MemoryEngine flush failed.", {
+        retryable: true,
+      });
     }
-    return results;
   }
 
   /**
@@ -555,48 +602,57 @@ class MemoryEngine {
       );
     }
 
-    return this._runSerializedMutation(`document:${documentId}`, async () => {
-      const revision =
-        document.revision === undefined ? undefined : String(document.revision);
-      const storagePath = logicalDocumentPath(documentId);
-      const mtime = Number.isFinite(document.updatedAt) ? Number(document.updatedAt) : 0;
-      const size = Buffer.byteLength(document.content, "utf8");
-      this._vectorStateComplete = false;
-      try {
-        const result = (await this.ingestPipeline.run(
-          {
-            path: storagePath,
-            relPath: storagePath,
-            content: document.content,
-            mtime,
-            size,
-            diaryName: "Logical",
+    try {
+      return await this._runSerializedMutation(`document:${documentId}`, async () => {
+        const revision =
+          document.revision === undefined ? undefined : String(document.revision);
+        const storagePath = logicalDocumentPath(documentId);
+        const mtime = Number.isFinite(document.updatedAt) ? Number(document.updatedAt) : 0;
+        const size = Buffer.byteLength(document.content, "utf8");
+        this._vectorStateComplete = false;
+        try {
+          const result = (await this.ingestPipeline.run(
+            {
+              path: storagePath,
+              relPath: storagePath,
+              content: document.content,
+              mtime,
+              size,
+              diaryName: "Logical",
+              documentId,
+              revision,
+              documentSource: document.source,
+              documentMetadata: document.metadata,
+            },
+            this.ctx,
+          )) as IngestEnvelope;
+
+          if (!result.skipped && !this._vectorMutationFailed) {
+            this._vectorStateComplete = true;
+          }
+          if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
+          return {
+            ...result,
             documentId,
             revision,
+            source: document.source,
+            metadata: document.metadata,
             documentSource: document.source,
             documentMetadata: document.metadata,
-          },
-          this.ctx,
-        )) as IngestEnvelope;
-
-        if (!result.skipped && !this._vectorMutationFailed) {
-          this._vectorStateComplete = true;
+          };
+        } catch (error) {
+          this._vectorMutationFailed = true;
+          throw error;
         }
-        if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
-        return {
-          ...result,
-          documentId,
-          revision,
-          source: document.source,
-          metadata: document.metadata,
-          documentSource: document.source,
-          documentMetadata: document.metadata,
-        };
-      } catch (error) {
-        this._vectorMutationFailed = true;
-        throw error;
-      }
-    });
+      });
+    } catch (error) {
+      throw asMemoriaError(
+        error,
+        "ingestion",
+        "MemoryEngine ingestion failed.",
+        { retryable: true },
+      );
+    }
   }
 
   /** Explicit replacement spelling for callers that do not use revisioned ingest. */
@@ -620,42 +676,45 @@ class MemoryEngine {
   /** Remove a logical document by stable identity, without requiring its source path. */
   async remove(documentId: string): Promise<MemoryDocumentDeleteResult> {
     this._assertReady("remove");
-    const normalizedId = normalizeDocumentId(documentId);
-    return this._runSerializedMutation(`document:${normalizedId}`, async () => {
-      const storagePath = logicalDocumentPath(normalizedId);
-      let row = null;
-      if (typeof this.metadataStore.getFileByDocumentId === "function") {
-        try {
+    try {
+      const normalizedId = normalizeDocumentId(documentId);
+      return await this._runSerializedMutation(`document:${normalizedId}`, async () => {
+        const storagePath = logicalDocumentPath(normalizedId);
+        let row = null;
+        if (typeof this.metadataStore.getFileByDocumentId === "function") {
           row = await this.metadataStore.getFileByDocumentId(normalizedId);
-        } catch (_error) {
-          // Older injected metadata stores may not implement the optional lookup.
+        } else {
+          row = await this.metadataStore.getFileByPath(storagePath);
         }
-      }
-      if (!row) row = await this.metadataStore.getFileByPath(storagePath);
 
-      const wasComplete = this._vectorStateComplete;
-      this._vectorStateComplete = false;
-      try {
-        const result = (await this.deletePipeline.run(
-          {
-            path: row?.path || storagePath,
-            relPath: row?.path || storagePath,
-            documentId: normalizedId,
-            diaryName: row?.diary_name || row?.diaryName || "Logical",
-          },
-          this.ctx,
-        )) as DeleteEnvelope;
-        if (result.deleted !== false && !this._vectorMutationFailed) {
-          this._vectorStateComplete = true;
-        } else if (result.deleted === false && !this._vectorMutationFailed) {
-          this._vectorStateComplete = wasComplete;
+        const wasComplete = this._vectorStateComplete;
+        this._vectorStateComplete = false;
+        try {
+          const result = (await this.deletePipeline.run(
+            {
+              path: row?.path || storagePath,
+              relPath: row?.path || storagePath,
+              documentId: normalizedId,
+              diaryName: row?.diary_name || row?.diaryName || "Logical",
+            },
+            this.ctx,
+          )) as DeleteEnvelope;
+          if (result.deleted !== false && !this._vectorMutationFailed) {
+            this._vectorStateComplete = true;
+          } else if (result.deleted === false && !this._vectorMutationFailed) {
+            this._vectorStateComplete = wasComplete;
+          }
+          return { ...result, documentId: normalizedId };
+        } catch (error) {
+          this._vectorMutationFailed = true;
+          throw error;
         }
-        return { ...result, documentId: normalizedId };
-      } catch (error) {
-        this._vectorMutationFailed = true;
-        throw error;
-      }
-    });
+      });
+    } catch (error) {
+      throw asMemoriaError(error, "persistence", "MemoryEngine remove failed.", {
+        retryable: true,
+      });
+    }
   }
 
   /**
@@ -689,7 +748,13 @@ class MemoryEngine {
     };
     if (!input.query && typeof query === "string") input.query = query;
     input.options = { ...options, ...(input.options || {}) };
-    return this.searchPipeline.run(input, this.ctx) as Promise<SearchEnvelope>;
+    try {
+      return (await this.searchPipeline.run(input, this.ctx)) as SearchEnvelope;
+    } catch (error) {
+      throw asMemoriaError(error, "retrieval", "MemoryEngine search failed.", {
+        retryable: true,
+      });
+    }
   }
 
   /**
@@ -699,34 +764,43 @@ class MemoryEngine {
    */
   async handleDelete(input: string | FileInput): Promise<DeleteEnvelope> {
     this._assertReady("handleDelete");
-    const source: FileInput = typeof input === "string" ? { path: input } : input;
-    return this._runSerializedMutation(
-      `file:${normalizeMutationPath(source.path)}`,
-      async () => {
-        const wasComplete = this._vectorStateComplete;
-        this._vectorStateComplete = false;
-        try {
-          const result = (await this.deletePipeline.run(
-            {
-              path: source.path,
-              relPath: source.relPath,
-              documentId: source.documentId,
-              diaryName: source.diaryName,
-            },
-            this.ctx,
-          )) as DeleteEnvelope;
-          if (result.deleted && !this._vectorMutationFailed) {
-            this._vectorStateComplete = true;
-          } else if (!result.deleted && !this._vectorMutationFailed) {
-            this._vectorStateComplete = wasComplete;
+    try {
+      const source: FileInput = typeof input === "string" ? { path: input } : input;
+      return (await this._runSerializedMutation(
+        `file:${normalizeMutationPath(source.path)}`,
+        async () => {
+          const wasComplete = this._vectorStateComplete;
+          this._vectorStateComplete = false;
+          try {
+            const result = (await this.deletePipeline.run(
+              {
+                path: source.path,
+                relPath: source.relPath,
+                documentId: source.documentId,
+                diaryName: source.diaryName,
+              },
+              this.ctx,
+            )) as DeleteEnvelope;
+            if (result.deleted && !this._vectorMutationFailed) {
+              this._vectorStateComplete = true;
+            } else if (!result.deleted && !this._vectorMutationFailed) {
+              this._vectorStateComplete = wasComplete;
+            }
+            return result;
+          } catch (error) {
+            this._vectorMutationFailed = true;
+            throw error;
           }
-          return result;
-        } catch (error) {
-          this._vectorMutationFailed = true;
-          throw error;
-        }
-      },
-    ) as Promise<DeleteEnvelope>;
+        },
+      )) as DeleteEnvelope;
+    } catch (error) {
+      throw asMemoriaError(
+        error,
+        "persistence",
+        "MemoryEngine delete failed.",
+        { retryable: true },
+      );
+    }
   }
 
   /**
@@ -893,7 +967,9 @@ class MemoryEngine {
         this.state = "ready";
         this._closed = false;
       }
-      throw error;
+      throw asMemoriaError(error, "lifecycle", "MemoryEngine close failed.", {
+        retryable: true,
+      });
     } finally {
       this._closePromise = null;
     }

@@ -11,6 +11,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 
 // Shared global tag vector index name (mirror of VectorIndexerStage).
 const TAG_INDEX_NAME = "global_tags";
@@ -87,10 +88,12 @@ class VectorSearcherStage extends Stage {
         try {
           results = await vectorStore.search(indexName, vector, perIndexK);
         } catch (e) {
-          console.warn(
-            `[VectorSearcher] search failed for index "${indexName}": ${e instanceof Error ? e.message : String(e)}`,
+          throw asMemoriaError(
+            e,
+            "vector_backend",
+            "Vector store failed while searching an index.",
+            { retryable: true },
           );
-          continue;
         }
         this._mergeHits(bestById, indexName, results);
       }
@@ -154,7 +157,12 @@ class VectorSearcherStage extends Stage {
       const stats = await vectorStore.getIndexStats(indexName);
       return !!stats && Number(stats.size) === 0;
     } catch (e) {
-      return false;
+      throw asMemoriaError(
+        e,
+        "vector_backend",
+        "Vector store failed while reading index statistics.",
+        { retryable: true },
+      );
     }
   }
 
@@ -209,10 +217,12 @@ class VectorSearcherStage extends Stage {
       if (!ctx.vectorStore) return [];
       hits = await ctx.vectorStore.search(tagIndexName, queryVector, tagK);
     } catch (e) {
-      console.warn(
-        `[VectorSearcher] tag index search failed for "${tagIndexName}": ${e instanceof Error ? e.message : String(e)}`,
+      throw asMemoriaError(
+        e,
+        "vector_backend",
+        "Vector store failed while searching the tag index.",
+        { retryable: true },
       );
-      return [];
     }
 
     const expanded: IndexedVectorResult[] = [];

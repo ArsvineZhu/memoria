@@ -15,7 +15,7 @@ const { createMemoryEngine } = require('../../index');
 const DIM = 8;
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'vcp-memory-rag-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'memoria-rag-'));
 }
 
 function makeFakeEmbeddingProvider(dim = DIM) {

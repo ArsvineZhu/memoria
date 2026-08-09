@@ -23,7 +23,7 @@ const { EPA } = require('../algorithms/epa');
  *   Plugin/DailyNote/*, DailyNoteManager  kbm.runExternalFileMutation...   [guarded]
  *   Plugin/AgentDream/*                   kbm.initialized, kbm.search(diary, vec, k, boost),
  *                                         kbm.db.prepare(...), kbm.config
- *   modules/vcpLoop/toolExecutor.js:138   kbm.db.prepare(...), kbm.search(diary, vec, n),
+ *   host app integration:              kbm.db.prepare(...), kbm.search(diary, vec, n),
  *                                         kbm.config?.rootPath
  *   Plugin/RAGDiaryPlugin                 kbm.search(diaryNames, vec, k, ...),
  *                                         kbm.deduplicateResults(...),

@@ -3,7 +3,7 @@
 const path = require('path');
 
 /**
- * Default configuration for the vcp-memory engine.
+ * Default configuration for the memoria engine.
  *
  * Every key read by the pipelines / stages / providers is enumerated here
  * with a sane default, so `ctx.config` never carries undefined knobs.

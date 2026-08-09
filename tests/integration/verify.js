@@ -1,17 +1,17 @@
 'use strict';
 
 /**
- * verify-vcptoolbox.js — VCPToolBox wiring verification.
+ * verify.js — memoria smoke verification.
  *
  * Boots the exact composition slated for server.js when
- * `VCP_MEMORY_ENGINE=on`:
+ * `MEMORY_ENGINE=on`:
  *
  *   const engine = createMemoryEngine({ config, dbPath, ragParamsPath });
  *   const adapter = new KnowledgeBaseAdapter({ engine });
  *   await kb.initialize();
  *
  * and exercises the KBM call-site surface used by server.js, Plugin/,
- * routes/admin and modules/vcpLoop:
+ * routes/admin and host app modules:
  *
  *   initialize / shutdown / flushBatch / search (text + legacy vector) /
  *   handleDelete / getStats / db / config / removeDocument /
@@ -24,7 +24,7 @@
  * the real OpenAIEmbeddingProvider so no API keys are needed.
  *
  * Usage:
- *   node tests/integration/verify-vcptoolbox.js
+ *   node tests/integration/verify.js
  * Exits 0 (PASS) or 1 (FAIL).
  */
 
@@ -39,7 +39,7 @@ const KnowledgeBaseAdapter = require('../../src/compat/knowledge-base-adapter');
 const DIM = 4;
 
 function makeTmpDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `vcptoolbox-${prefix}-`));
+  return fs.mkdtempSync(path.join(os.tmpdir(), `memoria-${prefix}-`));
 }
 
 function makeFakeEmbeddingProvider(dim = DIM) {
@@ -79,7 +79,7 @@ function check(name, fn) {
 }
 
 async function verify() {
-  // ── 1. Boot exactly like server.js does with VCP_MEMORY_ENGINE=on ──
+  // ── 1. Boot exactly like server.js does with MEMORY_ENGINE=on ──
   const rootPath = makeTmpDir('root');
   const storePath = makeTmpDir('store');
   const engine = createMemoryEngine({
@@ -91,7 +91,7 @@ async function verify() {
       model: 'test/embedding-stub',
       dimension: DIM
     },
-    dbPath: path.join(storePath, 'vcp-memory.sqlite'),
+    dbPath: path.join(storePath, 'memoria.sqlite'),
     embeddingProvider: makeFakeEmbeddingProvider(DIM)
   });
   const kb = new KnowledgeBaseAdapter({ engine });
@@ -256,7 +256,7 @@ async function main() {
   }
 
   console.log('');
-  console.log('=== VCPToolBox vcp-memory wiring verification ===');
+  console.log('=== memoria wiring verification ===');
   if (bootFailed) {
     console.log(`  ✖ boot/flow: ${bootFailed}`);
     console.log('  RESULT: FAIL');
@@ -276,13 +276,13 @@ async function main() {
   console.log(`  ${total - failed}/${total} checks passed.`);
 
   // What's exercised at this moment in the live box:
-  const envSection = process.env.VCP_MEMORY_ENGINE || 'off';
+  const envSection = process.env.MEMORY_ENGINE || 'off';
   console.log('');
-  console.log('  Gate status: VCP_MEMORY_ENGINE=' + envSection + (envSection === 'off' ? ' (classic KnowledgeBaseManager — untouched)' : ''));
-  if (process.env.VCP_MEMORY_ENGINE === 'on') {
-    console.log('  server.js boots the vcp-memory KnowledgeBaseManagerAdapter with the same env knobs.');
+  console.log('  Gate status: MEMORY_ENGINE=' + envSection + (envSection === 'off' ? ' (classic KnowledgeBaseManager — untouched)' : ''));
+  if (process.env.MEMORY_ENGINE === 'on') {
+    console.log('  server.js boots the memoria KnowledgeBaseManagerAdapter with the same env knobs.');
   } else {
-    console.log('  To flip the gate: $env:VCP_MEMORY_ENGINE="on"; node server.js');
+    console.log('  To flip the gate: $env:MEMORY_ENGINE="on"; node server.js');
   }
 
   if (bootFailed || failed > 0) {
@@ -295,7 +295,7 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error('verify-vcptoolbox crashed:', error);
+  console.error('verify crashed:', error);
   process.exit(1);
 });
 

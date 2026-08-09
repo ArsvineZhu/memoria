@@ -44,7 +44,7 @@ function md5(text) {
 // ── FileReaderStage ────────────────────────────────────────────
 
 test('FileReaderStage reads a temp file and computes checksum', async (t) => {
-  const tmpRoot = makeTmpDir('vcpmem-reader-');
+  const tmpRoot = makeTmpDir('memoria-reader-');
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
   const diaryDir = path.join(tmpRoot, 'diary1');
@@ -69,7 +69,7 @@ test('FileReaderStage reads a temp file and computes checksum', async (t) => {
 });
 
 test('FileReaderStage needsEmbedding=false when checksum/size/mtime match stored row', async (t) => {
-  const tmpRoot = makeTmpDir('vcpmem-reuse-');
+  const tmpRoot = makeTmpDir('memoria-reuse-');
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
   const filePath = path.join(tmpRoot, 'note2.md');
@@ -101,7 +101,7 @@ test('FileReaderStage needsEmbedding=false when checksum/size/mtime match stored
 });
 
 test('FileReaderStage detects content change via checksum mismatch', async (t) => {
-  const tmpRoot = makeTmpDir('vcpmem-change-');
+  const tmpRoot = makeTmpDir('memoria-change-');
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
   const filePath = path.join(tmpRoot, 'note3.md');
@@ -146,7 +146,7 @@ test('FileReaderStage supports fallbackRead (content provided by caller)', async
 });
 
 test('FileReaderStage falls back to basename/root when rootPath is missing', async (t) => {
-  const tmpRoot = makeTmpDir('vcpmem-noroot-');
+  const tmpRoot = makeTmpDir('memoria-noroot-');
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
   const filePath = path.join(tmpRoot, 'flat.md');

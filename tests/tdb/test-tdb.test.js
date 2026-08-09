@@ -38,7 +38,7 @@ const fakeEmbeddingProvider = {
 function newVectorStore(storePath) {
   return new VexusVectorStore({
     dimension: DIM,
-    storePath: storePath || fs.mkdtempSync(path.join(os.tmpdir(), 'vcp-memory-vec-')),
+    storePath: storePath || fs.mkdtempSync(path.join(os.tmpdir(), 'memoria-vec-')),
     tagIndexCapacity: 100,
     indexSaveDelay: 60000,
     tagIndexSaveDelay: 60000
@@ -51,7 +51,7 @@ const tombstones = {
   embedBatch() { throw new Error('embedding must not be called when TDB is disabled'); }
 };
 
-function makeTempDir(t, prefix = 'vcp-memory-tdb-') {
+function makeTempDir(t, prefix = 'memoria-tdb-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;

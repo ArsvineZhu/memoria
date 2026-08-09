@@ -63,7 +63,7 @@ function makeContext(config = {}, deps = {}) {
 }
 
 function makeTempFixture(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vcp-memory-pipeline-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'memoria-pipeline-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
   const alphaDir = path.join(dir, 'diary1');

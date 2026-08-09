@@ -591,7 +591,7 @@ test('close is idempotent', () => {
 // ── File-based database ────────────────────────────────────────
 
 test('Works with a file-based database', async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vcp-sqlite-test-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mem-sqlite-test-'));
     const dbPath = path.join(tmpDir, 'test.db');
 
     try {

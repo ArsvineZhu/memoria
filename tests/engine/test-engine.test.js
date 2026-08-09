@@ -20,7 +20,7 @@ const {
 const DIM = 16;
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'vcp-memory-engine-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'memoria-engine-'));
 }
 
 /**

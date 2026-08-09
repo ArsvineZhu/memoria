@@ -223,14 +223,14 @@ test("saveIndex and loadIndex roundtrip", async () => {
   }
 });
 
-test("validatePersistedIndexes rejects missing, corrupt, and wrong-dimension indexes", async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-validate-"));
-  const validate = (store: VexusVectorStore, names: readonly string[]) =>
+test("restorePersistedIndexes rejects missing, corrupt, and wrong-dimension indexes", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-restore-"));
+  const restore = (store: VexusVectorStore, names: readonly string[]) =>
     (
       store as unknown as {
-        validatePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
+        restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
       }
-    ).validatePersistedIndexes(names);
+    ).restorePersistedIndexes(names);
 
   try {
     const store = new VexusVectorStore({
@@ -238,12 +238,12 @@ test("validatePersistedIndexes rejects missing, corrupt, and wrong-dimension ind
       storePath: tmpDir,
       tagIndexCapacity: CAPACITY,
     });
-    assert.equal(await validate(store, ["missing"]), false);
+    assert.equal(await restore(store, ["missing"]), false);
 
     const corruptPath = store._getIndexPath("corrupt");
     fs.mkdirSync(path.dirname(corruptPath), { recursive: true });
     fs.writeFileSync(corruptPath, Buffer.from("not a usearch index"));
-    assert.equal(await validate(store, ["corrupt"]), false);
+    assert.equal(await restore(store, ["corrupt"]), false);
 
     const wrongDimension = new VexusVectorStore({
       dimension: 2,
@@ -252,7 +252,7 @@ test("validatePersistedIndexes rejects missing, corrupt, and wrong-dimension ind
     });
     await wrongDimension.add("wrong-dimension", 1, new Float32Array([1, 0]));
     await wrongDimension.saveIndex("wrong-dimension");
-    assert.equal(await validate(store, ["wrong-dimension"]), false);
+    assert.equal(await restore(store, ["wrong-dimension"]), false);
   } finally {
     try {
       for (const file of fs.readdirSync(tmpDir)) {
@@ -263,8 +263,8 @@ test("validatePersistedIndexes rejects missing, corrupt, and wrong-dimension ind
   }
 });
 
-test("validatePersistedIndexes atomically commits every loaded index", async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-validate-load-"));
+test("restorePersistedIndexes atomically commits every loaded index", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-restore-load-"));
   try {
     const source = new VexusVectorStore({
       dimension: DIM,
@@ -282,7 +282,11 @@ test("validatePersistedIndexes atomically commits every loaded index", async () 
       tagIndexCapacity: CAPACITY,
     });
     assert.equal(
-      await reopened.validatePersistedIndexes(["loaded-a", "loaded-b"]),
+      await (
+        reopened as unknown as {
+          restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
+        }
+      ).restorePersistedIndexes(["loaded-a", "loaded-b"]),
       true,
     );
     assert.equal((await reopened.getIndexStats("loaded-a")).size, 1);
@@ -295,7 +299,11 @@ test("validatePersistedIndexes atomically commits every loaded index", async () 
     const corruptPath = reopened._getIndexPath("loaded-corrupt");
     fs.writeFileSync(corruptPath, Buffer.from("not a usearch index"));
     assert.equal(
-      await reopened.validatePersistedIndexes(["loaded-a", "loaded-corrupt"]),
+      await (
+        reopened as unknown as {
+          restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
+        }
+      ).restorePersistedIndexes(["loaded-a", "loaded-corrupt"]),
       false,
     );
     assert.equal(reopened.indices.has("loaded-corrupt"), false);
@@ -310,8 +318,8 @@ test("validatePersistedIndexes atomically commits every loaded index", async () 
   }
 });
 
-test("validatePersistedIndexes refuses disk loading when indexLoadEnabled is false", async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-validate-disabled-"));
+test("restorePersistedIndexes refuses disk loading when indexLoadEnabled is false", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-restore-disabled-"));
   try {
     const source = new VexusVectorStore({
       dimension: DIM,
@@ -327,7 +335,14 @@ test("validatePersistedIndexes refuses disk loading when indexLoadEnabled is fal
       tagIndexCapacity: CAPACITY,
       indexLoadEnabled: false,
     });
-    assert.equal(await reopened.validatePersistedIndexes(["disabled-load"]), false);
+    assert.equal(
+      await (
+        reopened as unknown as {
+          restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
+        }
+      ).restorePersistedIndexes(["disabled-load"]),
+      false,
+    );
     assert.equal(reopened.indices.size, 0);
   } finally {
     try {

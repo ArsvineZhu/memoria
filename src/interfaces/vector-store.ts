@@ -73,10 +73,6 @@ class VectorStore implements VectorStoreContract {
     throw new Error("VectorStore.replaceIndex() must be implemented");
   }
 
-  async validatePersistedIndexes(_indexNames: readonly string[]): Promise<boolean> {
-    return false;
-  }
-
   /**
    * Load an index from disk.
    * @param {string} indexName

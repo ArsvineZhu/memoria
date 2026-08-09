@@ -27,7 +27,10 @@ import type {
 } from "./types.js";
 import { asMemoriaError, MemoriaError } from "./errors.js";
 import { logicalDocumentPath, normalizeDocumentId } from "./utils/logical-document.js";
-import { reconcileVectorIndexes } from "./reconciliation.js";
+import {
+  applyVectorReconciliationPlan,
+  buildVectorReconciliationPlan,
+} from "./reconciliation.js";
 
 interface RuntimeMetadataStore extends MetadataStoreContract {
   close?: () => void;
@@ -352,7 +355,7 @@ class MemoryEngine {
       generationState &&
       generationState.vectorDirty === false &&
       generationState.metadataGeneration === generationState.vectorGeneration &&
-      typeof this.vectorStore.validatePersistedIndexes === "function"
+      typeof this.vectorStore.restorePersistedIndexes === "function"
     ) {
       const expectedIndexNames =
         typeof this.metadataStore.getExpectedVectorIndexNames === "function"
@@ -360,7 +363,7 @@ class MemoryEngine {
           : [...(this.vectorStore.indices?.keys() ?? [])];
       let valid = false;
       try {
-        valid = await this.vectorStore.validatePersistedIndexes(expectedIndexNames);
+        valid = await this.vectorStore.restorePersistedIndexes(expectedIndexNames);
       } catch (_) {
         valid = false;
       }
@@ -380,14 +383,26 @@ class MemoryEngine {
   }
 
   private async _reconcileInternal(): Promise<ReconciliationReport> {
-    const report = await reconcileVectorIndexes({
-      metadataStore: this.metadataStore,
-      vectorStore: this.vectorStore,
-      dimension: this.config.dimension,
-    });
-    this._vectorStateComplete = true;
-    this._vectorMutationFailed = false;
-    return report;
+    // Planning reads the complete SQLite authority before the vector store is
+    // reset, so a read/decode failure cannot destroy a currently usable index.
+    const plan = await buildVectorReconciliationPlan(
+      this.metadataStore,
+      this.config.dimension,
+    );
+
+    this._vectorStateComplete = false;
+    this._vectorMutationFailed = true;
+    try {
+      const report = await applyVectorReconciliationPlan(plan, this.vectorStore);
+      await this._markVectorStateClean();
+      this._vectorStateComplete = true;
+      this._vectorMutationFailed = false;
+      return report;
+    } catch (error) {
+      this._vectorStateComplete = false;
+      this._vectorMutationFailed = true;
+      throw error;
+    }
   }
 
   private async _flushVectorStore(): Promise<boolean> {
@@ -759,6 +774,9 @@ class MemoryEngine {
     if (!input.query && typeof query === "string") input.query = query;
     input.options = { ...options, ...(input.options || {}) };
     try {
+      if (!this._vectorStateComplete || this._vectorMutationFailed) {
+        await this._reconcileInternal();
+      }
       return (await this.searchPipeline.run(input, this.ctx)) as SearchEnvelope;
     } catch (error) {
       throw asMemoriaError(error, "retrieval", "MemoryEngine search failed.", {

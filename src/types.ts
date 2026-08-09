@@ -590,7 +590,7 @@ export interface VectorStoreContract {
   scheduleIndexSave?(indexName: string): void;
   flushPendingSaves?(): void | Promise<void>;
   resetDerivedState?(): void | Promise<void>;
-  validatePersistedIndexes?(indexNames: readonly string[]): Promise<boolean>;
+  restorePersistedIndexes?(indexNames: readonly string[]): Promise<boolean>;
   replaceIndex?(
     indexName: string,
     entries: readonly VectorIndexEntry[],

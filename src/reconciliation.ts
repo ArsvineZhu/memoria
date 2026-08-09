@@ -10,6 +10,15 @@ import { decodeVectorBlob } from "./utils/vector-codec.js";
 
 const TAG_INDEX_NAME = "global_tags";
 
+export interface VectorReconciliationPlan {
+  indexEntries: Map<string, VectorIndexEntry[]>;
+  expectedIndexNames: string[];
+  rebuiltChunkCount: number;
+  rebuiltTagCount: number;
+  metadataChunkCount: number;
+  skippedVectorCount: number;
+}
+
 interface ReconciliationOptions {
   metadataStore: MetadataStoreContract;
   vectorStore: VectorStoreContract & { indices?: Map<string, unknown> };
@@ -23,8 +32,6 @@ async function loadIndexableChunks(
     return metadataStore.getIndexableChunks();
   }
 
-  // Compatibility fallback for older third-party stores. The built-in
-  // SQLite store always takes the single bulk-query path above.
   const chunks = await metadataStore.getAllChunks();
   const result: IndexableChunkRow[] = [];
   for (const chunk of chunks) {
@@ -40,77 +47,56 @@ async function loadIndexableChunks(
 
 async function loadExpectedIndexNames(
   metadataStore: MetadataStoreContract,
-  tags: Awaited<ReturnType<MetadataStoreContract["getAllTags"]>>,
-  vectorStore: ReconciliationOptions["vectorStore"],
+  hasTags: boolean,
 ): Promise<string[]> {
   if (typeof metadataStore.getExpectedVectorIndexNames === "function") {
-    return metadataStore.getExpectedVectorIndexNames();
+    return [...new Set((await metadataStore.getExpectedVectorIndexNames()).filter(Boolean))].sort();
   }
 
-  const names = new Set<string>(vectorStore.indices?.keys() ?? []);
-  for (const name of await metadataStore.getDistinctDiaryNames()) names.add(name);
-  if (tags.length > 0) names.add(TAG_INDEX_NAME);
-  return [...names].sort();
+  const names = new Set<string>(await metadataStore.getDistinctDiaryNames());
+  if (hasTags) names.add(TAG_INDEX_NAME);
+  return [...names].filter(Boolean).sort();
 }
 
-async function markVectorStateClean(
+/**
+ * Read and validate the complete authority state without touching the vector
+ * store. A caller may safely discard a failed plan while live indexes remain
+ * available for search.
+ */
+export async function buildVectorReconciliationPlan(
   metadataStore: MetadataStoreContract,
-): Promise<void> {
-  if (typeof metadataStore.markVectorStateClean === "function") {
-    await metadataStore.markVectorStateClean();
-    return;
-  }
-  if (
-    typeof metadataStore.getKv === "function" &&
-    typeof metadataStore.setKv === "function"
-  ) {
-    const value = await metadataStore.getKv("memoria.metadata_generation");
-    const generation = typeof value === "string" ? value : "0";
-    await metadataStore.setKv("memoria.vector_generation", generation);
-    await metadataStore.setKv("memoria.vector_dirty", "0");
-  }
-}
-
-/** Rebuilds derived vector indices from authoritative SQLite metadata/content. */
-export async function reconcileVectorIndexes(
-  options: ReconciliationOptions,
-): Promise<ReconciliationReport> {
-  const { metadataStore, vectorStore, dimension } = options;
+  dimension: number,
+): Promise<VectorReconciliationPlan> {
   try {
-    if (typeof vectorStore.resetDerivedState === "function") {
-      await vectorStore.resetDerivedState();
-    }
     const rows = await loadIndexableChunks(metadataStore);
     const tags = await metadataStore.getAllTags();
-    const entriesByIndex = new Map<string, VectorIndexEntry[]>();
-    const expectedIndexNames = await loadExpectedIndexNames(
-      metadataStore,
-      tags,
-      vectorStore,
-    );
-    const knownIndexNames = new Set<string>(expectedIndexNames);
-    for (const name of vectorStore.indices?.keys() ?? []) knownIndexNames.add(name);
+    const expectedIndexNames = await loadExpectedIndexNames(metadataStore, tags.length > 0);
+    const knownIndexNames = new Set(expectedIndexNames);
+    const indexEntries = new Map<string, VectorIndexEntry[]>();
+    let rebuiltChunkCount = 0;
+    let skippedVectorCount = 0;
 
-    let usableVectors = 0;
-    let skippedVectors = 0;
     for (const row of rows) {
       if (row.vector == null) {
-        skippedVectors += 1;
+        skippedVectorCount += 1;
         continue;
       }
       const vector = decodeVectorBlob(row.vector, dimension, `chunk ${row.chunkId}`, {
         logPrefix: "Memoria reconciliation",
       });
       if (vector === null) {
-        skippedVectors += 1;
-        continue;
+        throw new MemoriaError(
+          "integrity",
+          `Authoritative chunk vector ${row.chunkId} is invalid.`,
+          { retryable: true },
+        );
       }
       const indexName = row.indexName || "Root";
       knownIndexNames.add(indexName);
-      const entries = entriesByIndex.get(indexName) ?? [];
+      const entries = indexEntries.get(indexName) ?? [];
       entries.push({ id: row.chunkId, vector });
-      entriesByIndex.set(indexName, entries);
-      usableVectors += 1;
+      indexEntries.set(indexName, entries);
+      rebuiltChunkCount += 1;
     }
 
     const tagEntries: VectorIndexEntry[] = [];
@@ -119,57 +105,90 @@ export async function reconcileVectorIndexes(
       const vector = decodeVectorBlob(tag.vector, dimension, `tag ${tag.id}`, {
         logPrefix: "Memoria reconciliation",
       });
-      if (vector !== null) tagEntries.push({ id: tag.id, vector });
-    }
-    if (knownIndexNames.has(TAG_INDEX_NAME) || tagEntries.length > 0) {
-      entriesByIndex.set(TAG_INDEX_NAME, tagEntries);
-      knownIndexNames.add(TAG_INDEX_NAME);
-    }
-
-    const rebuiltIndexes = [...knownIndexNames].sort();
-    for (const indexName of rebuiltIndexes) {
-      try {
-        const entries = entriesByIndex.get(indexName) ?? [];
-        if (typeof vectorStore.replaceIndex === "function") {
-          await vectorStore.replaceIndex(indexName, entries);
-        } else {
-          for (const entry of entries) {
-            try {
-              await vectorStore.remove(indexName, entry.id);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              if (!/not found|missing|absent/i.test(message)) throw error;
-            }
-            await vectorStore.add(indexName, entry.id, entry.vector);
-          }
-        }
-      } catch (error) {
+      if (vector === null) {
         throw new MemoriaError(
           "integrity",
-          `Failed to rebuild vector index "${indexName}" from metadata.`,
-          { cause: error, retryable: true },
+          `Authoritative tag vector ${tag.id} is invalid.`,
+          { retryable: true },
         );
       }
+      tagEntries.push({ id: tag.id, vector });
     }
-
-    if (typeof vectorStore.flushPendingSaves === "function") {
-      await vectorStore.flushPendingSaves();
-      await markVectorStateClean(metadataStore);
+    if (knownIndexNames.has(TAG_INDEX_NAME) || tagEntries.length > 0) {
+      knownIndexNames.add(TAG_INDEX_NAME);
+      indexEntries.set(TAG_INDEX_NAME, tagEntries);
     }
 
     return {
-      authoritative: "metadata",
-      metadataChunks: rows.length,
-      usableVectors,
-      skippedVectors,
-      rebuiltIndexes,
+      indexEntries,
+      expectedIndexNames: [...knownIndexNames].sort(),
+      rebuiltChunkCount,
+      rebuiltTagCount: tagEntries.length,
+      metadataChunkCount: rows.length,
+      skippedVectorCount,
     };
   } catch (error) {
     if (error instanceof MemoriaError) throw error;
     throw new MemoriaError(
       "integrity",
-      "Failed to reconcile persisted vector indexes from metadata.",
+      "Failed to plan vector index reconciliation from metadata.",
       { cause: error, retryable: true },
     );
   }
+}
+
+/** Apply a validated plan; this is the first function allowed to mutate vectors. */
+export async function applyVectorReconciliationPlan(
+  plan: VectorReconciliationPlan,
+  vectorStore: VectorStoreContract,
+): Promise<ReconciliationReport> {
+  try {
+    if (typeof vectorStore.resetDerivedState === "function") {
+      await vectorStore.resetDerivedState();
+    }
+
+    for (const indexName of plan.expectedIndexNames) {
+      const entries = plan.indexEntries.get(indexName) ?? [];
+      if (typeof vectorStore.replaceIndex === "function") {
+        await vectorStore.replaceIndex(indexName, entries);
+        continue;
+      }
+      for (const entry of entries) {
+        try {
+          await vectorStore.remove(indexName, entry.id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!/not found|missing|absent/i.test(message)) throw error;
+        }
+        await vectorStore.add(indexName, entry.id, entry.vector);
+      }
+    }
+
+    if (typeof vectorStore.flushPendingSaves === "function") {
+      await vectorStore.flushPendingSaves();
+    }
+
+    return {
+      authoritative: "metadata",
+      metadataChunks: plan.metadataChunkCount,
+      usableVectors: plan.rebuiltChunkCount,
+      skippedVectors: plan.skippedVectorCount,
+      rebuiltIndexes: [...plan.expectedIndexNames],
+    };
+  } catch (error) {
+    if (error instanceof MemoriaError) throw error;
+    throw new MemoriaError(
+      "integrity",
+      "Failed to apply the vector index reconciliation plan.",
+      { cause: error, retryable: true },
+    );
+  }
+}
+
+/** Compatibility wrapper for callers that still use the old coordinator name. */
+export async function reconcileVectorIndexes(
+  options: ReconciliationOptions,
+): Promise<ReconciliationReport> {
+  const plan = await buildVectorReconciliationPlan(options.metadataStore, options.dimension);
+  return applyVectorReconciliationPlan(plan, options.vectorStore);
 }

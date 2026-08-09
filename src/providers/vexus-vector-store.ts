@@ -339,7 +339,7 @@ class VexusVectorStore extends VectorStore {
     this._writeIndexMetadata(resolvedPath);
   }
 
-  override async validatePersistedIndexes(
+  async restorePersistedIndexes(
     indexNames: readonly string[],
   ): Promise<boolean> {
     if (!this.indexLoadEnabled) return false;

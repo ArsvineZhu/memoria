@@ -21,11 +21,11 @@ const DIMENSION = 8;
 type CountingVectorStore = VectorStoreContract & {
   indices: Map<string, unknown>;
   replaceCalls: number;
-  validateCalls: number;
+  restoreCalls: number;
   flushCalls: number;
   validationResult: boolean;
   flushError?: Error;
-  validatePersistedIndexes: (indexNames: readonly string[]) => Promise<boolean>;
+  restorePersistedIndexes: (indexNames: readonly string[]) => Promise<boolean>;
   flushPendingSaves: () => void;
 };
 
@@ -36,7 +36,7 @@ function countingVectorStore(
     dimension: DIMENSION,
     indices: new Map(),
     replaceCalls: 0,
-    validateCalls: 0,
+    restoreCalls: 0,
     flushCalls: 0,
     validationResult: options.validationResult ?? true,
     flushError: options.flushError,
@@ -65,8 +65,8 @@ function countingVectorStore(
         dimension: DIMENSION,
       };
     },
-    async validatePersistedIndexes() {
-      store.validateCalls += 1;
+    async restorePersistedIndexes() {
+      store.restoreCalls += 1;
       return store.validationResult;
     },
     flushPendingSaves() {
@@ -195,7 +195,7 @@ test("reconciliation rebuilds empty derived indices without changing metadata id
   await engine.close();
 });
 
-test("clean close and reopen validates persisted indexes without rebuilding", async () => {
+test("clean close and reopen restores persisted indexes without rebuilding", async () => {
   const root = mkdtempSync(join(tmpdir(), "memoria-recovery-clean-"));
   const dbPath = join(root, "memory.sqlite");
   const firstVector = countingVectorStore();
@@ -225,10 +225,147 @@ test("clean close and reopen validates persisted indexes without rebuilding", as
     vectorStore: secondVector,
   });
   await second.initialize();
-  assert.equal(secondVector.validateCalls, 1);
+  assert.equal(secondVector.restoreCalls, 1);
   assert.equal(secondVector.replaceCalls, 0);
   assert.deepEqual(second.lastReconciliation?.rebuiltIndexes, []);
   await second.close();
+});
+
+test("reconciliation planning failure leaves the live vector index usable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-recovery-plan-failure-"));
+  const storePath = join(root, "indices");
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: DIMENSION });
+  const vectorStore = new VexusVectorStore({
+    dimension: DIMENSION,
+    storePath,
+    indexSaveDelay: 60_000,
+    tagIndexSaveDelay: 60_000,
+  });
+  const engine = createMemoryEngine({
+    config: { dimension: DIMENSION, storePath },
+    metadataStore,
+    vectorStore,
+    embeddingProvider: embeddingProvider(),
+  });
+  await engine.initialize();
+  const result = await engine.ingest({ id: "plan:failure", content: "live vector" });
+  const original = metadataStore.getIndexableChunks.bind(metadataStore);
+  metadataStore.getIndexableChunks = async () => {
+    throw new Error("authoritative read failed");
+  };
+
+  await assert.rejects(
+    () => engine.reconcile(),
+    (error: unknown) => error instanceof MemoriaError && error.code === "integrity",
+  );
+  const [queryVector] = await embeddingProvider().embedBatch(["live vector"]);
+  const hits = await vectorStore.search("Logical", queryVector!, 5);
+  assert.ok(hits.some((hit) => Number(hit.id) === result.chunkIds![0]));
+
+  metadataStore.getIndexableChunks = original;
+  await engine.close();
+});
+
+test("reconciliation application failure remains dirty and rebuilds on reopen", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-recovery-apply-failure-"));
+  const dbPath = join(root, "memory.sqlite");
+  const vectorStore = new VexusVectorStore({
+    dimension: DIMENSION,
+    storePath: join(root, "indices"),
+    indexSaveDelay: 60_000,
+    tagIndexSaveDelay: 60_000,
+  });
+  const engine = createMemoryEngine({
+    dbPath,
+    config: { dimension: DIMENSION, storePath: join(root, "indices") },
+    embeddingProvider: embeddingProvider(),
+    vectorStore,
+  });
+  await engine.initialize();
+  await engine.ingest({ id: "apply:failure", content: "authoritative rebuild" });
+
+  vectorStore.replaceIndex = async () => {
+    throw new Error("rebuild apply failed");
+  };
+  await assert.rejects(
+    () => engine.reconcile(),
+    (error: unknown) => error instanceof MemoriaError && error.code === "integrity",
+  );
+  assert.equal((engine as unknown as { _vectorStateComplete: boolean })._vectorStateComplete, false);
+  assert.equal((engine as unknown as { _vectorMutationFailed: boolean })._vectorMutationFailed, true);
+  await engine.close();
+
+  const dirty = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
+  assert.equal(await dirty.getKv?.("memoria.vector_dirty"), "1");
+  dirty.close();
+
+  const recoveredVector = new VexusVectorStore({
+    dimension: DIMENSION,
+    storePath: join(root, "indices"),
+    indexSaveDelay: 60_000,
+    tagIndexSaveDelay: 60_000,
+  });
+  let rebuildCalls = 0;
+  const replaceIndex = recoveredVector.replaceIndex.bind(recoveredVector);
+  recoveredVector.replaceIndex = async (...args) => {
+    rebuildCalls += 1;
+    return replaceIndex(...args);
+  };
+  const recovered = createMemoryEngine({
+    dbPath,
+    config: { dimension: DIMENSION, storePath: join(root, "indices") },
+    embeddingProvider: embeddingProvider(),
+    vectorStore: recoveredVector,
+  });
+  await recovered.initialize();
+  assert.ok(rebuildCalls >= 1);
+  const clean = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
+  assert.equal(await clean.getKv?.("memoria.vector_dirty"), "0");
+  clean.close();
+  await recovered.close();
+});
+
+test("search reconciles authoritative SQLite state after a same-session vector failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-recovery-autoheal-"));
+  const storePath = join(root, "indices");
+  const vectorStore = new VexusVectorStore({
+    dimension: DIMENSION,
+    storePath,
+    indexSaveDelay: 60_000,
+    tagIndexSaveDelay: 60_000,
+  });
+  const engine = createMemoryEngine({
+    config: { dimension: DIMENSION, storePath },
+    embeddingProvider: embeddingProvider(),
+    vectorStore,
+  });
+  await engine.initialize();
+  await engine.ingest({ id: "autoheal:one", content: "old authoritative text" });
+
+  const originalAdd = vectorStore.add.bind(vectorStore);
+  vectorStore.add = async () => {
+    throw new Error("same-session vector failure");
+  };
+  await assert.rejects(
+    () => engine.ingest({ id: "autoheal:one", content: "new authoritative text" }),
+    (error: unknown) => error instanceof MemoriaError && error.code === "vector_backend",
+  );
+  vectorStore.add = originalAdd;
+
+  const search = await engine.search("new authoritative text");
+  assert.ok(
+    search.results.some((result) =>
+      String(result.content ?? "").includes("new authoritative text"),
+    ),
+  );
+  assert.equal(
+    search.results.some((result) =>
+      String(result.content ?? "").includes("old authoritative text"),
+    ),
+    false,
+  );
+  assert.equal((engine as unknown as { _vectorStateComplete: boolean })._vectorStateComplete, true);
+  await engine.close();
 });
 
 test("clean close and reopen loads real Vexus indexes before vector search", async () => {
@@ -380,7 +517,7 @@ test("dirty and generation-mismatched reopen rebuilds and marks vector state cle
     vectorStore: rebuildingVector,
   });
   await rebuilding.initialize();
-  assert.equal(rebuildingVector.validateCalls, 0);
+  assert.equal(rebuildingVector.restoreCalls, 0);
   assert.ok(rebuildingVector.replaceCalls >= 1);
 
   const verify = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });

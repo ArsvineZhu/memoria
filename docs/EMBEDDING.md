@@ -28,7 +28,7 @@ class EmbeddingProvider {
 | 源码 | `src/providers/dashscope-embedding-provider.js` | `src/providers/openai-embedding-provider.js` | `examples/demo/fake-embedding.js` |
 | 协议端点 | `POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding`（`config.apiUrl` 可覆盖） | `{config.apiUrl}/v1/embeddings`（apiUrl 为基址，如 `https://api.openai.com`） | 无网络 |
 | 请求体 | `{ model, input: { texts }, parameters: { dimension, output_type: 'dense', text_type } }` | `{ model, input: [...texts] }`（OpenAI 标准数组形） | — |
-| 默认模型 | `qwen3.7-text-embedding`（模型注释：自定维度 256–4096、单行≤128k tokens） | **无内置默认**；引擎装配默认传 `config.model`（默认 `google / gemini-embedding-001`，见 default-config.js） | `fakeEmbeddingProvider` |
+| 默认模型 | `qwen3.7-text-embedding`（模型注释：自定维度 256–2560、单行≤128k tokens） | **无内置默认**；引擎装配默认传 `config.model`（默认 `google / gemini-embedding-001`，见 default-config.js） | `fakeEmbeddingProvider` |
 | 默认维度 | `1024`（`config.dimension || 1024`） | 类默认 `1024`（`config.dimension || 1024`）；**engine 装配显式传 `config.dimension`（默认 3072）**→ 引擎内实际 3072 | `128`（构造可传 `dimension`） |
 | 分批上限 | `maxBatchItems` 默认 `20`（DashScope 硬上限 ≤20 行/请求，代码按片逐批切分） | `maxBatchItems` 默认 `32`，并且**按 token 动态分桶**：`safeMaxTokens = maxToken × 0.85`（`maxToken` 默认 8000 → 6800），超限文本跳过置 null | 无分批（逐条同步） |
 | 并发 | 默认 5 个 worker 并发发请求 | 默认 5 个 worker 并发发请求 | 单线程 |

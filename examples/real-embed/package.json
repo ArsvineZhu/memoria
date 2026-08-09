@@ -1,0 +1,10 @@
+{
+  "name": "memoria-real-embed",
+  "version": "0.1.0",
+  "private": true,
+  "description": "memoria real-embedding recall demo (DashScope)",
+  "main": "demo-recall.js",
+  "scripts": {
+    "start": "node demo-recall.js"
+  }
+}

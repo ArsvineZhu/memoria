@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import { createMemoryEngine } from "../../src/index.js";
 import { MemoriaError } from "../../src/errors.js";
+import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
 import type {
   EmbeddingProviderContract,
   MemoryEngineOptions,
@@ -41,6 +42,23 @@ function makeEmbeddingProvider(): EmbeddingProviderContract {
       });
     },
   };
+}
+
+class CountingVectorStore extends VexusVectorStore {
+  addCount = 0;
+  removeCount = 0;
+
+  override async add(...args: Parameters<VexusVectorStore["add"]>): Promise<void> {
+    this.addCount += 1;
+    await super.add(...args);
+  }
+
+  override async remove(
+    ...args: Parameters<VexusVectorStore["remove"]>
+  ): Promise<void> {
+    this.removeCount += 1;
+    await super.remove(...args);
+  }
 }
 
 function makeEngine(): {
@@ -198,6 +216,76 @@ test("empty logical replacement removes old searchable chunks across reopen", as
       await reopened?.close();
       await first.close();
     }
+  }
+});
+
+test("logical metadata-only update avoids re-embedding and vector mutation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-metadata-only-"));
+  let embeddingCalls = 0;
+  const embeddingProvider: EmbeddingProviderContract = {
+    getDimension: () => DIMENSION,
+    async embedBatch(texts: readonly string[] = []) {
+      embeddingCalls += 1;
+      return texts.map(() => new Float32Array(DIMENSION));
+    },
+  };
+  const vectorStore = new CountingVectorStore({
+    dimension: DIMENSION,
+    storePath: root,
+    indexSaveDelay: 60000,
+    tagIndexSaveDelay: 60000,
+  });
+  const engine = createMemoryEngine({
+    config: { dimension: DIMENSION, storePath: root },
+    embeddingProvider,
+    vectorStore,
+  });
+
+  try {
+    await engine.initialize();
+    const first = await engine.ingest({
+      id: "metadata-only:1",
+      content: "stable content for metadata update",
+      revision: "r1",
+      source: { type: "old" },
+      metadata: { version: 1 },
+      updatedAt: 100,
+    });
+    const callsAfterFirst = embeddingCalls;
+    const addsAfterFirst = vectorStore.addCount;
+    const removesAfterFirst = vectorStore.removeCount;
+    const firstChunkIds = [...(first.chunkIds || [])];
+
+    const second = await engine.upsert({
+      id: "metadata-only:1",
+      content: "stable content for metadata update",
+      revision: "r2",
+      source: { type: "new" },
+      metadata: { version: 2 },
+      updatedAt: 200,
+    });
+
+    assert.equal(embeddingCalls, callsAfterFirst);
+    assert.equal(vectorStore.addCount, addsAfterFirst);
+    assert.equal(vectorStore.removeCount, removesAfterFirst);
+    assert.deepEqual(second.chunkIds, []);
+
+    const row = await engine.metadataStore.getFileByDocumentId?.("metadata-only:1");
+    assert.ok(row);
+    assert.equal(row.revision, "r2");
+    assert.equal(row.mtime, 200);
+    assert.deepEqual(JSON.parse(String(row.source_json)), { type: "new" });
+    assert.deepEqual(JSON.parse(String(row.metadata_json)), { version: 2 });
+
+    const chunks = await engine.metadataStore.getChunksByFileId(row.id);
+    assert.deepEqual(
+      chunks.map((chunk) => chunk.id),
+      firstChunkIds,
+    );
+  } finally {
+    await engine.close();
+    for (const timer of vectorStore.saveTimers.values()) clearTimeout(timer);
+    vectorStore.saveTimers.clear();
   }
 });
 

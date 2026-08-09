@@ -241,6 +241,7 @@ export interface FileSnapshot extends Omit<
   diaryName: string;
   checksum: string;
   needsEmbedding: boolean;
+  needsMetadataWrite?: boolean;
   unstable: boolean;
 }
 
@@ -492,6 +493,10 @@ export interface PipelineData extends UnknownRecord {
   diaryName?: string;
   checksum?: string;
   needsEmbedding?: boolean;
+  needsMetadataWrite?: boolean;
+  metadataOnly?: boolean;
+  previousIndexName?: string | null;
+  currentIndexName?: string;
   unstable?: boolean;
   documentId?: string;
   revision?: string;
@@ -685,6 +690,8 @@ export interface DocumentStateReplacementResult {
   tagIds: number[];
   removedChunkIds: number[];
   metadataGeneration: number;
+  previousIndexName: string | null;
+  currentIndexName: string;
 }
 
 export interface HealthStatus {
@@ -697,6 +704,10 @@ export interface MetadataStoreContract {
   /** Exposed for compatibility diagnostics used by the legacy tests/callers. */
   _closed?: boolean;
   upsertFile(fileMeta: FileMetadataInput): Promise<number | null>;
+  updateDocumentMetadata?(input: FileMetadataInput): Promise<{
+    fileId: number;
+    changed: boolean;
+  }>;
   countFiles?(): Promise<number>;
   getLastIndexedAt?(): Promise<number | null>;
   getFileByPath(path: string): Promise<FileRow | null>;

@@ -206,6 +206,48 @@ test("MetadataWriterStage replaces old chunks on re-embed and reports removedChu
   assert.strictEqual(chunks.length, 1);
 });
 
+test("MetadataWriterStage updates only file metadata when embedding is unchanged", async (t) => {
+  const store = newMetadataStore();
+  t.after(() => store.close());
+  const stage = new MetadataWriterStage();
+  const ctx = makeCtx({}, { metadataStore: store });
+  const first = await stage.process(
+    fileInfo({
+      documentId: "metadata-only:stage",
+      revision: "r1",
+      documentSource: { type: "old" },
+      documentMetadata: { version: 1 },
+    }),
+    ctx,
+  );
+  const originalChunkIds = [...first.chunkIds];
+
+  const second = await stage.process(
+    fileInfo({
+      ...first,
+      revision: "r2",
+      documentSource: { type: "new" },
+      documentMetadata: { version: 2 },
+      needsEmbedding: false,
+      needsMetadataWrite: true,
+      chunkEntries: [],
+      tagEntries: [],
+    }),
+    ctx,
+  );
+
+  assert.equal(second.metadataOnly, true);
+  assert.deepEqual(second.chunkIds, []);
+  assert.deepEqual(second.removedChunkIds, []);
+  assert.deepEqual(
+    (await store.getChunksByFileId(first.fileId!)).map((chunk) => chunk.id),
+    originalChunkIds,
+  );
+  const row = await store.getFileByPath(String(first.relPath));
+  assert.equal(row?.revision, "r2");
+  assert.deepEqual(JSON.parse(String(row?.source_json)), { type: "new" });
+});
+
 test("MetadataWriterStage upserts tags and associates only tags with vectors", async (t) => {
   const store = newMetadataStore();
   t.after(() => store.close());
@@ -587,7 +629,7 @@ test("FileDeleterStage only removes vectors from the matching diary index", asyn
   );
   await indexer.process(b, ctx);
 
-  await deleter.process({ path: "d1/a.md" }, ctx);
+  await deleter.process({ path: "d1/a.md", diaryName: "wrong-caller-index" }, ctx);
 
   assert.strictEqual((await vectorStore.getIndexStats("d1")).size, 0);
   assert.strictEqual((await vectorStore.getIndexStats("d2")).size, 1);

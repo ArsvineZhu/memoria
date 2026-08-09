@@ -5,6 +5,7 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 
 import Stage from "../../core/stage.js";
+import { serializeDocumentJson } from "../../utils/logical-document.js";
 
 /**
  * Reads a file from disk (or accepts caller-supplied content),
@@ -39,6 +40,7 @@ class FileReaderStage extends Stage {
       | "mtime"
       | "size"
       | "needsEmbedding"
+      | "needsMetadataWrite"
       | "unstable"
     > & {
       path: string;
@@ -49,6 +51,7 @@ class FileReaderStage extends Stage {
       mtime: number;
       size: number;
       needsEmbedding: boolean;
+      needsMetadataWrite: boolean;
       unstable: boolean;
     }
   > {
@@ -112,20 +115,24 @@ class FileReaderStage extends Stage {
     const checksum = crypto.createHash("md5").update(content).digest("hex");
 
     let needsEmbedding = true;
+    let needsMetadataWrite = true;
     if (!unstable && ctx.metadataStore) {
       const row = await ctx.metadataStore.getFileByPath(relPath);
-      const revisionMatches =
-        typeof input.documentId !== "string" ||
-        input.revision === undefined ||
-        row?.revision === input.revision;
-      if (
-        row &&
-        revisionMatches &&
-        row.checksum === checksum &&
-        row.size === size &&
-        row.mtime === mtime
-      ) {
-        needsEmbedding = false;
+      if (row) {
+        const sourceJson = serializeDocumentJson(input.documentSource, "source");
+        const metadataJson = serializeDocumentJson(input.documentMetadata, "metadata");
+        const documentId = input.documentId ?? null;
+        const revision = input.revision ?? null;
+        needsEmbedding = row.checksum !== checksum || row.diary_name !== diaryName;
+        needsMetadataWrite =
+          row.diary_name !== diaryName ||
+          row.checksum !== checksum ||
+          row.mtime !== mtime ||
+          row.size !== size ||
+          (row.document_id ?? null) !== documentId ||
+          (row.revision ?? null) !== revision ||
+          (row.source_json ?? null) !== sourceJson ||
+          (row.metadata_json ?? null) !== metadataJson;
       }
     }
 
@@ -139,6 +146,7 @@ class FileReaderStage extends Stage {
       mtime,
       size,
       needsEmbedding,
+      needsMetadataWrite,
       unstable,
     };
   }

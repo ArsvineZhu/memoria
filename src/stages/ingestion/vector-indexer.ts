@@ -48,8 +48,16 @@ class VectorIndexerStage extends Stage {
       return { ...info, vectorIndexWritten: 0, vectorStoreMissing: true };
     }
 
-    const indexName =
+    const fallbackIndexName =
       typeof info.diaryName === "string" && info.diaryName ? info.diaryName : "Root";
+    const currentIndexName =
+      typeof info.currentIndexName === "string" && info.currentIndexName
+        ? info.currentIndexName
+        : fallbackIndexName;
+    const previousIndexName =
+      typeof info.previousIndexName === "string" && info.previousIndexName
+        ? info.previousIndexName
+        : currentIndexName;
 
     const chunkEntries = Array.isArray(info.chunkEntries) ? info.chunkEntries : [];
     const chunkIds = Array.isArray(info.chunkIds) ? info.chunkIds : [];
@@ -59,7 +67,7 @@ class VectorIndexerStage extends Stage {
 
     // 1. Remove stale vectors before adding new ones.
     for (const id of removedChunkIds) {
-      await this._safeRemove(vectorStore, indexName, id);
+      await this._safeRemove(vectorStore, previousIndexName, id);
     }
 
     // 2. Add chunk vectors to the diary index.
@@ -67,7 +75,7 @@ class VectorIndexerStage extends Stage {
     for (let i = 0; i < chunkCount; i++) {
       const chunkId = at(chunkIds, i, "chunk ids");
       const chunkEntry = at(chunkEntries, i, "chunk entries");
-      await this._upsertAdd(vectorStore, indexName, chunkId, chunkEntry.vector);
+      await this._upsertAdd(vectorStore, currentIndexName, chunkId, chunkEntry.vector);
     }
 
     // 3. Add tag vectors to the shared global tag index.
@@ -88,8 +96,15 @@ class VectorIndexerStage extends Stage {
 
     // 4. Schedule persistence for both touched indices.
     if (typeof vectorStore.scheduleIndexSave === "function") {
-      vectorStore.scheduleIndexSave(indexName);
-      vectorStore.scheduleIndexSave(TAG_INDEX_NAME);
+      if (removedChunkIds.length > 0) {
+        vectorStore.scheduleIndexSave(previousIndexName);
+      }
+      if (chunkCount > 0) {
+        vectorStore.scheduleIndexSave(currentIndexName);
+      }
+      if (tagCount > 0) {
+        vectorStore.scheduleIndexSave(TAG_INDEX_NAME);
+      }
     }
 
     return { ...info, vectorIndexWritten: chunkCount + tagCount };

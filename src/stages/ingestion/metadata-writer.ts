@@ -55,6 +55,9 @@ class MetadataWriterStage extends Stage {
       chunkIds: number[];
       tagIds: number[];
       removedChunkIds: number[];
+      previousIndexName?: string | null;
+      currentIndexName?: string;
+      metadataOnly?: boolean;
     }
   > {
     const fileInfo = input || {};
@@ -74,8 +77,8 @@ class MetadataWriterStage extends Stage {
     )
       throw new TypeError("MetadataWriterStage requires a complete file snapshot");
 
-    // Caller-supplied skip: the file did not change, nothing to write.
-    if (fileInfo.needsEmbedding === false) {
+    // Caller-supplied skip: neither content nor persisted file metadata changed.
+    if (fileInfo.needsEmbedding === false && fileInfo.needsMetadataWrite !== true) {
       const existing = await metadataStore.getFileByPath(relPath);
       return {
         ...fileInfo,
@@ -84,6 +87,56 @@ class MetadataWriterStage extends Stage {
         tagIds: [],
         removedChunkIds: [],
         skipped: true,
+      };
+    }
+
+    const sourceJson = serializeDocumentJson(fileInfo.documentSource, "source");
+    const metadataJson = serializeDocumentJson(fileInfo.documentMetadata, "metadata");
+
+    if (fileInfo.needsEmbedding === false && fileInfo.needsMetadataWrite === true) {
+      const existing = await metadataStore.getFileByPath(relPath);
+      const previousIndexName =
+        existing?.diary_name || existing?.diaryName || diaryName;
+      let fileId: number | null = existing?.id ?? null;
+      if (typeof metadataStore.updateDocumentMetadata === "function") {
+        const updated = await metadataStore.updateDocumentMetadata({
+          path: relPath,
+          diaryName,
+          checksum,
+          mtime,
+          size,
+          documentId: fileInfo.documentId,
+          revision: fileInfo.revision,
+          sourceJson,
+          metadataJson,
+        });
+        fileId = updated.fileId;
+      } else {
+        fileId = await metadataStore.upsertFile({
+          path: relPath,
+          diaryName,
+          checksum,
+          mtime,
+          size,
+          documentId: fileInfo.documentId,
+          revision: fileInfo.revision,
+          sourceJson,
+          metadataJson,
+        });
+      }
+      if (fileId == null) {
+        throw new Error(`Unable to persist file metadata for ${relPath}`);
+      }
+      return {
+        ...fileInfo,
+        fileId,
+        chunkIds: [],
+        tagIds: [],
+        removedChunkIds: [],
+        skipped: false,
+        metadataOnly: true,
+        previousIndexName,
+        currentIndexName: diaryName,
       };
     }
 
@@ -105,9 +158,6 @@ class MetadataWriterStage extends Stage {
       name: entry.name,
       vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
     }));
-    const sourceJson = serializeDocumentJson(fileInfo.documentSource, "source");
-    const metadataJson = serializeDocumentJson(fileInfo.documentMetadata, "metadata");
-
     if (typeof metadataStore.replaceDocumentState === "function") {
       const replacement = await metadataStore.replaceDocumentState({
         file: {
@@ -138,6 +188,8 @@ class MetadataWriterStage extends Stage {
         chunkIds: replacement.chunkIds,
         tagIds: replacement.tagIds,
         removedChunkIds: replacement.removedChunkIds,
+        previousIndexName: replacement.previousIndexName,
+        currentIndexName: replacement.currentIndexName,
       };
     }
 
@@ -195,6 +247,8 @@ class MetadataWriterStage extends Stage {
       chunkIds,
       tagIds: newTagIds,
       removedChunkIds,
+      previousIndexName: existing?.diary_name || existing?.diaryName || null,
+      currentIndexName: diaryName,
     };
   }
 

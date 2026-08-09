@@ -67,7 +67,7 @@ class FileDeleterStage extends Stage {
     const row = await metadataStore.getFileByPath(relPath);
     if (!row) return { ...info, deleted: false };
 
-    const diaryName = info.diaryName || row.diary_name || row.diaryName || "Root";
+    const diaryName = row.diary_name || row.diaryName || "Root";
     const oldChunks = await metadataStore.getChunksByFileId(row.id);
     const removedChunkIds = oldChunks.map((c) => c.id);
 

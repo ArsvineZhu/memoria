@@ -298,6 +298,41 @@ test("ChunkEmbedderStage rejects any incomplete or invalid embedding batch", asy
   }
 });
 
+test("FileReaderStage separates metadata changes from embedding changes", async (t) => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: 3 });
+  t.after(() => metadataStore.close());
+  const content = "same logical content";
+  await metadataStore.upsertFile({
+    path: "logical/doc",
+    diaryName: "Logical",
+    checksum: md5(content),
+    mtime: 100,
+    size: content.length,
+    documentId: "logical:doc",
+    revision: "r1",
+    sourceJson: JSON.stringify({ type: "old" }),
+    metadataJson: JSON.stringify({ version: 1 }),
+  });
+
+  const out = await new FileReaderStage().process(
+    {
+      path: "logical/doc",
+      relPath: "logical/doc",
+      content,
+      mtime: 200,
+      size: content.length,
+      documentId: "logical:doc",
+      revision: "r2",
+      documentSource: { type: "new" },
+      documentMetadata: { version: 2 },
+    },
+    makeCtx({}, { metadataStore }),
+  );
+
+  assert.equal(out.needsEmbedding, false);
+  assert.equal(out.needsMetadataWrite, true);
+});
+
 test("ChunkEmbedderStage handles embedBatch returning Float32Array", async () => {
   const stage = new ChunkEmbedderStage();
   const f32Provider: EmbeddingProviderContract = {

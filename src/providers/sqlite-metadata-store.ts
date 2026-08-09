@@ -274,6 +274,54 @@ class SqliteMetadataStore extends MetadataStore {
     return row ? Number(row.id) : null;
   }
 
+  async updateDocumentMetadata(
+    fileMeta: FileMetadataInput,
+  ): Promise<{ fileId: number; changed: boolean }> {
+    const existing = this.db
+      .prepare("SELECT * FROM files WHERE path = ?")
+      .get(fileMeta.path) as FileQueryRow | undefined;
+    if (!existing) {
+      const fileId = await this.upsertFile(fileMeta);
+      if (fileId == null) {
+        throw new Error("Unable to persist file metadata");
+      }
+      return { fileId, changed: true };
+    }
+
+    const changed =
+      existing.diary_name !== fileMeta.diaryName ||
+      existing.checksum !== fileMeta.checksum ||
+      existing.mtime !== fileMeta.mtime ||
+      existing.size !== fileMeta.size ||
+      (existing.document_id ?? null) !== (fileMeta.documentId ?? null) ||
+      (existing.revision ?? null) !== (fileMeta.revision ?? null) ||
+      (existing.source_json ?? null) !== (fileMeta.sourceJson ?? null) ||
+      (existing.metadata_json ?? null) !== (fileMeta.metadataJson ?? null);
+
+    if (!changed) return { fileId: Number(existing.id), changed: false };
+
+    this.db
+      .prepare(
+        `UPDATE files SET
+          diary_name = ?, checksum = ?, mtime = ?, size = ?, updated_at = ?,
+          document_id = ?, revision = ?, source_json = ?, metadata_json = ?
+         WHERE id = ?`,
+      )
+      .run(
+        fileMeta.diaryName,
+        fileMeta.checksum,
+        fileMeta.mtime,
+        fileMeta.size,
+        Math.floor(Date.now() / 1000),
+        fileMeta.documentId ?? null,
+        fileMeta.revision ?? null,
+        fileMeta.sourceJson ?? null,
+        fileMeta.metadataJson ?? null,
+        existing.id,
+      );
+    return { fileId: Number(existing.id), changed: true };
+  }
+
   async countFiles(): Promise<number> {
     const row = this.db.prepare("SELECT COUNT(*) AS c FROM files").get() as
       { c?: number } | undefined;
@@ -377,6 +425,7 @@ class SqliteMetadataStore extends MetadataStore {
         existingByDocument ||
         (this.db.prepare("SELECT * FROM files WHERE path = ?").get(file.path) as
           FileQueryRow | undefined);
+      const previousIndexName = existing?.diary_name ?? null;
       const removedChunkIds = existing
         ? (
             this.db
@@ -483,6 +532,8 @@ class SqliteMetadataStore extends MetadataStore {
         tagIds,
         removedChunkIds,
         metadataGeneration,
+        previousIndexName,
+        currentIndexName: file.diaryName,
       };
     })();
 

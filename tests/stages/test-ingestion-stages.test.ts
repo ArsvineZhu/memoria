@@ -14,6 +14,7 @@ import TagExtractorStage from "../../src/stages/ingestion/tag-extractor.js";
 import ChunkerStage from "../../src/stages/ingestion/text-chunker.js";
 import ChunkEmbedderStage from "../../src/stages/ingestion/chunk-embedder.js";
 import TagEmbedderStage from "../../src/stages/ingestion/tag-embedder.js";
+import { MemoriaError } from "../../src/errors.js";
 import type {
   EmbeddingProviderContract,
   MemoryConfigOverrides,
@@ -42,7 +43,7 @@ function makeCtx(config: MemoryConfigOverrides = {}, deps: TestDependencies = {}
     new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const embeddingProvider = deps.embeddingProvider || fakeProvider;
   return new PipelineContext({
-    config,
+    config: { dimension: dim, ...config },
     metadataStore,
     embeddingProvider,
     vectorStore: deps.vectorStore || null,
@@ -266,26 +267,35 @@ test("ChunkerStage drops empty normalized chunks", async () => {
 
 // ── ChunkEmbedderStage ─────────────────────────────────────────
 
-test("ChunkEmbedderStage embeds each chunk and filters failed vectors", async () => {
+test("ChunkEmbedderStage rejects any incomplete or invalid embedding batch", async () => {
   const stage = new ChunkEmbedderStage();
-  const chunkProvider: EmbeddingProviderContract = {
-    getDimension: () => dim,
-    embedBatch: async (texts = []) =>
-      texts.map((text: string, i: number) => (i === 1 ? null : [i, i + 1, i + 2])),
-  };
-  const ctx = makeCtx({}, { embeddingProvider: chunkProvider });
-  const out = await stage.process({ chunks: ["chunk0", "chunk1", "chunk2"] }, ctx);
+  const cases: Array<{
+    name: string;
+    vectors: (number[] | null)[];
+  }> = [
+    { name: "short result", vectors: [[0, 1, 2], [1, 2, 3]] },
+    { name: "null result", vectors: [[0, 1, 2], null, [2, 3, 4]] },
+    { name: "wrong dimension", vectors: [[0, 1, 2], [1, 2], [2, 3, 4]] },
+    { name: "non-finite result", vectors: [[0, 1, 2], [Number.NaN, 2, 3], [2, 3, 4]] },
+  ];
 
-  assert.strictEqual(out.chunkEntries.length, 2);
-  const c0 = out.chunkEntries.find((e) => e.chunkIndex === 0)!;
-  const c2 = out.chunkEntries.find((e) => e.chunkIndex === 2)!;
-  assert.deepStrictEqual(c0.vector, [0, 1, 2]);
-  assert.strictEqual(c0.content, "chunk0");
-  assert.deepStrictEqual(c2.vector, [2, 3, 4]);
-  assert.strictEqual(
-    out.chunkEntries.find((e) => e.chunkIndex === 1),
-    undefined,
-  );
+  for (const testCase of cases) {
+    const provider: EmbeddingProviderContract = {
+      getDimension: () => dim,
+      embedBatch: async () => testCase.vectors,
+    };
+    const ctx = makeCtx({}, { embeddingProvider: provider });
+    await assert.rejects(
+      () => stage.process({ chunks: ["chunk0", "chunk1", "chunk2"] }, ctx),
+      (error: unknown) =>
+        error instanceof MemoriaError &&
+        error.code === "embedding" &&
+        !error.message.includes("chunk0") &&
+        !error.message.includes("chunk1") &&
+        !error.message.includes("chunk2"),
+      testCase.name,
+    );
+  }
 });
 
 test("ChunkEmbedderStage handles embedBatch returning Float32Array", async () => {
@@ -304,20 +314,22 @@ test("ChunkEmbedderStage handles embedBatch returning Float32Array", async () =>
   }
 });
 
-test("ChunkEmbedderStage returns empty chunkEntries when embedBatch returns nulls", async () => {
+test("ChunkEmbedderStage rejects a batch containing only null vectors", async () => {
   const stage = new ChunkEmbedderStage();
   const nullProvider: EmbeddingProviderContract = {
     getDimension: () => dim,
     embedBatch: async () => [null, null],
   };
   const ctx = makeCtx({}, { embeddingProvider: nullProvider });
-  const out = await stage.process({ chunks: ["a", "b"] }, ctx);
-  assert.deepStrictEqual(out.chunkEntries, []);
+  await assert.rejects(
+    () => stage.process({ chunks: ["a", "b"] }, ctx),
+    (error: unknown) => error instanceof MemoriaError && error.code === "embedding",
+  );
 });
 
 // ── TagEmbedderStage ───────────────────────────────────────────
 
-test("TagEmbedderStage embeds each tag and filters failed vectors", async () => {
+test("TagEmbedderStage rejects a partial tag embedding batch", async () => {
   const stage = new TagEmbedderStage();
   const tagProvider: EmbeddingProviderContract = {
     getDimension: () => dim,
@@ -325,11 +337,14 @@ test("TagEmbedderStage embeds each tag and filters failed vectors", async () => 
       texts.map((text: string, i: number) => (i === 0 ? null : [0.5, 0.6, 0.7])),
   };
   const ctx = makeCtx({}, { embeddingProvider: tagProvider });
-  const out = await stage.process({ tags: ["alpha", "beta"] }, ctx);
-
-  assert.strictEqual(out.tagEntries.length, 1);
-  assert.strictEqual(out.tagEntries[0].name, "beta");
-  assert.deepStrictEqual(out.tagEntries[0].vector, [0.5, 0.6, 0.7]);
+  await assert.rejects(
+    () => stage.process({ tags: ["alpha", "beta"] }, ctx),
+    (error: unknown) =>
+      error instanceof MemoriaError &&
+      error.code === "embedding" &&
+      !error.message.includes("alpha") &&
+      !error.message.includes("beta"),
+  );
 });
 
 test("TagEmbedderStage handles empty tags list", async () => {

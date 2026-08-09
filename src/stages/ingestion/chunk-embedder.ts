@@ -8,11 +8,12 @@ import type {
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
+import { requireCompleteEmbeddingBatch } from "../../utils/embedding-validation.js";
 
 /**
  * Embeds document chunks via ctx.embeddingProvider.
- * Failed embeddings (null) are filtered out; output keeps
- * { chunkIndex, content, vector } entries aligned with the chunk order.
+ * Every input chunk must receive one valid vector before the document can
+ * continue to the authority writer.
  */
 class ChunkEmbedderStage extends Stage {
   constructor() {
@@ -27,10 +28,14 @@ class ChunkEmbedderStage extends Stage {
     const fileInfo = input;
     const chunks: string[] = Array.isArray(fileInfo.chunks) ? fileInfo.chunks : [];
 
-    let vectors: Array<EmbeddingVector | null> = [];
+    if (fileInfo.needsEmbedding === false) {
+      return { ...fileInfo, chunkEntries: [] };
+    }
+
+    let rawVectors: Array<EmbeddingVector | null> = [];
     if (chunks.length > 0 && ctx.embeddingProvider) {
       try {
-        vectors = await ctx.embeddingProvider.embedBatch(chunks);
+        rawVectors = await ctx.embeddingProvider.embedBatch(chunks);
       } catch (error) {
         throw asMemoriaError(
           error,
@@ -41,15 +46,16 @@ class ChunkEmbedderStage extends Stage {
       }
     }
 
+    const vectors = requireCompleteEmbeddingBatch(
+      chunks,
+      rawVectors,
+      Number(ctx.config.dimension),
+      "chunk",
+    );
+
     const chunkEntries: ChunkEntry[] = [];
     for (let i = 0; i < chunks.length; i++) {
       const vector = at(vectors, i, "chunk embeddings");
-      if (vector == null) {
-        console.warn(
-          `[ChunkEmbedder] ⚠️ Skipping chunk ${i} (embedding failed or null).`,
-        );
-        continue;
-      }
       chunkEntries.push({
         chunkIndex: i,
         content: at(chunks, i, "chunks"),

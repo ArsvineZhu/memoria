@@ -8,11 +8,12 @@ import type {
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
+import { requireCompleteEmbeddingBatch } from "../../utils/embedding-validation.js";
 
 /**
  * Embeds document tags via ctx.embeddingProvider.
- * Failed embeddings (null) are filtered out; output keeps
- * { name, vector } entries.
+ * Every extracted tag must receive one valid vector before the document can
+ * continue to the authority writer.
  */
 class TagEmbedderStage extends Stage {
   constructor() {
@@ -27,10 +28,14 @@ class TagEmbedderStage extends Stage {
     const fileInfo = input;
     const tags: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
 
-    let vectors: Array<EmbeddingVector | null> = [];
+    if (fileInfo.needsEmbedding === false) {
+      return { ...fileInfo, tagEntries: [] };
+    }
+
+    let rawVectors: Array<EmbeddingVector | null> = [];
     if (tags.length > 0 && ctx.embeddingProvider) {
       try {
-        vectors = await ctx.embeddingProvider.embedBatch(tags);
+        rawVectors = await ctx.embeddingProvider.embedBatch(tags);
       } catch (error) {
         throw asMemoriaError(
           error,
@@ -41,15 +46,16 @@ class TagEmbedderStage extends Stage {
       }
     }
 
+    const vectors = requireCompleteEmbeddingBatch(
+      tags,
+      rawVectors,
+      Number(ctx.config.dimension),
+      "tag",
+    );
+
     const tagEntries: TagEntry[] = [];
     for (let i = 0; i < tags.length; i++) {
       const vector = at(vectors, i, "tag embeddings");
-      if (vector == null) {
-        console.warn(
-          `[TagEmbedder] ⚠️ Skipping tag "${at(tags, i, "tags")}" (embedding failed or null).`,
-        );
-        continue;
-      }
       tagEntries.push({
         name: at(tags, i, "tags"),
         vector,

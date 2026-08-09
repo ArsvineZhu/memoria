@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { createMemoryEngine } from "../../src/index.js";
+import { MemoriaError } from "../../src/errors.js";
 import type {
   EmbeddingProviderContract,
   MemoryEngineOptions,
@@ -197,5 +198,42 @@ test("empty logical replacement removes old searchable chunks across reopen", as
       await reopened?.close();
       await first.close();
     }
+  }
+});
+
+test("partial logical embedding fails before any metadata row is committed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-partial-embedding-"));
+  const embeddingProvider: EmbeddingProviderContract = {
+    getDimension: () => DIMENSION,
+    async embedBatch(texts: readonly string[] = []) {
+      const vector = () => new Float32Array(DIMENSION);
+      return texts.slice(0, -1).map(() => vector());
+    },
+  };
+  const engine = createMemoryEngine({
+    config: {
+      dimension: DIMENSION,
+      storePath: root,
+      chunkMaxTokens: 3,
+      chunkOverlapTokens: 0,
+    },
+    embeddingProvider,
+  });
+
+  try {
+    await engine.initialize();
+    await assert.rejects(
+      () =>
+        engine.ingest({
+          id: "partial:batch",
+          content: "one two three four five six seven eight nine ten",
+          revision: "1",
+        }),
+      (error: unknown) => error instanceof MemoriaError && error.code === "embedding",
+    );
+    assert.equal(await engine.metadataStore.getFileByDocumentId?.("partial:batch"), null);
+    assert.equal((await engine.getStats()).files, 0);
+  } finally {
+    await engine.close();
   }
 });

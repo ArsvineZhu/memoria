@@ -76,9 +76,7 @@ function makeVectorStore(): VectorStoreContract & {
   };
 }
 
-function makeInjectedEngine(
-  extra: Partial<MemoryEngineOptions> = {},
-): {
+function makeInjectedEngine(extra: Partial<MemoryEngineOptions> = {}): {
   engine: ReturnType<typeof createMemoryEngine>;
   metadataStore: SqliteMetadataStore;
   vectorStore: ReturnType<typeof makeVectorStore>;
@@ -115,8 +113,14 @@ test("constructor defers default providers and context until initialize", async 
   const engine = createMemoryEngine({ config: { dimension: DIM } });
   assert.strictEqual(engine.state, "created");
   assert.strictEqual(engine.initialized, false);
-  assert.strictEqual((engine as unknown as { metadataStore?: unknown }).metadataStore, undefined);
-  assert.strictEqual((engine as unknown as { vectorStore?: unknown }).vectorStore, undefined);
+  assert.strictEqual(
+    (engine as unknown as { metadataStore?: unknown }).metadataStore,
+    undefined,
+  );
+  assert.strictEqual(
+    (engine as unknown as { vectorStore?: unknown }).vectorStore,
+    undefined,
+  );
   assert.strictEqual(
     (engine as unknown as { embeddingProvider?: unknown }).embeddingProvider,
     undefined,
@@ -197,17 +201,20 @@ test("failed initialization cleans owned state and returns to created", async ()
   });
 
   try {
-    await assert.rejects(() => engine.initialize(), (error: unknown) => {
-      assert.ok(error instanceof MemoriaError);
-      assert.strictEqual(error.code, "configuration");
-      assert.strictEqual(
-        (error as Error & { cause?: unknown }).cause instanceof Error
-          ? (error as Error & { cause: Error }).cause.message
-          : undefined,
-        "ready hook failed",
-      );
-      return true;
-    });
+    await assert.rejects(
+      () => engine.initialize(),
+      (error: unknown) => {
+        assert.ok(error instanceof MemoriaError);
+        assert.strictEqual(error.code, "configuration");
+        assert.strictEqual(
+          (error as Error & { cause?: unknown }).cause instanceof Error
+            ? (error as Error & { cause: Error }).cause.message
+            : undefined,
+          "ready hook failed",
+        );
+        return true;
+      },
+    );
     assert.strictEqual(engine.state, "created");
     assert.strictEqual(engine.initialized, false);
     assert.strictEqual(metadataStore._closed, false);

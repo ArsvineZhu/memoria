@@ -31,9 +31,7 @@ interface ReplacementResult {
 }
 
 type AtomicStore = SqliteMetadataStore & {
-  replaceDocumentState(
-    replacement: Replacement,
-  ): Promise<ReplacementResult>;
+  replaceDocumentState(replacement: Replacement): Promise<ReplacementResult>;
 };
 
 function makeBuffer(values: readonly number[]): Buffer {
@@ -89,9 +87,7 @@ function replacement(): Replacement {
       sourceJson: '{"source":"new"}',
       metadataJson: '{"version":2}',
     },
-    chunks: [
-      { chunkIndex: 0, content: "new chunk", vector: makeBuffer([0, 1, 0, 0]) },
-    ],
+    chunks: [{ chunkIndex: 0, content: "new chunk", vector: makeBuffer([0, 1, 0, 0]) }],
     tags: [
       { name: "alpha", vector: null },
       { name: "beta", vector: makeBuffer([0, 0, 0, 1]) },
@@ -151,9 +147,7 @@ for (const [step, trigger] of [
     const store = makeStore();
     const fileId = await seedStore(store);
     const before = await snapshot(store, fileId);
-    store.db.exec(
-      `${trigger} BEGIN SELECT RAISE(ABORT, 'fault:${step}'); END;`,
-    );
+    store.db.exec(`${trigger} BEGIN SELECT RAISE(ABORT, 'fault:${step}'); END;`);
 
     try {
       await assert.rejects(() => store.replaceDocumentState(replacement()), /fault/);

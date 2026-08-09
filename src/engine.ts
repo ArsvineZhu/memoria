@@ -260,9 +260,8 @@ class MemoryEngine {
   private async _ensureProviders(): Promise<void> {
     if (!this.metadataStore) {
       try {
-        const { default: SqliteMetadataStore } = await import(
-          "./providers/sqlite-metadata-store.js"
-        );
+        const { default: SqliteMetadataStore } =
+          await import("./providers/sqlite-metadata-store.js");
         this.metadataStore = new SqliteMetadataStore({
           dbPath: this.config.dbPath,
           dimension: this.config.dimension,
@@ -281,9 +280,8 @@ class MemoryEngine {
     }
     if (!this.vectorStore) {
       try {
-        const { default: VexusVectorStore } = await import(
-          "./providers/vexus-vector-store.js"
-        );
+        const { default: VexusVectorStore } =
+          await import("./providers/vexus-vector-store.js");
         this.vectorStore = new VexusVectorStore({
           dimension: this.config.dimension,
           storePath: this.config.storePath,
@@ -305,9 +303,8 @@ class MemoryEngine {
     }
     if (!this.embeddingProvider) {
       try {
-        const { default: OpenAIEmbeddingProvider } = await import(
-          "./providers/openai-embedding-provider.js"
-        );
+        const { default: OpenAIEmbeddingProvider } =
+          await import("./providers/openai-embedding-provider.js");
         this.embeddingProvider = new OpenAIEmbeddingProvider({
           apiUrl: this.config.apiUrl,
           apiKey: this.config.apiKey,
@@ -480,12 +477,9 @@ class MemoryEngine {
     try {
       return await this._reconcileInternal();
     } catch (error) {
-      throw asMemoriaError(
-        error,
-        "integrity",
-        "MemoryEngine reconciliation failed.",
-        { retryable: true },
-      );
+      throw asMemoriaError(error, "integrity", "MemoryEngine reconciliation failed.", {
+        retryable: true,
+      });
     }
   }
 
@@ -607,7 +601,9 @@ class MemoryEngine {
         const revision =
           document.revision === undefined ? undefined : String(document.revision);
         const storagePath = logicalDocumentPath(documentId);
-        const mtime = Number.isFinite(document.updatedAt) ? Number(document.updatedAt) : 0;
+        const mtime = Number.isFinite(document.updatedAt)
+          ? Number(document.updatedAt)
+          : 0;
         const size = Buffer.byteLength(document.content, "utf8");
         this._vectorStateComplete = false;
         try {
@@ -630,7 +626,8 @@ class MemoryEngine {
           if (!result.skipped && !this._vectorMutationFailed) {
             this._vectorStateComplete = true;
           }
-          if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
+          if (!result.skipped && result.fileId != null)
+            this._lastIndexedAt = Date.now();
           return {
             ...result,
             documentId,
@@ -646,12 +643,9 @@ class MemoryEngine {
         }
       });
     } catch (error) {
-      throw asMemoriaError(
-        error,
-        "ingestion",
-        "MemoryEngine ingestion failed.",
-        { retryable: true },
-      );
+      throw asMemoriaError(error, "ingestion", "MemoryEngine ingestion failed.", {
+        retryable: true,
+      });
     }
   }
 
@@ -794,12 +788,9 @@ class MemoryEngine {
         },
       )) as DeleteEnvelope;
     } catch (error) {
-      throw asMemoriaError(
-        error,
-        "persistence",
-        "MemoryEngine delete failed.",
-        { retryable: true },
-      );
+      throw asMemoriaError(error, "persistence", "MemoryEngine delete failed.", {
+        retryable: true,
+      });
     }
   }
 

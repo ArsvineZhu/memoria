@@ -25,10 +25,8 @@ function loadDatabaseCtor(): typeof BetterSqlite3 | null {
   if (DatabaseCtor) return DatabaseCtor;
   try {
     const loaded = requireFromProvider("better-sqlite3") as
-      | typeof BetterSqlite3
-      | { default?: typeof BetterSqlite3 };
-    DatabaseCtor =
-      typeof loaded === "function" ? loaded : (loaded.default ?? null);
+      typeof BetterSqlite3 | { default?: typeof BetterSqlite3 };
+    DatabaseCtor = typeof loaded === "function" ? loaded : (loaded.default ?? null);
   } catch (_) {
     DatabaseCtor = null;
   }
@@ -277,16 +275,14 @@ class SqliteMetadataStore extends MetadataStore {
   }
 
   override async countFiles(): Promise<number> {
-    const row = this.db
-      .prepare("SELECT COUNT(*) AS c FROM files")
-      .get() as { c?: number } | undefined;
+    const row = this.db.prepare("SELECT COUNT(*) AS c FROM files").get() as
+      { c?: number } | undefined;
     return Number(row?.c) || 0;
   }
 
   override async getLastIndexedAt(): Promise<number | null> {
-    const row = this.db
-      .prepare("SELECT MAX(updated_at) AS m FROM files")
-      .get() as { m?: number | null } | undefined;
+    const row = this.db.prepare("SELECT MAX(updated_at) AS m FROM files").get() as
+      { m?: number | null } | undefined;
     return row?.m == null ? null : Number(row.m) * 1000;
   }
 
@@ -379,13 +375,14 @@ class SqliteMetadataStore extends MetadataStore {
         : undefined;
       const existing =
         existingByDocument ||
-        (this.db
-          .prepare("SELECT * FROM files WHERE path = ?")
-          .get(file.path) as FileQueryRow | undefined);
+        (this.db.prepare("SELECT * FROM files WHERE path = ?").get(file.path) as
+          FileQueryRow | undefined);
       const removedChunkIds = existing
-        ? (this.db
-            .prepare("SELECT id FROM chunks WHERE file_id = ? ORDER BY id")
-            .all(existing.id) as Array<{ id: number }>).map((row) => Number(row.id))
+        ? (
+            this.db
+              .prepare("SELECT id FROM chunks WHERE file_id = ? ORDER BY id")
+              .all(existing.id) as Array<{ id: number }>
+          ).map((row) => Number(row.id))
         : [];
 
       let fileId: number;
@@ -442,14 +439,17 @@ class SqliteMetadataStore extends MetadataStore {
       const insertTag = this.db.prepare(
         "INSERT OR IGNORE INTO tags (name, vector) VALUES (?, ?)",
       );
-      const updateTagVector = this.db.prepare("UPDATE tags SET vector = ? WHERE name = ?");
+      const updateTagVector = this.db.prepare(
+        "UPDATE tags SET vector = ? WHERE name = ?",
+      );
       const selectTag = this.db.prepare("SELECT id, vector FROM tags WHERE name = ?");
       const tagIdsByName = new Map<string, number>();
       const tagIds: number[] = [];
       for (const tag of tags) {
         insertTag.run(tag.name, tag.vector ?? null);
         if (tag.vector !== null) updateTagVector.run(tag.vector, tag.name);
-        const row = selectTag.get(tag.name) as { id: number; vector?: Buffer | null } | undefined;
+        const row = selectTag.get(tag.name) as
+          { id: number; vector?: Buffer | null } | undefined;
         if (!row) continue;
         const tagId = Number(row.id);
         tagIds.push(tagId);
@@ -461,8 +461,7 @@ class SqliteMetadataStore extends MetadataStore {
         let tagId = tagIdsByName.get(tagName);
         if (tagId === undefined) {
           const stored = selectTag.get(tagName) as
-            | { id: number; vector?: Buffer | null }
-            | undefined;
+            { id: number; vector?: Buffer | null } | undefined;
           if (stored?.vector != null) tagId = Number(stored.id);
         }
         if (tagId !== undefined) fileTagIds.push(tagId);
@@ -569,8 +568,7 @@ class SqliteMetadataStore extends MetadataStore {
       .map((row) => row.diary_name || "")
       .filter(Boolean);
     const tagRow = this.db.prepare("SELECT 1 AS present FROM tags LIMIT 1").get() as
-      | { present?: number }
-      | undefined;
+      { present?: number } | undefined;
     if (tagRow?.present) names.push("global_tags");
     return [...new Set(names)].sort();
   }

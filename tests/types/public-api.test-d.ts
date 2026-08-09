@@ -54,7 +54,10 @@ const vectorStore: VectorStore = {
 
 type DomainMetadataMethods = Pick<
   MetadataStoreContract,
-  "countFiles" | "getLastIndexedAt" | "getExpectedVectorIndexNames" | "getIndexableChunks"
+  | "countFiles"
+  | "getLastIndexedAt"
+  | "getExpectedVectorIndexNames"
+  | "getIndexableChunks"
 >;
 const domainMetadataMethods = null as unknown as DomainMetadataMethods;
 const compatibilityContext: PipelineContextOptions = {

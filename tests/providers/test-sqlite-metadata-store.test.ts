@@ -83,9 +83,16 @@ test("generation state starts dirty and bulk index metadata is available", async
   });
   assert.ok(replacement.fileId > 0);
   assert.deepEqual(await generation.getIndexableChunks(), [
-    { chunkId: replacement.chunkIds[0], vector: makeBuf([1, 0, 0, 0]), indexName: "diary1" },
+    {
+      chunkId: replacement.chunkIds[0],
+      vector: makeBuf([1, 0, 0, 0]),
+      indexName: "diary1",
+    },
   ]);
-  assert.deepEqual(await generation.getExpectedVectorIndexNames(), ["diary1", "global_tags"]);
+  assert.deepEqual(await generation.getExpectedVectorIndexNames(), [
+    "diary1",
+    "global_tags",
+  ]);
   assert.strictEqual(await store.countFiles(), 1);
   assert.ok((await store.getLastIndexedAt()) !== null);
   store.close();

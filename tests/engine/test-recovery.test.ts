@@ -39,7 +39,8 @@ function countingVectorStore(
     validationResult: options.validationResult ?? true,
     flushError: options.flushError,
     async add(indexName, id) {
-      const ids = (store.indices.get(indexName) as Set<number> | undefined) || new Set();
+      const ids =
+        (store.indices.get(indexName) as Set<number> | undefined) || new Set();
       ids.add(id);
       store.indices.set(indexName, ids);
     },
@@ -98,7 +99,11 @@ function embeddingProvider(): EmbeddingProviderContract {
   };
 }
 
-function assertWrappedFailure(error: unknown, code: MemoriaError["code"], message: string) {
+function assertWrappedFailure(
+  error: unknown,
+  code: MemoriaError["code"],
+  message: string,
+) {
   assert.ok(error instanceof MemoriaError);
   assert.equal(error.code, code);
   assert.equal(
@@ -145,7 +150,8 @@ test("metadata remains recoverable when vector write fails after DB persistence"
   await first.initialize();
   await assert.rejects(
     () => first.ingest({ id: "crash:vector-before", content: "persist me" }),
-    (error: unknown) => assertWrappedFailure(error, "vector_backend", "simulated vector write crash"),
+    (error: unknown) =>
+      assertWrappedFailure(error, "vector_backend", "simulated vector write crash"),
   );
   await first.close();
 
@@ -306,7 +312,8 @@ test("failed vector writes leave vector_dirty set after close", async () => {
   await engine.initialize();
   await assert.rejects(
     () => engine.ingest({ id: "dirty:write-failure", content: "persist me" }),
-    (error: unknown) => assertWrappedFailure(error, "vector_backend", "simulated vector write crash"),
+    (error: unknown) =>
+      assertWrappedFailure(error, "vector_backend", "simulated vector write crash"),
   );
   await engine.close();
 
@@ -318,7 +325,10 @@ test("failed vector writes leave vector_dirty set after close", async () => {
 test("failed vector persistence does not clear dirty and remains retryable", async () => {
   const root = mkdtempSync(join(tmpdir(), "memoria-recovery-flush-failure-"));
   const vectorStore = countingVectorStore();
-  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: DIMENSION });
+  const metadataStore = new SqliteMetadataStore({
+    dbPath: ":memory:",
+    dimension: DIMENSION,
+  });
   const engine = createMemoryEngine({
     config: { dimension: DIMENSION, storePath: root },
     embeddingProvider: embeddingProvider(),
@@ -331,7 +341,8 @@ test("failed vector persistence does not clear dirty and remains retryable", asy
 
   await assert.rejects(
     () => engine.close(),
-    (error: unknown) => assertWrappedFailure(error, "lifecycle", "simulated persistence failure"),
+    (error: unknown) =>
+      assertWrappedFailure(error, "lifecycle", "simulated persistence failure"),
   );
   assert.equal(engine.state, "ready");
   assert.equal(await metadataStore.getKv?.("memoria.vector_dirty"), "1");

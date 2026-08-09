@@ -65,6 +65,8 @@ import { dirname, join } from 'node:path';
 import { createMemoryEngine } from 'memoria';
 import FilesystemIngestionAdapter from 'memoria/adapters/filesystem';
 import { MemoriaError } from 'memoria/errors';
+import OpenAIEmbeddingProvider from 'memoria/providers/openai';
+import DashScopeEmbeddingProvider from 'memoria/providers/dashscope';
 
 const require = createRequire(import.meta.url);
 const cjs = require('memoria');
@@ -72,6 +74,8 @@ assert.equal(Object.keys(cjs).length, 41);
 assert.equal(typeof createMemoryEngine, 'function');
 assert.equal(typeof FilesystemIngestionAdapter, 'function');
 assert.equal(typeof MemoriaError, 'function');
+assert.equal(typeof OpenAIEmbeddingProvider, 'function');
+assert.equal(typeof DashScopeEmbeddingProvider, 'function');
 
 const root = mkdtempSync(join(tmpdir(), 'memoria-consumer-runtime-'));
 const dimension = 8;
@@ -109,6 +113,46 @@ assert.equal(typeof native.VexusIndex, 'function');
 const index = new native.VexusIndex(dimension, 4);
 assert.equal(typeof index.stats, 'function');
 `,
+  );
+
+  writeFileSync(
+    join(consumerDirectory, "consumer-types.ts"),
+    `
+import type { EmbeddingProvider } from 'memoria';
+import OpenAIEmbeddingProvider from 'memoria/providers/openai';
+import DashScopeEmbeddingProvider from 'memoria/providers/dashscope';
+
+const openai = new OpenAIEmbeddingProvider({
+  apiKey: 'type-only-test',
+  model: 'text-embedding-test',
+  dimension: 8,
+});
+const dashscope = new DashScopeEmbeddingProvider({
+  apiKey: 'type-only-test',
+  model: 'qwen-test',
+  dimension: 8,
+});
+const providers: EmbeddingProvider[] = [openai, dashscope];
+void providers;
+`,
+  );
+  const tscPath = resolve(repositoryRoot, "node_modules/typescript/bin/tsc");
+  execFileSync(
+    process.execPath,
+    [
+      tscPath,
+      "--noEmit",
+      "--strict",
+      "--skipLibCheck",
+      "--target",
+      "ES2022",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "consumer-types.ts",
+    ],
+    { cwd: consumerDirectory, stdio: "inherit" },
   );
   execFileSync(process.execPath, ["consumer.mjs"], {
     cwd: consumerDirectory,

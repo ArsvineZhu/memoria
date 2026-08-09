@@ -120,9 +120,7 @@ class MetadataStore implements MetadataStoreContract {
   }
 
   async getExpectedVectorIndexNames(): Promise<string[]> {
-    throw new Error(
-      "MetadataStore.getExpectedVectorIndexNames() must be implemented",
-    );
+    throw new Error("MetadataStore.getExpectedVectorIndexNames() must be implemented");
   }
 
   // ── Tag CRUD ──

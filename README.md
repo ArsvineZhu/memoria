@@ -156,8 +156,8 @@ node dist-test/examples/real-embed/demo-recall.js
 import { join } from "node:path";
 
 import { createMemoryEngine } from "memoria";
-import DashScopeEmbeddingProvider from "./src/providers/dashscope-embedding-provider.js";
-// 亦可用 ./src/providers/openai-embedding-provider（OpenAI 兼容，需 apiUrl）
+import DashScopeEmbeddingProvider from "memoria/providers/dashscope";
+// OpenAI 兼容 provider：import OpenAIEmbeddingProvider from "memoria/providers/openai";
 
 const rootPath = join(process.cwd(), "notes");
 const storePath = join(process.cwd(), "indices");

@@ -684,7 +684,7 @@ class TDBEngine {
     this._closed = true;
     if (this.vectorStore && typeof this.vectorStore.flushPendingSaves === "function") {
       try {
-        this.vectorStore.flushPendingSaves();
+        await this.vectorStore.flushPendingSaves();
       } catch (e) {
         console.error(
           `[TDBEngine] flush pending saves failed: ${e instanceof Error ? e.message : String(e)}`,

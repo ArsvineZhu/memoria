@@ -19,6 +19,14 @@
     "./errors": {
       "types": "./dist/errors.d.ts",
       "import": "./dist/errors.js"
+    },
+    "./providers/openai": {
+      "types": "./dist/providers/openai-embedding-provider.d.ts",
+      "import": "./dist/providers/openai-embedding-provider.js"
+    },
+    "./providers/dashscope": {
+      "types": "./dist/providers/dashscope-embedding-provider.d.ts",
+      "import": "./dist/providers/dashscope-embedding-provider.js"
     }
   },
   "files": [

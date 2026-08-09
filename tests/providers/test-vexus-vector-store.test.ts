@@ -226,9 +226,11 @@ test("saveIndex and loadIndex roundtrip", async () => {
 test("validatePersistedIndexes rejects missing, corrupt, and wrong-dimension indexes", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-validate-"));
   const validate = (store: VexusVectorStore, names: readonly string[]) =>
-    (store as unknown as {
-      validatePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
-    }).validatePersistedIndexes(names);
+    (
+      store as unknown as {
+        validatePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
+      }
+    ).validatePersistedIndexes(names);
 
   try {
     const store = new VexusVectorStore({

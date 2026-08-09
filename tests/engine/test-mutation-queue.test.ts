@@ -95,17 +95,9 @@ test("same document revisions execute in queue-entry order", async () => {
 
     releaseRevision2();
     await Promise.all([revision2, revision3]);
-    assert.deepStrictEqual(events, [
-      "start:2",
-      "finish:2",
-      "start:3",
-      "finish:3",
-    ]);
+    assert.deepStrictEqual(events, ["start:2", "finish:2", "start:3", "finish:3"]);
     assert.equal((await revision3).revision, "3");
-    assert.equal(
-      (engine as unknown as MutationQueueInternals)._mutationTails.size,
-      0,
-    );
+    assert.equal((engine as unknown as MutationQueueInternals)._mutationTails.size, 0);
   } finally {
     releaseRevision2();
     await engine.close();
@@ -153,10 +145,7 @@ test("same document upsert and remove are serialized in invocation order", async
       "remove-start",
       "remove-finish",
     ]);
-    assert.equal(
-      (engine as unknown as MutationQueueInternals)._mutationTails.size,
-      0,
-    );
+    assert.equal((engine as unknown as MutationQueueInternals)._mutationTails.size, 0);
   } finally {
     releaseUpsert();
     await engine.close();
@@ -209,9 +198,10 @@ test("different mutation keys can run concurrently and clean their tails", async
     assert.equal(queue._mutationTails.size, 0);
 
     await assert.rejects(
-      () => queue._runSerializedMutation("file:error", async () => {
-        throw new Error("queue operation failed");
-      }),
+      () =>
+        queue._runSerializedMutation("file:error", async () => {
+          throw new Error("queue operation failed");
+        }),
       /queue operation failed/,
     );
     assert.equal(queue._mutationTails.size, 0);

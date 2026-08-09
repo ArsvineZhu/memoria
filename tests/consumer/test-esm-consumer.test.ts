@@ -25,6 +25,14 @@ test("published package declares an ESM public boundary and CJS native scope", a
         types?: string;
         import?: string;
       };
+      "./providers/openai"?: {
+        types?: string;
+        import?: string;
+      };
+      "./providers/dashscope"?: {
+        types?: string;
+        import?: string;
+      };
     };
     files?: string[];
   };
@@ -43,6 +51,15 @@ test("published package declares an ESM public boundary and CJS native scope", a
     types: "./dist/errors.d.ts",
     import: "./dist/errors.js",
   });
+  assert.deepEqual(packageJson.exports?.["./providers/openai"], {
+    types: "./dist/providers/openai-embedding-provider.d.ts",
+    import: "./dist/providers/openai-embedding-provider.js",
+  });
+  assert.deepEqual(packageJson.exports?.["./providers/dashscope"], {
+    types: "./dist/providers/dashscope-embedding-provider.d.ts",
+    import: "./dist/providers/dashscope-embedding-provider.js",
+  });
+  assert.equal(Object.keys(packageJson.exports || {}).includes("./*"), false);
   assert.equal(packageJson.main, "./dist/index.cjs");
   assert.equal(packageJson.types, "./dist/index.d.ts");
   assert.ok(packageJson.files?.includes("rust-vexus-lite/package.json"));

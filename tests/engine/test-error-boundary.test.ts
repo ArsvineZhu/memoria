@@ -15,9 +15,7 @@ import type {
 
 const DIMENSION = 4;
 
-function makeEmbeddingProvider(
-  failure?: Error,
-): EmbeddingProviderContract {
+function makeEmbeddingProvider(failure?: Error): EmbeddingProviderContract {
   return {
     getDimension: () => DIMENSION,
     async embedBatch(texts = []) {
@@ -27,11 +25,13 @@ function makeEmbeddingProvider(
   };
 }
 
-function makeVectorStore(options: {
-  addFailure?: Error;
-  searchFailure?: Error;
-  flushFailure?: Error;
-} = {}): VectorStoreContract & { indices: Map<string, Map<number, VectorLike>> } {
+function makeVectorStore(
+  options: {
+    addFailure?: Error;
+    searchFailure?: Error;
+    flushFailure?: Error;
+  } = {},
+): VectorStoreContract & { indices: Map<string, Map<number, VectorLike>> } {
   const indices = new Map<string, Map<number, VectorLike>>();
   const getIndex = (name: string) => {
     const existing = indices.get(name);

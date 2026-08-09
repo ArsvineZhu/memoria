@@ -53,12 +53,17 @@ async function loadExpectedIndexNames(
   return [...names].sort();
 }
 
-async function markVectorStateClean(metadataStore: MetadataStoreContract): Promise<void> {
+async function markVectorStateClean(
+  metadataStore: MetadataStoreContract,
+): Promise<void> {
   if (typeof metadataStore.markVectorStateClean === "function") {
     await metadataStore.markVectorStateClean();
     return;
   }
-  if (typeof metadataStore.getKv === "function" && typeof metadataStore.setKv === "function") {
+  if (
+    typeof metadataStore.getKv === "function" &&
+    typeof metadataStore.setKv === "function"
+  ) {
     const value = await metadataStore.getKv("memoria.metadata_generation");
     const generation = typeof value === "string" ? value : "0";
     await metadataStore.setKv("memoria.vector_generation", generation);

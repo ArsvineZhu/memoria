@@ -49,6 +49,85 @@ test("Schema tables are created on construction", () => {
   store.close();
 });
 
+test("generation state starts dirty and bulk index metadata is available", async () => {
+  const store = makeStore();
+  const generation = store as unknown as {
+    getGenerationState(): Promise<{
+      metadataGeneration: number;
+      vectorGeneration: number;
+      vectorDirty: boolean;
+    }>;
+    getIndexableChunks(): Promise<
+      Array<{ chunkId: number; vector: Buffer | null; indexName: string }>
+    >;
+    getExpectedVectorIndexNames(): Promise<string[]>;
+    replaceDocumentState: SqliteMetadataStore["replaceDocumentState"];
+  };
+  assert.deepEqual(await generation.getGenerationState(), {
+    metadataGeneration: 0,
+    vectorGeneration: 0,
+    vectorDirty: true,
+  });
+
+  const replacement = await generation.replaceDocumentState({
+    file: {
+      path: "/diary/bulk.md",
+      diaryName: "diary1",
+      checksum: "bulk",
+      mtime: 1,
+      size: 4,
+    },
+    chunks: [{ chunkIndex: 0, content: "bulk", vector: makeBuf([1, 0, 0, 0]) }],
+    tags: [{ name: "bulk", vector: null }],
+    orderedTagNames: ["bulk"],
+  });
+  assert.ok(replacement.fileId > 0);
+  assert.deepEqual(await generation.getIndexableChunks(), [
+    { chunkId: replacement.chunkIds[0], vector: makeBuf([1, 0, 0, 0]), indexName: "diary1" },
+  ]);
+  assert.deepEqual(await generation.getExpectedVectorIndexNames(), ["diary1", "global_tags"]);
+  store.close();
+});
+
+test("deleting an authoritative file increments metadata generation and stays dirty", async () => {
+  const store = makeStore();
+  const generation = store as unknown as {
+    replaceDocumentState: SqliteMetadataStore["replaceDocumentState"];
+    getGenerationState(): Promise<{
+      metadataGeneration: number;
+      vectorGeneration: number;
+      vectorDirty: boolean;
+    }>;
+    markVectorStateClean(): Promise<void>;
+  };
+  const replacement = await generation.replaceDocumentState({
+    file: {
+      path: "/diary/delete.md",
+      diaryName: "diary1",
+      checksum: "delete",
+      mtime: 1,
+      size: 6,
+    },
+    chunks: [],
+    tags: [],
+    orderedTagNames: [],
+  });
+  await generation.markVectorStateClean();
+  assert.deepEqual(await generation.getGenerationState(), {
+    metadataGeneration: 1,
+    vectorGeneration: 1,
+    vectorDirty: false,
+  });
+
+  await store.deleteFile(replacement.fileId);
+  assert.deepEqual(await generation.getGenerationState(), {
+    metadataGeneration: 2,
+    vectorGeneration: 1,
+    vectorDirty: true,
+  });
+  store.close();
+});
+
 test("foreign_keys pragma is enabled", () => {
   const store = makeStore();
   const row = store.db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number };

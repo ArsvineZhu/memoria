@@ -575,7 +575,10 @@ export interface VectorStoreContract {
   saveIndex?(indexName: string, filePath: string): Promise<void>;
   getIndexStats?(indexName: string): Promise<VectorStoreStats>;
   scheduleIndexSave?(indexName: string): void;
-  flushPendingSaves?(): void;
+  flushPendingSaves?(): void | Promise<void>;
+  validatePersistedIndexes?(
+    indexNames: readonly string[],
+  ): Promise<boolean>;
   replaceIndex?(
     indexName: string,
     entries: readonly VectorIndexEntry[],
@@ -712,6 +715,10 @@ export interface MetadataStoreContract {
   getChunksByFileId(fileId: number): Promise<ChunkRow[]>;
   getChunkById(id: number): Promise<ChunkRow | null>;
   getAllChunks(): Promise<ChunkRow[]>;
+  getIndexableChunks?(): Promise<IndexableChunkRow[]>;
+  getExpectedVectorIndexNames?(): Promise<string[]>;
+  getGenerationState?(): Promise<GenerationState>;
+  markVectorStateClean?(): Promise<void>;
   upsertTags(tags: readonly TagMetadataInput[]): Promise<number[]>;
   getTagByName(name: string): Promise<TagRow | null>;
   getAllTags(): Promise<TagRow[]>;
@@ -724,6 +731,18 @@ export interface MetadataStoreContract {
   setKv?(key: string, value: string): Promise<void>;
   getKv?(key: string): Promise<string | UnknownRecord | null>;
   getTagsByIds?(ids: readonly number[]): Promise<TagRow[]>;
+}
+
+export interface IndexableChunkRow {
+  chunkId: number;
+  vector: Buffer | null;
+  indexName: string;
+}
+
+export interface GenerationState {
+  metadataGeneration: number;
+  vectorGeneration: number;
+  vectorDirty: boolean;
 }
 
 export interface StatementLike {

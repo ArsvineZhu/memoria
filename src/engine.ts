@@ -122,6 +122,8 @@ class MemoryEngine {
   private _ownsMetadataStore = false;
   private _ownsVectorStore = false;
   private _ownsEmbeddingProvider = false;
+  private _vectorStateComplete = false;
+  private _vectorMutationFailed = false;
   private readonly _mutationTails = new Map<string, Promise<void>>();
   _closed: boolean;
   ragParams: UnknownRecord;
@@ -208,6 +210,8 @@ class MemoryEngine {
 
     this.state = "initializing";
     this._closed = false;
+    this._vectorStateComplete = false;
+    this._vectorMutationFailed = false;
     const initialization = (async () => {
       await this._ensureProviders();
       this.ctx = new PipelineContext({
@@ -225,7 +229,7 @@ class MemoryEngine {
       });
 
       this._applyRagParamsToConfig(this.ragParams);
-      this.lastReconciliation = await this._reconcileInternal();
+      this.lastReconciliation = await this._recoverIndexes();
       if (this.options.onReady && typeof this.options.onReady === "function") {
         await this.options.onReady(this);
       }
@@ -312,17 +316,74 @@ class MemoryEngine {
     }
   }
 
+  private async _recoverIndexes(): Promise<ReconciliationReport> {
+    const generationState =
+      typeof this.metadataStore.getGenerationState === "function"
+        ? await this.metadataStore.getGenerationState()
+        : null;
+    if (
+      generationState &&
+      generationState.vectorDirty === false &&
+      generationState.metadataGeneration === generationState.vectorGeneration &&
+      typeof this.vectorStore.validatePersistedIndexes === "function"
+    ) {
+      const expectedIndexNames =
+        typeof this.metadataStore.getExpectedVectorIndexNames === "function"
+          ? await this.metadataStore.getExpectedVectorIndexNames()
+          : [...(this.vectorStore.indices?.keys() ?? [])];
+      let valid = false;
+      try {
+        valid = await this.vectorStore.validatePersistedIndexes(expectedIndexNames);
+      } catch (_) {
+        valid = false;
+      }
+      if (valid) {
+        this._vectorStateComplete = true;
+        this._vectorMutationFailed = false;
+        return {
+          authoritative: "metadata",
+          metadataChunks: 0,
+          usableVectors: 0,
+          skippedVectors: 0,
+          rebuiltIndexes: [],
+        };
+      }
+    }
+    return this._reconcileInternal();
+  }
+
   private async _reconcileInternal(): Promise<ReconciliationReport> {
-    return reconcileVectorIndexes({
+    const report = await reconcileVectorIndexes({
       metadataStore: this.metadataStore,
       vectorStore: this.vectorStore,
       dimension: this.config.dimension,
     });
+    this._vectorStateComplete = true;
+    this._vectorMutationFailed = false;
+    return report;
   }
 
-  private async _flushVectorStore(): Promise<void> {
+  private async _flushVectorStore(): Promise<boolean> {
     if (this.vectorStore && typeof this.vectorStore.flushPendingSaves === "function") {
       await this.vectorStore.flushPendingSaves();
+      return true;
+    }
+    return false;
+  }
+
+  private async _markVectorStateClean(): Promise<void> {
+    if (typeof this.metadataStore.markVectorStateClean === "function") {
+      await this.metadataStore.markVectorStateClean();
+      return;
+    }
+    if (
+      typeof this.metadataStore.getKv === "function" &&
+      typeof this.metadataStore.setKv === "function"
+    ) {
+      const value = await this.metadataStore.getKv("memoria.metadata_generation");
+      const generation = typeof value === "string" ? value : "0";
+      await this.metadataStore.setKv("memoria.vector_generation", generation);
+      await this.metadataStore.setKv("memoria.vector_dirty", "0");
     }
   }
 
@@ -333,12 +394,22 @@ class MemoryEngine {
     const metadataOwned = this._ownsMetadataStore;
     const embeddingOwned = this._ownsEmbeddingProvider;
 
+    let firstError: unknown = null;
     if (vectorOwned && vectorStore && typeof vectorStore.close === "function") {
-      await vectorStore.close();
+      try {
+        await vectorStore.close();
+      } catch (error) {
+        firstError ??= error;
+      }
     }
     if (metadataOwned && metadataStore && typeof metadataStore.close === "function") {
-      await metadataStore.close();
+      try {
+        await metadataStore.close();
+      } catch (error) {
+        firstError ??= error;
+      }
     }
+    if (firstError) throw firstError;
 
     this._ownsVectorStore = false;
     this._ownsMetadataStore = false;
@@ -438,17 +509,28 @@ class MemoryEngine {
     for (const entry of entries) {
       const result = await this._runSerializedMutation(
         `file:${normalizeMutationPath(entry.path)}`,
-        () =>
-          this.ingestPipeline.run(
-            {
-              path: entry.path,
-              relPath: entry.relPath,
-              content: entry.content,
-              mtime: entry.mtime,
-              size: entry.size,
-            },
-            this.ctx,
-          ),
+        async () => {
+          this._vectorStateComplete = false;
+          try {
+            const result = await this.ingestPipeline.run(
+              {
+                path: entry.path,
+                relPath: entry.relPath,
+                content: entry.content,
+                mtime: entry.mtime,
+                size: entry.size,
+              },
+              this.ctx,
+            );
+            if (!result.skipped && !this._vectorMutationFailed) {
+              this._vectorStateComplete = true;
+            }
+            return result;
+          } catch (error) {
+            this._vectorMutationFailed = true;
+            throw error;
+          }
+        },
       );
       results.push(result as IngestEnvelope);
       if (result && !result.skipped && result.fileId != null) {
@@ -481,32 +563,41 @@ class MemoryEngine {
       const storagePath = logicalDocumentPath(documentId);
       const mtime = Number.isFinite(document.updatedAt) ? Number(document.updatedAt) : 0;
       const size = Buffer.byteLength(document.content, "utf8");
-      const result = (await this.ingestPipeline.run(
-        {
-          path: storagePath,
-          relPath: storagePath,
-          content: document.content,
-          mtime,
-          size,
-          diaryName: "Logical",
+      this._vectorStateComplete = false;
+      try {
+        const result = (await this.ingestPipeline.run(
+          {
+            path: storagePath,
+            relPath: storagePath,
+            content: document.content,
+            mtime,
+            size,
+            diaryName: "Logical",
+            documentId,
+            revision,
+            documentSource: document.source,
+            documentMetadata: document.metadata,
+          },
+          this.ctx,
+        )) as IngestEnvelope;
+
+        if (!result.skipped && !this._vectorMutationFailed) {
+          this._vectorStateComplete = true;
+        }
+        if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
+        return {
+          ...result,
           documentId,
           revision,
+          source: document.source,
+          metadata: document.metadata,
           documentSource: document.source,
           documentMetadata: document.metadata,
-        },
-        this.ctx,
-      )) as IngestEnvelope;
-
-      if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
-      return {
-        ...result,
-        documentId,
-        revision,
-        source: document.source,
-        metadata: document.metadata,
-        documentSource: document.source,
-        documentMetadata: document.metadata,
-      };
+        };
+      } catch (error) {
+        this._vectorMutationFailed = true;
+        throw error;
+      }
     });
   }
 
@@ -544,16 +635,28 @@ class MemoryEngine {
       }
       if (!row) row = await this.metadataStore.getFileByPath(storagePath);
 
-      const result = (await this.deletePipeline.run(
-        {
-          path: row?.path || storagePath,
-          relPath: row?.path || storagePath,
-          documentId: normalizedId,
-          diaryName: row?.diary_name || row?.diaryName || "Logical",
-        },
-        this.ctx,
-      )) as DeleteEnvelope;
-      return { ...result, documentId: normalizedId };
+      const wasComplete = this._vectorStateComplete;
+      this._vectorStateComplete = false;
+      try {
+        const result = (await this.deletePipeline.run(
+          {
+            path: row?.path || storagePath,
+            relPath: row?.path || storagePath,
+            documentId: normalizedId,
+            diaryName: row?.diary_name || row?.diaryName || "Logical",
+          },
+          this.ctx,
+        )) as DeleteEnvelope;
+        if (result.deleted !== false && !this._vectorMutationFailed) {
+          this._vectorStateComplete = true;
+        } else if (result.deleted === false && !this._vectorMutationFailed) {
+          this._vectorStateComplete = wasComplete;
+        }
+        return { ...result, documentId: normalizedId };
+      } catch (error) {
+        this._vectorMutationFailed = true;
+        throw error;
+      }
     });
   }
 
@@ -601,16 +704,30 @@ class MemoryEngine {
     const source: FileInput = typeof input === "string" ? { path: input } : input;
     return this._runSerializedMutation(
       `file:${normalizeMutationPath(source.path)}`,
-      () =>
-        this.deletePipeline.run(
-          {
-            path: source.path,
-            relPath: source.relPath,
-            documentId: source.documentId,
-            diaryName: source.diaryName,
-          },
-          this.ctx,
-        ) as Promise<DeleteEnvelope>,
+      async () => {
+        const wasComplete = this._vectorStateComplete;
+        this._vectorStateComplete = false;
+        try {
+          const result = (await this.deletePipeline.run(
+            {
+              path: source.path,
+              relPath: source.relPath,
+              documentId: source.documentId,
+              diaryName: source.diaryName,
+            },
+            this.ctx,
+          )) as DeleteEnvelope;
+          if (result.deleted && !this._vectorMutationFailed) {
+            this._vectorStateComplete = true;
+          } else if (!result.deleted && !this._vectorMutationFailed) {
+            this._vectorStateComplete = wasComplete;
+          }
+          return result;
+        } catch (error) {
+          this._vectorMutationFailed = true;
+          throw error;
+        }
+      },
     ) as Promise<DeleteEnvelope>;
   }
 
@@ -750,8 +867,38 @@ class MemoryEngine {
 
       this.state = "closing";
       await Promise.all([...this._mutationTails.values()]);
-      await this._flushVectorStore();
-      await this._disposeOwnedResources(false);
+      let firstError: unknown = null;
+      let flushed = false;
+      const metadataOwned = this._ownsMetadataStore;
+      const vectorOwned = this._ownsVectorStore;
+      const vectorCanClose =
+        vectorOwned && typeof this.vectorStore?.close === "function";
+      let disposed = false;
+      try {
+        flushed = await this._flushVectorStore();
+      } catch (error) {
+        firstError = error;
+      }
+      if (flushed && this._vectorStateComplete && !this._vectorMutationFailed) {
+        try {
+          await this._markVectorStateClean();
+        } catch (error) {
+          firstError ??= error;
+        }
+      }
+      try {
+        await this._disposeOwnedResources(false);
+        disposed = true;
+      } catch (error) {
+        firstError ??= error;
+      }
+      if (firstError) {
+        if (disposed && (metadataOwned || vectorCanClose)) {
+          this.state = "closed";
+          this._closed = true;
+        }
+        throw firstError;
+      }
       this.state = "closed";
       this._closed = true;
     })();

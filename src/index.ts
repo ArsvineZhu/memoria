@@ -133,6 +133,8 @@ export type {
   FileSnapshot,
   FileTagRow,
   IngestEnvelope,
+  GenerationState,
+  IndexableChunkRow,
   MemoryConfig,
   MemoryConfigOverrides,
   MemoryDocumentDeleteResult,

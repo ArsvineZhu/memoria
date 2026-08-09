@@ -223,6 +223,44 @@ test("saveIndex and loadIndex roundtrip", async () => {
   }
 });
 
+test("validatePersistedIndexes rejects missing, corrupt, and wrong-dimension indexes", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-validate-"));
+  const validate = (store: VexusVectorStore, names: readonly string[]) =>
+    (store as unknown as {
+      validatePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
+    }).validatePersistedIndexes(names);
+
+  try {
+    const store = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+    });
+    assert.equal(await validate(store, ["missing"]), false);
+
+    const corruptPath = store._getIndexPath("corrupt");
+    fs.mkdirSync(path.dirname(corruptPath), { recursive: true });
+    fs.writeFileSync(corruptPath, Buffer.from("not a usearch index"));
+    assert.equal(await validate(store, ["corrupt"]), false);
+
+    const wrongDimension = new VexusVectorStore({
+      dimension: 2,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+    });
+    await wrongDimension.add("wrong-dimension", 1, new Float32Array([1, 0]));
+    await wrongDimension.saveIndex("wrong-dimension");
+    assert.equal(await validate(store, ["wrong-dimension"]), false);
+  } finally {
+    try {
+      for (const file of fs.readdirSync(tmpDir)) {
+        fs.unlinkSync(path.join(tmpDir, file));
+      }
+      fs.rmdirSync(tmpDir);
+    } catch (_) {}
+  }
+});
+
 test("scheduleIndexSave coalesces multiple calls into one timer", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-sched-"));
   try {
@@ -364,7 +402,7 @@ test("flushPendingSaves clears all timers", async () => {
 
     assert.ok(store.saveTimers.has(indexName), "timer should be set");
 
-    // flushPendingSaves clears timers; save errors are caught internally
+    // flushPendingSaves persists indexes and clears timers
     store.flushPendingSaves();
 
     assert.ok(!store.saveTimers.has(indexName), "timers should be cleared");

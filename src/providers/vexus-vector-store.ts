@@ -165,6 +165,18 @@ class VexusVectorStore extends VectorStore {
     return path.join(this.storePath, `index_${safeName}.usearch`);
   }
 
+  _getIndexMetadataPath(indexPath: string): string {
+    return `${indexPath}.meta.json`;
+  }
+
+  _writeIndexMetadata(indexPath: string): void {
+    fs.writeFileSync(
+      this._getIndexMetadataPath(indexPath),
+      JSON.stringify({ dimension: this.dimension }),
+      "utf8",
+    );
+  }
+
   /**
    * Schedule a delayed save for an index.  Subsequent calls within
    * the delay window are coalesced into a single save.
@@ -182,6 +194,7 @@ class VexusVectorStore extends VectorStore {
         const filePath = this._getIndexPath(indexName);
         fs.mkdirSync(this.storePath, { recursive: true });
         index.save(filePath);
+        this._writeIndexMetadata(filePath);
       } catch (e) {
         console.error(
           `[VexusVectorStore] Scheduled save failed for "${indexName}": ${e instanceof Error ? e.message : String(e)}`,
@@ -323,6 +336,41 @@ class VexusVectorStore extends VectorStore {
     const resolvedPath = filePath || this._getIndexPath(indexName);
     fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
     index.save(resolvedPath);
+    this._writeIndexMetadata(resolvedPath);
+  }
+
+  override async validatePersistedIndexes(
+    indexNames: readonly string[],
+  ): Promise<boolean> {
+    const VexusIndex = getVexusIndex();
+    for (const indexName of indexNames) {
+      const indexPath = this._getIndexPath(indexName);
+      if (!this._indexFileExists(indexName)) return false;
+      try {
+        const metadataPath = this._getIndexMetadataPath(indexPath);
+        if (fs.existsSync(metadataPath)) {
+          const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as {
+            dimension?: unknown;
+          };
+          if (Number(metadata.dimension) !== this.dimension) return false;
+        }
+        const index = VexusIndex.load(
+          indexPath,
+          null,
+          this.dimension,
+          this.defaultCapacity,
+        );
+        const stats = index.stats();
+        const dimensions =
+          typeof stats.dimensions === "bigint"
+            ? Number(stats.dimensions)
+            : Number(stats.dimensions);
+        if (Number.isFinite(dimensions) && dimensions !== this.dimension) return false;
+      } catch (_) {
+        return false;
+      }
+    }
+    return true;
   }
 
   override async getIndexStats(indexName: string): Promise<VectorStoreStats> {
@@ -354,6 +402,7 @@ class VexusVectorStore extends VectorStore {
    */
   flushPendingSaves(): void {
     const toFlush = new Set([...this.saveTimers.keys(), ...this.indices.keys()]);
+    let firstError: unknown = null;
     for (const name of toFlush) {
       const timer = this.saveTimers.get(name);
       if (timer) {
@@ -364,14 +413,15 @@ class VexusVectorStore extends VectorStore {
       if (index && typeof index.save === "function") {
         try {
           fs.mkdirSync(this.storePath, { recursive: true });
-          index.save(this._getIndexPath(name));
+          const indexPath = this._getIndexPath(name);
+          index.save(indexPath);
+          this._writeIndexMetadata(indexPath);
         } catch (e) {
-          console.error(
-            `[VexusVectorStore] Flush save failed for "${name}": ${e instanceof Error ? e.message : String(e)}`,
-          );
+          firstError ??= e;
         }
       }
     }
+    if (firstError) throw firstError;
   }
 }
 

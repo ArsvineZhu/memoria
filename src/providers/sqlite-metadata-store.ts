@@ -11,6 +11,8 @@ import type {
   FileMetadataInput,
   FileRow,
   FileTagRow,
+  GenerationState,
+  IndexableChunkRow,
   HealthStatus,
   TagMetadataInput,
   TagRow,
@@ -218,6 +220,23 @@ class SqliteMetadataStore extends MetadataStore {
       .run(VECTOR_DIRTY_KEY, "1");
   }
 
+  _incrementMetadataGenerationInTransaction(): number {
+    const generationRow = this.db
+      .prepare("SELECT value FROM kv_store WHERE key = ?")
+      .get(METADATA_GENERATION_KEY) as KeyValueRow | undefined;
+    const currentGeneration = Number.parseInt(generationRow?.value ?? "0", 10);
+    const metadataGeneration =
+      Number.isSafeInteger(currentGeneration) && currentGeneration >= 0
+        ? currentGeneration + 1
+        : 1;
+    const setKv = this.db.prepare(
+      "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+    );
+    setKv.run(METADATA_GENERATION_KEY, String(metadataGeneration));
+    setKv.run(VECTOR_DIRTY_KEY, "1");
+    return metadataGeneration;
+  }
+
   // ── File CRUD ───────────────────────────────────────────────
 
   override async upsertFile(fileMeta: FileMetadataInput): Promise<number | null> {
@@ -296,7 +315,11 @@ class SqliteMetadataStore extends MetadataStore {
   }
 
   override async deleteFile(fileId: number): Promise<void> {
-    this.db.prepare("DELETE FROM files WHERE id = ?").run(fileId);
+    const deleteFile = this.db.prepare("DELETE FROM files WHERE id = ?");
+    this.db.transaction(() => {
+      const result = deleteFile.run(fileId);
+      if (Number(result.changes) > 0) this._incrementMetadataGenerationInTransaction();
+    })();
   }
 
   // ── Chunk CRUD ──────────────────────────────────────────────
@@ -439,19 +462,7 @@ class SqliteMetadataStore extends MetadataStore {
         insertFileTag.run(fileId, tagId, index + 1);
       });
 
-      const generationRow = this.db
-        .prepare("SELECT value FROM kv_store WHERE key = ?")
-        .get(METADATA_GENERATION_KEY) as KeyValueRow | undefined;
-      const currentGeneration = Number.parseInt(generationRow?.value ?? "0", 10);
-      const metadataGeneration =
-        Number.isSafeInteger(currentGeneration) && currentGeneration >= 0
-          ? currentGeneration + 1
-          : 1;
-      const setKv = this.db.prepare(
-        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
-      );
-      setKv.run(METADATA_GENERATION_KEY, String(metadataGeneration));
-      setKv.run(VECTOR_DIRTY_KEY, "1");
+      const metadataGeneration = this._incrementMetadataGenerationInTransaction();
 
       return {
         fileId,
@@ -509,6 +520,45 @@ class SqliteMetadataStore extends MetadataStore {
       content: r.content,
       vector: r.vector || null,
     }));
+  }
+
+  async getIndexableChunks(): Promise<IndexableChunkRow[]> {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT c.id AS chunk_id, c.vector, f.diary_name AS index_name
+          FROM chunks c
+          JOIN files f ON c.file_id = f.id
+          ORDER BY c.id
+        `,
+      )
+      .all() as Array<{
+      chunk_id: number;
+      vector?: Buffer | null;
+      index_name?: string | null;
+    }>;
+    return rows.map((row) => ({
+      chunkId: Number(row.chunk_id),
+      vector: row.vector ?? null,
+      indexName: row.index_name || "Root",
+    }));
+  }
+
+  async getExpectedVectorIndexNames(): Promise<string[]> {
+    const names = (
+      this.db
+        .prepare(
+          "SELECT DISTINCT diary_name FROM files WHERE diary_name IS NOT NULL AND diary_name != '' ORDER BY diary_name",
+        )
+        .all() as Array<{ diary_name?: string | null }>
+    )
+      .map((row) => row.diary_name || "")
+      .filter(Boolean);
+    const tagRow = this.db.prepare("SELECT 1 AS present FROM tags LIMIT 1").get() as
+      | { present?: number }
+      | undefined;
+    if (tagRow?.present) names.push("global_tags");
+    return [...new Set(names)].sort();
   }
 
   // ── Tag CRUD ────────────────────────────────────────────────
@@ -642,6 +692,37 @@ class SqliteMetadataStore extends MetadataStore {
     this.db
       .prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)")
       .run(key, value);
+  }
+
+  async getGenerationState(): Promise<GenerationState> {
+    const values = await Promise.all([
+      this.getKv(METADATA_GENERATION_KEY),
+      this.getKv(VECTOR_GENERATION_KEY),
+      this.getKv(VECTOR_DIRTY_KEY),
+    ]);
+    const parseGeneration = (value: string | null): number => {
+      const parsed = Number.parseInt(value ?? "0", 10);
+      return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+    };
+    return {
+      metadataGeneration: parseGeneration(values[0]),
+      vectorGeneration: parseGeneration(values[1]),
+      vectorDirty: values[2] !== "0",
+    };
+  }
+
+  async markVectorStateClean(): Promise<void> {
+    this.db.transaction(() => {
+      const row = this.db
+        .prepare("SELECT value FROM kv_store WHERE key = ?")
+        .get(METADATA_GENERATION_KEY) as KeyValueRow | undefined;
+      const metadataGeneration = row?.value ?? "0";
+      const setKv = this.db.prepare(
+        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
+      );
+      setKv.run(VECTOR_GENERATION_KEY, metadataGeneration);
+      setKv.run(VECTOR_DIRTY_KEY, "0");
+    })();
   }
 
   // ── Health ──────────────────────────────────────────────────

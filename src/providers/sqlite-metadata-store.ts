@@ -273,8 +273,6 @@ class SqliteMetadataStore extends MetadataStore {
     fileId: number,
     chunks: readonly ChunkMetadataInput[],
   ): Promise<number[]> {
-    if (!chunks || chunks.length === 0) return [];
-
     const delStmt = this.db.prepare("DELETE FROM chunks WHERE file_id = ?");
     const insertStmt = this.db.prepare(
       "INSERT INTO chunks (file_id, chunk_index, content, vector) VALUES (?, ?, ?, ?)",

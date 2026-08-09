@@ -174,6 +174,27 @@ test("insertChunks replaces old chunks for the same file", async () => {
   store.close();
 });
 
+test("insertChunks with an empty replacement clears old chunks", async () => {
+  const store = makeStore();
+  const fileId = await store.upsertFile({
+    path: "/diary/empty.md",
+    diaryName: "diary1",
+    checksum: "old",
+    mtime: 1700000000,
+    size: 8,
+  });
+  await store.insertChunks(fileId, [
+    { chunkIndex: 0, content: "old content", vector: null },
+    { chunkIndex: 1, content: "more old content", vector: null },
+  ]);
+
+  const ids = await store.insertChunks(fileId, []);
+
+  assert.deepStrictEqual(ids, []);
+  assert.deepStrictEqual(await store.getChunksByFileId(fileId), []);
+  store.close();
+});
+
 test("getChunksByFileId returns chunks ordered by chunk_index", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({

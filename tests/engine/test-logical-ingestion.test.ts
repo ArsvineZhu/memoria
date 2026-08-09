@@ -143,3 +143,55 @@ test("logical batch ingestion and remove are identity-based and idempotent", asy
 
   await (engine as unknown as { close(): Promise<void> }).close();
 });
+
+test("empty logical replacement removes old searchable chunks across reopen", async () => {
+  const replacements = ["", "   \n\t"];
+
+  for (const [index, replacementContent] of replacements.entries()) {
+    const root = mkdtempSync(join(tmpdir(), `memoria-empty-replacement-${index}-`));
+    const dbPath = join(root, "memory.sqlite");
+    const documentId = `empty-replacement:${index}`;
+    const first = createMemoryEngine({
+      dbPath,
+      config: { dimension: DIMENSION, storePath: root },
+      embeddingProvider: makeEmbeddingProvider(),
+    });
+    let reopened: ReturnType<typeof createMemoryEngine> | null = null;
+    try {
+      await first.initialize();
+
+      await first.ingest({
+        id: documentId,
+        content: "stale searchable content",
+        revision: "1",
+      });
+      assert.ok((await first.search("stale searchable content")).results.length >= 1);
+
+      const replacement = await first.upsert({
+        id: documentId,
+        content: replacementContent,
+        revision: "2",
+      });
+      assert.equal(replacement.skipped, undefined);
+      assert.equal((await first.getStats()).chunks, 0);
+      assert.equal((await first.search("stale searchable content")).results.length, 0);
+
+      await first.close();
+
+      reopened = createMemoryEngine({
+        dbPath,
+        config: { dimension: DIMENSION, storePath: root },
+        embeddingProvider: makeEmbeddingProvider(),
+      });
+      await reopened.initialize();
+      assert.equal((await reopened.getStats()).chunks, 0);
+      assert.equal(
+        (await reopened.search("stale searchable content")).results.length,
+        0,
+      );
+    } finally {
+      await reopened?.close();
+      await first.close();
+    }
+  }
+});

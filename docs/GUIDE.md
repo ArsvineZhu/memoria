@@ -1,12 +1,14 @@
 # GUIDE — 快速上手
 
 > 面向接入方：从零开始安装、最小链路、配置速查、删除语义与指标说明。
-> 所有字段名与默认值均摘自 `src/config/default-config.js`，行为摘自 `src/engine.js`。
+> 所有字段名与默认值均摘自 `src/config/default-config.ts`，行为摘自 `src/engine.ts`；发布运行时使用 `dist/`。
 
 ## 1. 前置条件
 
-- **Node.js ≥ 18**（`fetch` / `AbortController` 为全局可用；引擎依赖 Node 18+）
-- `npm install`（依赖：`better-sqlite3`、`@dqbd/tiktoken`、`chokidar`）
+- **Node.js ≥ 24**（当前 LTS；`fetch` / `AbortController` 为全局可用）
+- **TypeScript 6**（仅参与源码构建与类型检查；发布包执行 `dist/` 中的 CommonJS）
+- `npm ci`（依赖：`better-sqlite3`、`@dqbd/tiktoken`、`chokidar`）
+- `npm run typecheck && npm run build`（严格类型检查并生成 `dist/`）
 - **Rust 向量引擎二进制**：`rust-vexus-lite/dist/` 随仓库分发（6 平台预编译），
   无需本地 Rust 工具链。仅在需要自行重建时执行：
   ```bash
@@ -16,13 +18,13 @@
 
 ## 2. 最小链路（离线可跑，~18 行）
 
-以 `examples/demo/fake-embedding.js` 的离线确定性嵌入为例——无需 API Key、无网络、
+以 `examples/demo/fake-embedding.ts` 的离线确定性嵌入为例——无需 API Key、无网络、
 结果可复现。假设脚本与仓库根目录同级：
 
 ```js
 const path = require('node:path');
-const { createMemoryEngine } = require('memoria');                     // 仓库根 index.js
-const { FakeEmbeddingProvider } = require('./examples/demo/fake-embedding');
+const { createMemoryEngine } = require('memoria');                     // 发布入口 dist/index.js
+const { FakeEmbeddingProvider } = require('./dist-test/examples/demo/fake-embedding');
 
 const engine = createMemoryEngine({
   config: {
@@ -58,13 +60,13 @@ const engine = createMemoryEngine({
 Tag: 咖啡, 生活记录      ← 文末连续 Tag: 行才会被提取（extractTags 规则）
 ```
 
-零网络运行 `node examples/demo/main.js` 可看 6 章节完整生命周期演示；本文等价链路
+零网络运行 `npm run build:test && node dist-test/examples/demo/main.js` 可看 6 章节完整生命周期演示；本文等价链路
 已实测通过（1 文件 → 1 块 / 2 标签 / 3 向量，检索与删除均生效）。
 
 ### 真实嵌入（DashScope / OpenAI 兼容）
 
 ```js
-const DashScopeEmbeddingProvider = require('./src/providers/dashscope-embedding-provider');
+const DashScopeEmbeddingProvider = require('./dist/src/providers/dashscope-embedding-provider');
 const engine = createMemoryEngine({
   config: { dimension: 1024 },                    // 与 model 输出维度一致
   dbPath: path.join(__dirname, 'memory.sqlite'),
@@ -313,6 +315,6 @@ const stats = await engine.getStats();
 3. `close()` 后再启动：懒加载索引从磁盘恢复；维度不匹配的持久化索引在 load
    时即报错并重建为新空间。
 
-验证视角：`tests/engine/test-engine.test.js` 覆盖生命周期与删除语义；
-`tests/providers/` 覆盖存储与嵌入 Provider；`tests/integration/verify.js`
+验证视角：`tests/engine/test-engine.test.ts` 覆盖生命周期与删除语义；
+`tests/providers/` 覆盖存储与嵌入 Provider；`tests/integration/verify.ts`
 是 KBM 组合冒烟（离线 4 维）。

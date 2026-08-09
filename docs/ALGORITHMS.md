@@ -5,7 +5,7 @@
 > 河流可见性 / EPA / 残差金字塔 / Gram-Schmidt / SVD-PCA / 结果去重），
 > 每节末尾附对应测试文件指引。行为争议以本节引用行号为准。
 
-## 1. 浪潮传播（src/algorithms/wave-propagation.js）
+## 1. 浪潮传播（src/algorithms/wave-propagation.ts）
 
 激活尖峰沿标签共现图传播：种子点以初能量 `energy`（默认 1）进入
 `activeSpikes`，每次跃迁按
@@ -16,7 +16,7 @@
 ```
 
 累计读入采用**带脉冲响应（FIR）读出**：`E_target += I × firWeights[hop]`，
-权重由 `computeFirWeights(gamma, maxSafeHops)`（wave-propagation.js:51）给出
+权重由 `computeFirWeights(gamma, maxSafeHops)`（wave-propagation.ts:51）给出
 
 ```
 w_h = γ^h / Σ_{h'=0}^{taps} γ^h'  ,   γ ∈ [0.05, 0.95]（默认 0.6），taps = maxHops（默认 4）
@@ -24,19 +24,19 @@ w_h = γ^h / Σ_{h'=0}^{taps} γ^h'  ,   γ ∈ [0.05, 0.95]（默认 0.6），t
 
 该项产出读取舍入归一化为单位和的衰减权重 —— 越近跳能量占比越大，实现
 "软非回溯"读出的 hop 衰减。`adjacencyFromEdges(edges)`
-（wave-propagation.js:126）把 `[from, to, weight]` 三元组（或对象）聚合为
+（wave-propagation.ts:126）把 `[from, to, weight]` 三元组（或对象）聚合为
 `Map<nodeId, Map<neighborId, weight>>`，重复边权重累加、非法边拒绝。
 
-`propagate()`（wave-propagation.js:185）默认值：`maxSafeHops=4`、
+`propagate()`（wave-propagation.ts:185）默认值：`maxSafeHops=4`、
 `baseMomentum=2.0`、`firingThreshold=0.10`、`baseDecay=0.25`、
 `wormholeDecay=0.70`、`tensionThreshold=1.0`、`maxNeighborsPerNode=20`、
-`returnFlowFactor=0.15`、`pruneAbove=0`（wave-propagation.js:187–206）。
+`returnFlowFactor=0.15`、`pruneAbove=0`（wave-propagation.ts:187–206）。
 出参 `riverGraph` 含 `normalizedEnergy` 与 `normalizedFlow`（相对峰归一，
-387–450）。测试见 `tests/stages/test-tagmemo-stages.test.js:40–98`
+387–450）。测试见 `tests/stages/test-tagmemo-stages.test.ts:40–98`
 （衰减/分支/虫洞/剪枝）与 `tests/algorithms/topology/
-test-scaled-field-solver.test.js`（行归一化算子侧）。
+test-scaled-field-solver.test.ts`（行归一化算子侧）。
 
-## 2. 缩放场求解（src/algorithms/topology/scaled-field-solver.js）
+## 2. 缩放场求解（src/algorithms/topology/scaled-field-solver.ts）
 
 V10 对偶标度场定点迭代求解器：
 
@@ -46,7 +46,7 @@ u_{k+1} = (1−α)·S + α·T(u_k)   local α=0.15 / transfer α=0.55；
                                ‖u_{k+1} − u_k‖₁ ≤ 1e-9 或 80 轮收敛）
 ```
 
-- `buildRowOperator(adjacency, {weightFn})`（scaled-field-solver.js:50）
+- `buildRowOperator(adjacency, {weightFn})`（scaled-field-solver.ts:50）
   把共现邻接行归一化为确定性线性算子（行和 = 1，按目标下标排序），
   提供 `apply`（稠密乘法）与 `forEachEdge`；并要求 source/target 都在
   节点空间中，否则忽略。
@@ -54,7 +54,7 @@ u_{k+1} = (1−α)·S + α·T(u_k)   local α=0.15 / transfer α=0.55；
   并归一化为总质量 1 的 `Float64Array`。**空源（总质量 ≤ 0）抛
   `TAGMEMO_V10_EMPTY_SOURCE`**（:175–176）——这是 stage 侧断言"必须携带
   正质量源场"的哨兵错误，语义为查询项残缺时禁止继续迭代（测试
-  `tests/algorithms/topology/test-scaled-field-solver.test.js:54`）。
+  `tests/algorithms/topology/test-scaled-field-solver.test.ts:54`）。
 - `effectiveSupport(vector, operator, {method, massRatio})`（:191）按
   method 选择支持域萃取：默认 `mass_ratio`（按质量占比 ≥90% 截尾；
   `shannon` = 香农有效尺寸；`participation_ratio` = 参与比；
@@ -63,13 +63,13 @@ u_{k+1} = (1−α)·S + α·T(u_k)   local α=0.15 / transfer α=0.55；
   实体域，`localSupport.massRatio=0.8`、`transferSupport.massRatio=0.9`
   默认（:437–446），`diagnostics` 含收敛标志、质量增量与 operator 签名。
 
-测试：`tests/algorithms/topology/test-scaled-field-solver.test.js`（收敛、
+测试：`tests/algorithms/topology/test-scaled-field-solver.test.ts`（收敛、
 空源错误码、错误方法和 operator 空间不一致等 10 个用例）；下游消费见
-`src/stages/memo/tagmemo-v10.js`。
+`src/stages/memo/tagmemo-v10.ts`。
 
-## 3. 河流可见性（src/algorithms/topology/river-observability.js）
+## 3. 河流可见性（src/algorithms/topology/river-observability.ts）
 
-`computeRiverObservability(riverGraph, options)`（river-observability.js:55）
+`computeRiverObservability(riverGraph, options)`（river-observability.ts:55）
 把查询尖峰河流分类为 `dense / sparse / collapsed` 三态，基于三个子观测量的
 几何均值：
 
@@ -83,10 +83,10 @@ u_{k+1} = (1−α)·S + α·T(u_k)   local α=0.15 / transfer α=0.55；
 
 regime：`Ω < 0.12 → collapsed`；`0.12 ≤ Ω < 0.45 → sparse`；`≥ 0.45 → dense`
 （:116–121）。用途：RAG 侧决定是否把"沉积、似河"查询提升为完整河流
-语义路径（RiverMemo 阶段消费，见 `src/stages/memo/rivermemo.js`）。
-测试：`tests/stages/test-tagmemo-stages.test.js:155`（空河坍缩 / 富河稠密）。
+语义路径（RiverMemo 阶段消费，见 `src/stages/memo/rivermemo.ts`）。
+测试：`tests/stages/test-tagmemo-stages.test.ts:155`（空河坍缩 / 富河稠密）。
 
-## 4. EPA（src/algorithms/epa.js）
+## 4. EPA（src/algorithms/epa.ts）
 
 Embedding Projection Analysis：把 3072 维向量向标签正交基底投影后解读
 
@@ -104,10 +104,10 @@ cos 共振：`coActivation = √(e₁·e₂)`，`e₁`/`e₂` 为主轴能量占
 （1 = 完全聚焦，0 = 完全平坦 / 或未初始化返回 `{logicDepth:0, entropy:1}`，
 :214–216）；`resonance ≥ 0`；`probabilities` 非负且和为 1。
 `EPA.computeBasis`（:174）用 K-Means（clusterCount 默认 64）+ 加权
-PCA（maxBasisDim 64）建基底。测试：`tests/algorithms/test-epa.test.js`
+PCA（maxBasisDim 64）建基底。测试：`tests/algorithms/test-epa.test.ts`
 （logicDepth、共振、computeBasis）。
 
-## 5. 残差金字塔（src/algorithms/residual-pyramid.js）
+## 5. 残差金字塔（src/algorithms/residual-pyramid.ts）
 
 逐层剥离最相似标签的向量空间贡献，直到层数或能量余量终止：
 
@@ -128,10 +128,10 @@ PCA（maxBasisDim 64）建基底。测试：`tests/algorithms/test-epa.test.js`
 清晰度。
 Rust 加速可用时（`config.vexusIndex.computeOrthogonalProjection /
 computeHandshakes`）走原生路径，失败回退 JS。测试：
-`tests/algorithms/test-residual-pyramid.test.js`（零能量、分层分解、
+`tests/algorithms/test-residual-pyramid.test.ts`（零能量、分层分解、
 features 空金字塔）。
 
-## 6. Gram-Schmidt（src/algorithms/gram-schmidt.js）
+## 6. Gram-Schmidt（src/algorithms/gram-schmidt.ts）
 
 朴素版原始基元，全部为纯数学：
 
@@ -145,11 +145,11 @@ orthogonalProjection(x, V) ：P = Σᵢ ⟨x, uᵢ⟩ uᵢ ,  R = x − P
 ```
 
 用途：残余金字塔与 EPA 基底的向量空间操作基础（`src/algorithms/
-residual-pyramid.js:10` 引用）。测试：`tests/algorithms/
-test-gram-schmidt.test.js`（内积、L2 范数、单位化、MGS 正交性、
+residual-pyramid.ts:10` 引用）。测试：`tests/algorithms/
+test-gram-schmidt.test.ts`（内积、L2 范数、单位化、MGS 正交性、
 线性相关向量、投影/残差）。
 
-## 7. SVD / PCA（src/algorithms/svd.js）
+## 7. SVD / PCA（src/algorithms/svd.ts）
 
 加权主成分提取链路（由 EPAModule 提取，全部纯内存）：
 
@@ -168,10 +168,10 @@ selectBasisDimension(S)  累计贡献 Σλᵢ/Σλ ≥ 0.95 → 返回 i+1（下
 
 意义：EPA 的基底降维器 —— 用原始标签空间的低秩主轴压为「基底」；
 少于 8 或 95% 方差未累积齐时取全体。测试：`tests/algorithms/
-test-svd.test.js`（clusterTags 聚类、加权 PCA 提取主成分、
+test-svd.test.ts`（clusterTags 聚类、加权 PCA 提取主成分、
 selectBasisDimension 95% / 下限 8）。
 
-## 8. ResultDeduplicator（src/algorithms/result-deduplicator.js）
+## 8. ResultDeduplicator（src/algorithms/result-deduplicator.ts）
 
 多路召回候选的统一去重（硬去重 + 语义去重两层）：
 
@@ -188,14 +188,14 @@ selectBasisDimension 95% / 下限 8）。
 
 出参按 来源优先级 + 分数 + 原始次序 稳定排序（`_compareOutputOrder`）。
 属于 Rust 查询主链之外的后处理件，服务 candidate / postprocess stage
-（`src/stages/postprocess/result-deduplicator.js` 包装）。测试：
-`tests/stages/test-postprocess-stages.test.js`（:48 硬去重、:73 语义
+（`src/stages/postprocess/result-deduplicator.ts` 包装）。测试：
+`tests/stages/test-postprocess-stages.test.ts`（:48 硬去重、:73 语义
 近重复抑制、:95 阈值下保留）。
 
 ## 9. 验证与限制
 
 - 上文所有默认值均逐一对应 `src/algorithms/*` 源码行内注释；行为级验证
-  见各节测试文件，另有 `tests/stages/test-tagmemo-stages.test.js` 把
+  见各节测试文件，另有 `tests/stages/test-tagmemo-stages.test.ts` 把
   算法组装进 V9/V10/RiverMemo 阶段的端到端断言。
 - 算法函数均为纯计算，无 I/O（`src/algorithms/` 全树无 db/vexusIndex
   引用）；有 Rust 加速的调用点均带 JS 回退。维度/容量参数与

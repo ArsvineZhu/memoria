@@ -14,7 +14,7 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
 
 ```
                     ┌────────────────────────────────────────────┐
-                    │             MemoryEngine (engine.js)        │
+                    │             MemoryEngine (engine.ts)        │
                     │  config │ providers │ ctx │ 3 pipelines     │
                     └───────┬────────────────────────────┬───────┘
              flushBatch ────┤                            ├── search / handleDelete
@@ -35,7 +35,7 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
 
 ## 2. MemoryEngine 生命周期
 
-`createMemoryEngine(options)` 是唯一工厂入口（`src/engine.js`）：
+`createMemoryEngine(options)` 是唯一工厂入口（`src/engine.ts`；发布产物为 `dist/src/engine.js`）：
 
 ```
 createMemoryEngine({config, dbPath, embeddingProvider, ...})
@@ -134,17 +134,18 @@ search(query, options)
 
 ```text
 memoria/
-├── index.js                     # 库导出入口（Core/Engine/适配器/TDB/算法/工具 共 10 组）
+├── index.ts                     # TypeScript 源入口（保持 CommonJS 导出面）
+├── dist/index.js                # 编译后的库入口（Core/Engine/适配器/TDB/算法/工具 共 10 组）
 ├── src/
-│   ├── core/                    # pipeline.js / stage.js / context.js
-│   ├── engine.js                # MemoryEngine 生命周期 + createMemoryEngine 工厂
+│   ├── core/                    # pipeline.ts / stage.ts / context.ts
+│   ├── engine.ts                # MemoryEngine 生命周期 + createMemoryEngine 工厂
 │   ├── config/
-│   │   ├── default-config.js    # DEFAULT_CONFIG（全量默认参数）+ mergeConfig
-│   │   └── rag-params-loader.js # rag_params.json 热调参加载
+│   │   ├── default-config.ts    # DEFAULT_CONFIG（全量默认参数）+ mergeConfig
+│   │   └── rag-params-loader.ts # rag_params.json 热调参加载
 │   ├── pipelines/
-│   │   ├── ingest-pipeline.js   # 8 阶段固定链
-│   │   ├── search-pipeline.js   # 18 步混合检索链
-│   │   └── delete-pipeline.js   # 单阶段（file-deleter）
+│   │   ├── ingest-pipeline.ts   # 8 阶段固定链
+│   │   ├── search-pipeline.ts   # 18 步混合检索链
+│   │   └── delete-pipeline.ts   # 单阶段（file-deleter）
 │   ├── stages/
 │   │   ├── ingestion/           # file-reader, tag-extractor, text-chunker,
 │   │   │                        # chunk-embedder, tag-embedder, metadata-writer,
@@ -158,32 +159,32 @@ memoria/
 │   │   ├── output/              # result-formatter（search 结果格式化）
 │   │   └── tdb/                 # query-normalizer, result-formatter（TDB 专用）
 │   ├── algorithms/
-│   │   ├── epa.js               # 正交语义基 + 投影 / 共振（纯计算）
-│   │   ├── residual-pyramid.js   # 残差金字塔（纯计算，search/lookup 注入）
-│   │   ├── result-deduplicator.js# 双层去重（硬 + 语义）
-│   │   ├── gram-schmidt.js       # 正交基基元
-│   │   ├── svd.js               # 加权 PCA / 幂法 / 聚类
-│   │   ├── wave-propagation.js  # 波传播（V9 激活核）
-│   │   └── topology/             # scaled-field-solver.js（V10 双尺度场）、
-│   │                            # river-observability.js（Ω 可见性）
+│   │   ├── epa.ts               # 正交语义基 + 投影 / 共振（纯计算）
+│   │   ├── residual-pyramid.ts   # 残差金字塔（纯计算，search/lookup 注入）
+│   │   ├── result-deduplicator.ts# 双层去重（硬 + 语义）
+│   │   ├── gram-schmidt.ts       # 正交基基元
+│   │   ├── svd.ts               # 加权 PCA / 幂法 / 聚类
+│   │   ├── wave-propagation.ts  # 波传播（V9 激活核）
+│   │   └── topology/             # scaled-field-solver.ts（V10 双尺度场）、
+│   │                            # river-observability.ts（Ω 可见性）
 │   ├── providers/
-│   │   ├── sqlite-metadata-store.js  # better-sqlite3（WAL / 级联外键）
-│   │   ├── vexus-vector-store.js     # Rust N-API（VexusIndex）内存 Map + 延迟落盘
-│   │   ├── openai-embedding-provider.js # OpenAI 兼容 /v1/embeddings
-│   │   └── dashscope-embedding-provider.js # DashScope 原生 text-embedding 协议
+│   │   ├── sqlite-metadata-store.ts  # better-sqlite3（WAL / 级联外键）
+│   │   ├── vexus-vector-store.ts     # Rust N-API（VexusIndex）内存 Map + 延迟落盘
+│   │   ├── openai-embedding-provider.ts # OpenAI 兼容 /v1/embeddings
+│   │   └── dashscope-embedding-provider.ts # DashScope 原生 text-embedding 协议
 │   ├── interfaces/              # embedding-provider / vector-store / metadata-store
 │   ├── tdb/
-│   │   ├── tdb-engine.js         # TDBEngine（冷知识库引擎，upsert/search 拉取式）
-│   │   ├── tdb-search-pipeline.js# TDB 查询链（7 阶段）
-│   │   ├── tdb-store.js          # TDB 元数据（library×path 维度表）
-│   │   └── triviumdb-adapter.js  # 原生调用面本地代理（insert/search/searchHybrid/…）
-│   ├── compat/knowledge-base-adapter.js # K 调用面 Passthrough
+│   │   ├── tdb-engine.ts         # TDBEngine（冷知识库引擎，upsert/search 拉取式）
+│   │   ├── tdb-search-pipeline.ts# TDB 查询链（7 阶段）
+│   │   ├── tdb-store.ts          # TDB 元数据（library×path 维度表）
+│   │   └── triviumdb-adapter.ts  # 原生调用面本地代理（insert/search/searchHybrid/…）
+│   ├── compat/knowledge-base-adapter.ts # K 调用面 Passthrough
 │   └── utils/                   # text-chunker（tiktoken）、text-preprocessor、
 │                               # vector-codec
 ├── rust-vexus-lite/              # Rust N-API 向量引擎（6 平台预编译二进制）
-├── examples/demo/                # 离线演示（main.js + fake-embedding.js）
-├── examples/real-embed/          # 真实嵌入召回演示（demo-recall.js）
-└── tests/                       # 318 项（10 目录）
+├── examples/demo/                # 离线 TypeScript 源演示（编译到 dist-test/）
+├── examples/real-embed/          # 真实嵌入 TypeScript 源演示
+└── tests/                       # 319 项编译后测试（10 目录）
 ```
 
 ## 6. 生命周期关键时序
@@ -197,4 +198,4 @@ memoria/
 | 删除 | `handleDelete` | FK 级联删块，向量 Remove + 触发延迟落盘 |
 | 关闭 | `close()` | `flushPendingSaves()`（失败仅记日志，不阻断）+ 关闭 SQLite；幂等 |
 
-验证视角:`tests/engine/test-engine.test.js`（生命周期）、`tests/pipelines/test-pipelines.test.js`（布局）、`tests/stages/*`（各阶段独立行为）。
+验证视角:`tests/engine/test-engine.test.ts`（生命周期）、`tests/pipelines/test-pipelines.test.ts`（布局）、`tests/stages/*`（各阶段独立行为）。

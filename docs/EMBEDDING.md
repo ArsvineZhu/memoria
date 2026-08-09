@@ -3,10 +3,10 @@
 > 本文描述 memoria 的嵌入层：`EmbeddingProvider` 接口契约、三种实现（DashScope
 > 原生 / OpenAI 兼容 / 离线 Fake）的逐项对比、document/query 双模式语义、维度
 > 一致性规则与 Provider 切换流程。所有字段、默认值与行为以
-> `src/interfaces/embedding-provider.js`、`src/providers/*` 与
-> `src/stages/retrieval/query-embedder.js` 源码为准。
+> `src/interfaces/embedding-provider.ts`、`src/providers/*` 与
+> `src/stages/retrieval/query-embedder.ts` 源码为准；发布运行时对应 `dist/`。
 
-## 1. 接口契约（src/interfaces/embedding-provider.js）
+## 1. 接口契约（src/interfaces/embedding-provider.ts）
 
 ```js
 class EmbeddingProvider {
@@ -25,10 +25,10 @@ class EmbeddingProvider {
 
 | 属性 | DashScope 原生 | OpenAI 兼容 | FakeEmbeddingProvider |
 |------|----------------|-------------|------------------------|
-| 源码 | `src/providers/dashscope-embedding-provider.js` | `src/providers/openai-embedding-provider.js` | `examples/demo/fake-embedding.js` |
+| 源码 | `src/providers/dashscope-embedding-provider.ts` | `src/providers/openai-embedding-provider.ts` | `examples/demo/fake-embedding.ts` |
 | 协议端点 | `POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding`（`config.apiUrl` 可覆盖） | `{config.apiUrl}/v1/embeddings`（apiUrl 为基址，如 `https://api.openai.com`） | 无网络 |
 | 请求体 | `{ model, input: { texts }, parameters: { dimension, output_type: 'dense', text_type } }` | `{ model, input: [...texts] }`（OpenAI 标准数组形） | — |
-| 默认模型 | `qwen3.7-text-embedding`（模型注释：自定维度 256–2560、单行≤128k tokens） | **无内置默认**；引擎装配默认传 `config.model`（默认 `google / gemini-embedding-001`，见 default-config.js） | `fakeEmbeddingProvider` |
+| 默认模型 | `qwen3.7-text-embedding`（模型注释：自定维度 256–2560、单行≤128k tokens） | **无内置默认**；引擎装配默认传 `config.model`（默认 `google / gemini-embedding-001`，见 default-config.ts） | `fakeEmbeddingProvider` |
 | 默认维度 | `1024`（`config.dimension || 1024`） | 类默认 `1024`（`config.dimension || 1024`）；**engine 装配显式传 `config.dimension`（默认 3072）**→ 引擎内实际 3072 | `128`（构造可传 `dimension`） |
 | 分批上限 | `maxBatchItems` 默认 `20`（DashScope 硬上限 ≤20 行/请求，代码按片逐批切分） | `maxBatchItems` 默认 `32`，并且**按 token 动态分桶**：`safeMaxTokens = maxToken × 0.85`（`maxToken` 默认 8000 → 6800），超限文本跳过置 null | 无分批（逐条同步） |
 | 并发 | 默认 5 个 worker 并发发请求 | 默认 5 个 worker 并发发请求 | 单线程 |
@@ -47,10 +47,10 @@ class EmbeddingProvider {
 
 | 调用位置 | 代码 | text_type 语义 |
 |----------|------|----------------|
-| 入库 chunk 嵌入 | `src/stages/ingestion/chunk-embedder.js:22` — `embedBatch(chunks)` | 无 options → DashScope 使用默认 `textType: 'document'` |
-| 入库 tag 嵌入 | `src/stages/ingestion/tag-embedder.js:22` — `embedBatch(tags)` | 同上（默认 document） |
-| 检索 query 嵌入 | `src/stages/retrieval/query-embedder.js:71` — `embedBatch(texts, { textType: 'query' })` | **显式传 `textType: 'query'`** |
-| TDB 冷知识库 | `src/tdb/tdb-engine.js:244/380` — `embedBatch(batch)` / `embedBatch([qText])` | 无 options（默认 document） |
+| 入库 chunk 嵌入 | `src/stages/ingestion/chunk-embedder.ts:22` — `embedBatch(chunks)` | 无 options → DashScope 使用默认 `textType: 'document'` |
+| 入库 tag 嵌入 | `src/stages/ingestion/tag-embedder.ts:22` — `embedBatch(tags)` | 同上（默认 document） |
+| 检索 query 嵌入 | `src/stages/retrieval/query-embedder.ts:71` — `embedBatch(texts, { textType: 'query' })` | **显式传 `textType: 'query'`** |
+| TDB 冷知识库 | `src/tdb/tdb-engine.ts:244/380` — `embedBatch(batch)` / `embedBatch([qText])` | 无 options（默认 document） |
 
 - DashScope 为不对称检索语义：入库用 `document`、检索用 `query`（源码注释
   建议区分）。`textType` 可在 `config` 中设默认（`textType === 'query'` 时
@@ -61,15 +61,15 @@ class EmbeddingProvider {
 ## 4. 维度一致性规则
 
 - `getDimension()` 与 `config.dimension` 必须相等：引擎装配
-  （`src/engine.js`）固定以 `dimension: this.config.dimension` 构建默认
-  OpenAI Provider；`config.dimension` 默认 3072（default-config.js:39）。
+  （`src/engine.ts`）固定以 `dimension: this.config.dimension` 构建默认
+  OpenAI Provider；`config.dimension` 默认 3072（default-config.ts:39）。
 - 向量索引（Rust）与元数据存储按 config.dimension 建立，SQLite 侧对
   BLOB 长度严格校验（`decodeVectorBlob` 字节数 ≠ dimension×4 → null）。
 - DashScope 对服务端返回做校验：长度 ≠ provider.dimension → 整条置 null
   （警告 "Dimension mismatch"）。
 
 ```js
-// 引擎装配（src/engine.js:89-99）—— 维度默认锁在 config.dimension
+// 引擎装配（src/engine.ts:89-99）—— 维度默认锁在 config.dimension
 new OpenAIEmbeddingProvider({
   apiUrl, apiKey, model, modelSig,
   dimension: config.dimension,           // 默认 3072

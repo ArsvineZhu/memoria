@@ -1,13 +1,13 @@
-# API — 导出符号参考（index.js）
+# API — 导出符号参考（dist/index.js）
 
-> 参考对象：仓库根 `index.js`。符号列表来自实际执行（逐字粘贴）：
+> 参考对象：编译后的 `dist/index.js`（源入口为 `index.ts`）。符号列表来自实际执行（逐字粘贴）：
 >
 > ```js
 > Object.keys(require('C:/dev/memoria'))
 > ```
 >
-> 分组名与 `index.js` 顶部注释一致，共 10 组；每个符号给出签名 / 参数 / 返回 /
-> 默认值。类型标注以源码 JSDoc 为准。
+> 分组名与 `index.ts` 顶部注释一致，共 10 组；每个符号给出签名 / 参数 / 返回 /
+> 默认值。类型标注以 TypeScript 源码和 `dist/index.d.ts` 为准。
 
 ## 0. 全量导出清单（实测输出）
 
@@ -24,13 +24,13 @@ computeFirWeights, adjacencyFromEdges, computeRiverObservability,
 decodeVectorBlob, encodeVectorBlob, prepareTextForEmbedding, extractTags
 ```
 
-（共 41 个导出符号；下列分组按 `index.js` 注释划分）
+（共 41 个导出符号；下列分组按 `index.ts` 注释划分）
 
 ## 1. Core
 
 | 符号 | 签名 | 说明 |
 |------|------|------|
-| `Pipeline` | `new Pipeline(stages = [])`；`run(initialInput, ctx) → Promise<any>`；`pipe(stage)`；`replace(stageName, newStage)` | 阶段串行编排器。每个 stage 的输出作为下一个的输入 |
+| `Pipeline` | `new Pipeline(stages = [])`；`run(initialInput, ctx) → Promise<unknown>`；`pipe(stage)`；`replace(stageName, newStage)` | 阶段串行编排器。每个 stage 的输出作为下一个的输入 |
 | `Stage` | 抽象类；子类实现 `async process(input, ctx)` | 所有阶段基类；未实现 `process` 抛错 |
 | `PipelineContext` | `new PipelineContext({config, embeddingProvider, vectorStore, metadataStore, vexusIndex?, epa?, riverStateStore?, tagGraph?})` | 跨阶段共享的 DI 容器；`vexusIndex` 为 Rust N-API 句柄、`epa` 预构建 EPA 基、`tagGraph` 标签共现图 |
 
@@ -47,7 +47,7 @@ decodeVectorBlob, encodeVectorBlob, prepareTextForEmbedding, extractTags
 | `RAG_PARAMS_DEFAULTS` | `{}` | 默认装载基 |
 | `KnowledgeBaseAdapter` | `new KnowledgeBaseAdapter({engine})` （engine 必填，否则 TypeError） | KBM 兼容层，方法见 FUNCTIONS §10（下节） |
 
-**MemoryEngine 实例方法**（jsdoc 摘自 `src/engine.js`）：
+**MemoryEngine 实例方法**（类型与实现摘自 `src/engine.ts`）：
 
 - `initialize()` — Promise<void>；幂等、并发共享
 - `flushBatch(files)` | `flush(files)` — Promise<Array<object>>（每文件信封）
@@ -146,5 +146,5 @@ matchedTags, tagMatchCount, coreTagsMatched, boostFactor, tagMatchScore}`）。
 | `prepareTextForEmbedding` | `(text) → string` | 剥离装饰 emoji / `<|x|>` 管道符、规整空白换行；空 → `'[EMPTY_CONTENT]'` |
 | `extractTags` | `(content, config?, options?) → string[]` | 文末连续 `Tag:` 行解析；黑名单/超集黑名单/长度上限（中文 20 / 非中文 40）/日期剔除/去重/`maxTags` 截断（默认 50） |
 
-验证视角：上述签名与 `index.js` 实际导出逐项对照；行为验证见对应
+验证视角：上述签名与 `dist/index.js` 实际导出逐项对照；行为验证见对应
 `tests/algorithms/`、`tests/core/`、`tests/tdb/`、`tests/engine/`。

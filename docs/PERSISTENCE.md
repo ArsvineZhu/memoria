@@ -5,19 +5,19 @@
 > 时序（`flushBatch` 双写路径 / `indexSaveDelay` / `flushPendingSaves`）、
 > 懒加载磁盘读回（`getOrCreateIndex`）、Rust 侧的原子发布与 Windows 权限
 > 修复历史、真实页面布局示例与清理注意事项。所有行为以
-> `src/engine.js`、`src/providers/*`、`src/stages/ingestion/*` 与
+> `src/engine.ts`、`src/providers/*`、`src/stages/ingestion/*` 与
 > `rust-vexus-lite/src/lib.rs` 源码为准。
 
 ## 1. 存储架构总览
 
 ```
-MemoryEngine（src/engine.js:64）
+MemoryEngine（src/engine.ts:64；发布产物为 `dist/src/engine.js`）
 ├─ metadataStore: SqliteMetadataStore   （better-sqlite3，五表）
-│    dbPath 默认 ':memory:'（default-config.js:26）；传参后落盘 memory.sqlite
+│    dbPath 默认 ':memory:'（default-config.ts:26）；传参后落盘 memory.sqlite
 └─ vectorStore: VexusVectorStore        （Rust usearch 索引）
-     storePath 默认 <cwd>/VectorStore（default-config.js:25）
+     storePath 默认 <cwd>/VectorStore（default-config.ts:25）
      ├─ 每个命名索引一个文件：index_<md5(name)>.usearch
-     └─ 全局标签索引命名 'global_tags'（vector-indexer.js:6）
+     └─ 全局标签索引命名 'global_tags'（vector-indexer.ts:6）
 ```
 
 两套存储通过**同一批 chunk/tag 的主键 id 对齐**：SQLite 的
@@ -26,14 +26,14 @@ MemoryEngine（src/engine.js:64）
 id ↔ 内容的映射关系完全由 SQLite 侧负责（`VexusIndex.load` 的 map_path
 参数已被忽略，lib.rs:294–303）。
 
-## 2. SQLite 元数据（src/providers/sqlite-metadata-store.js）
+## 2. SQLite 元数据（src/providers/sqlite-metadata-store.ts）
 
 建表 SQL 见 `SCHEMA_SQL`（:12–52），共五张表：
 
 | 表 | 关键列 | 说明 |
 |----|--------|------|
 | `files` | `path UNIQUE`、`diary_name`、`checksum`、`mtime`、`size`、`updated_at` | 文件元数据；`path` 为 posix 相对路径（见 TROUBLESHOOTING 空结果一节） |
-| `chunks` | `file_id`、`chunk_index`、`content`、`vector BLOB` | 分块内容 + 向量 BLOB（`encodeVectorBlob` 原始 f32 字节，长度 = dim×4，vector-codec.js:27） |
+| `chunks` | `file_id`、`chunk_index`、`content`、`vector BLOB` | 分块内容 + 向量 BLOB（`encodeVectorBlob` 原始 f32 字节，长度 = dim×4，vector-codec.ts:27） |
 | `tags` | `name UNIQUE`、`vector BLOB` | 标签向量 |
 | `file_tags` | `(file_id, tag_id)` 复合主键、`position` | 文件-标签关联，`position` 保持输入顺序（:262–279） |
 | `kv_store` | `key` 主键、`value`、`vector` | 检查点等键值 |
@@ -44,21 +44,21 @@ WAL 模式意味着 `.sqlite-wal` / `.sqlite-shm` 伴生文件与主库同目录
 （见 §8 清理）。
 
 检查点：`kv_store` 由 `MetadataWriterStage._maybeWriteCheckpoint`
-（metadata-writer.js:133–156）在 `checkpoint.enabled` / `checkpointInterval`
+（metadata-writer.ts:133–156）在 `checkpoint.enabled` / `checkpointInterval`
 配置下写入 `memory_checkpoint`、`last_file_indexed`、`chunk_count`、
 `tag_count`、`diary_count`（键名见 :8–14）。`checkpoint()`
-（sqlite-metadata-store.js:335）提供 `wal_checkpoint(TRUNCATE)` 能力，
-属 MetadataStore 接口（interfaces/metadata-store.js:162），由宿主按需调用
+（sqlite-metadata-store.ts:335）提供 `wal_checkpoint(TRUNCATE)` 能力，
+属 MetadataStore 接口（interfaces/metadata-store.ts:162），由宿主按需调用
 （引擎默认不自动调用）。
 
 `buildCooccurrenceMatrix`（:301–318）用 `file_tags` 自连接产出
 共现邻接（TagMemo/V10 的图算子输入）。
 
-## 3. Rust 向量索引（src/providers/vexus-vector-store.js）
+## 3. Rust 向量索引（src/providers/vexus-vector-store.ts）
 
 - **命名**：`_getIndexPath`（:99–105）以 `md5(indexName)` 生成
   `index_<32hex>.usearch`，落在 `storePath` 下。索引名即引擎里的
-  diary 名或 `global_tags`（`VectorIndexerStage`，vector-indexer.js:36–38）。
+  diary 名或 `global_tags`（`VectorIndexerStage`，vector-indexer.ts:36–38）。
 - **容量**：`tagIndexCapacity` 默认 50000（:31），加载时若现有容量不足会
   扩容（lib.rs:322–329）；写入时自动 1.5× 扩容（lib.rs:401–407）。
 - **维度**：每个索引在创建/加载时固定 `dimension`（构造注入）；
@@ -69,27 +69,27 @@ WAL 模式意味着 `.sqlite-wal` / `.sqlite-shm` 伴生文件与主库同目录
 
 ## 4. flush 时序：双写路径
 
-`flushBatch(files)`（engine.js:194）逐文件跑 IngestPipeline，两个写入
+`flushBatch(files)`（engine.ts:194）逐文件跑 IngestPipeline，两个写入
 stage 依次落库：
 
 ```
 flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage（Rust 写）
 ```
 
-1. **SQLite 写**（metadata-writer.js:36–131）：
+1. **SQLite 写**（metadata-writer.ts:36–131）：
    `upsertFile` → `insertChunks`（先删旧 chunk 再插，:155–179）→
    `upsertTags` → `setFileTags`。旧 chunk id 在删除前采集为
    `removedChunkIds`，供下一步清理向量索引（:69–74）。
-2. **Rust 写**（vector-indexer.js:28–74）：
+2. **Rust 写**（vector-indexer.ts:28–74）：
    先按 `removedChunkIds` 删除陈旧向量（防止重嵌文件留下孤儿）；
    chunk 向量按 `diaryName`（无则 `Root`）写索引，tag 向量写
    `global_tags`；重复 key 走 remove-then-add 的 upsert 兜底（:76–89）。
 3. **调度保存**：对每个被触碰的索引调用 `scheduleIndexSave`
-   （vector-indexer.js:68–71）。`scheduleIndexSave`（vexus-vector-store.js:112–131）
+   （vector-indexer.ts:68–71）。`scheduleIndexSave`（vexus-vector-store.ts:112–131）
    每个索引名只保留一个定时器（coalesce，后续调用合并），到期执行
    `index.save(filePath)`：
 
-   | 索引 | 延迟默认值（类内 :32–33） | 引擎配置默认（default-config.js:41–42） |
+   | 索引 | 延迟默认值（类内 :32–33） | 引擎配置默认（default-config.ts:41–42） |
    |------|---------------------------|------------------------------------------|
    | `global_tags` | `tagIndexSaveDelay` = 10000ms | 300000ms |
    | 其他（diary 索引） | `indexSaveDelay` = 5000ms | 120000ms |
@@ -97,18 +97,18 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
    `persistTagIndex` 为历史兼容构造项（构造保留，:34），当前实现不按它
    门控调度——`global_tags` 同样进入定时保存。
 
-**关闭时序**（engine.js:356–370）：`close()` 先 `flushPendingSaves()`
-再 `metadataStore.close()`。`flushPendingSaves`（vexus-vector-store.js:238–257）
+**关闭时序**（engine.ts:356–370）：`close()` 先 `flushPendingSaves()`
+再 `metadataStore.close()`。`flushPendingSaves`（vexus-vector-store.ts:238–257）
 的语义是**保存当前内存中所有已加载索引 + 清空全部定时器**（不只是
-"有定时器"的索引；测试 `tests/providers/test-vexus-vector-store.test.js:264`
+"有定时器"的索引；测试 `tests/providers/test-vexus-vector-store.test.ts:264`
 断言 "persists ALL indices, not only scheduled ones"），单个索引保存失败
-仅 console.error、不阻塞关闭（engine.js:362–365 同样 catch）。
+仅 console.error、不阻塞关闭（engine.ts:362–365 同样 catch）。
 生产停机挂钩：`knowledge-base-adapter.shutdown()` = `engine.close()`
-（compat/knowledge-base-adapter.js:113–115）。
+（compat/knowledge-base-adapter.ts:113–115）。
 
 ## 5. 懒加载恢复（getOrCreateIndex）
 
-`getOrCreateIndex(indexName)`（vexus-vector-store.js:51–77）：
+`getOrCreateIndex(indexName)`（vexus-vector-store.ts:51–77）：
 内存 Map 命中直接返回；未命中且 `indexLoadEnabled && _indexFileExists`
 时调用 `VexusIndex.load(path, null, dimension, cap)` 从磁盘读回
 （:57–64）；读回失败（文件损坏/版本不符）打印
@@ -117,7 +117,7 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
 
 - 正常重启：进程内存清空，但 `storePath` 下的 `index_*.usearch` 仍在 →
   首次 `add`/`search` 自动读回，无需显式 `loadIndex`。
-- 测试锚点：`tests/providers/test-vexus-vector-store.test.js:304`
+- 测试锚点：`tests/providers/test-vexus-vector-store.test.ts:304`
   （`getOrCreateIndex lazily loads a persisted index from disk`）与
   :331–334（同 storePath 新实例自动加载）。
 
@@ -157,9 +157,9 @@ demo-data/
 ```
 
 - 文件名为 `index_<md5(diaryName)>.usearch`，即 §3 的命名规则；
-- `tests/integration/verify.js:94` 用 `path.join(storePath, 'memoria.sqlite')`
+- `tests/integration/verify.ts:94` 用 `path.join(storePath, 'memoria.sqlite')`
   命名主库——库名可由宿主自定，`.usearch` 文件名才是固定规则；
-- 向量 + 元数据重启恢复的完整验证路径：`tests/integration/real-dashscope.test.js:253`
+- 向量 + 元数据重启恢复的完整验证路径：`tests/integration/real-dashscope.test.ts:253`
   （真实嵌入下的落盘 + 重开搜索）。
 
 ## 8. 清理注意事项
@@ -183,6 +183,6 @@ demo-data/
 
 `src/tdb/` 复用同一套持久化约定：`TDBStore`（better-sqlite3，`files`
 表以 `(library, path)` 唯一、`chunks` 存 `library/path` 与节点 id，
-tdb-store.js:12–40）＋ `VexusVectorStore`（storePath 取
-`config.tdbStorePath`，tdb-engine.js:81）。重启恢复路径与主引擎一致
+tdb-store.ts:12–40）＋ `VexusVectorStore`（storePath 取
+`config.tdbStorePath`，tdb-engine.ts:81）。重启恢复路径与主引擎一致
 （懒加载 + close 前 flush）。

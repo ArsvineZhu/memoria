@@ -2,10 +2,27 @@
   "name": "memoria",
   "version": "0.1.0",
   "description": "AI memory system with TagMemo wave algorithm, RiverMemo topology, EPA semantic analysis, and residual pyramid",
-  "main": "index.js",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "rust-vexus-lite/index.js",
+    "rust-vexus-lite/index.d.ts",
+    "rust-vexus-lite/*.node",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "license": "MIT",
   "scripts": {
-    "test": "node --test tests/algorithms/*.test.js tests/algorithms/topology/*.test.js tests/core/*.test.js tests/engine/*.test.js tests/integration/*.test.js tests/pipelines/*.test.js tests/providers/*.test.js tests/stages/*.test.js tests/tdb/*.test.js tests/utils/*.test.js"
+    "build": "tsc -p tsconfig.build.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:public": "npm run build && tsc -p tsconfig.public.json --noEmit",
+    "test": "npm run build && npm run build:test && node --test dist-test/tests/algorithms/*.test.js dist-test/tests/algorithms/topology/*.test.js dist-test/tests/core/*.test.js dist-test/tests/engine/*.test.js dist-test/tests/integration/*.test.js dist-test/tests/pipelines/*.test.js dist-test/tests/providers/*.test.js dist-test/tests/stages/*.test.js dist-test/tests/tdb/*.test.js dist-test/tests/utils/*.test.js",
+    "test:native": "npm run build:test && node --test dist-test/tests/core/test-load-native.test.js dist-test/tests/providers/test-vexus-vector-store.test.js",
+    "verify:public": "npm run typecheck:public && npm run test:native && npm pack --dry-run"
   },
   "dependencies": {
     "@dqbd/tiktoken": "^1.0.22",
@@ -13,6 +30,11 @@
     "chokidar": "^3.5.3"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
   }
 }

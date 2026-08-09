@@ -8,7 +8,7 @@
 
 **工厂与类**：`createMemoryEngine(options)` → `MemoryEngine`（见
 [ARCHITECTURE.md](./ARCHITECTURE.md) §2）。`mergeConfig` 语义（
-`src/config/default-config.js`）：`null/undefined` 输入返回 DEFAULT_CONFIG
+`src/config/default-config.ts`）：`null/undefined` 输入返回 DEFAULT_CONFIG
 副本；简单对象字段一层深合并（如 `sourcePriority`）；数组与标量整体替换；
 显式 `undefined` 保持默认。
 
@@ -28,7 +28,7 @@
 摄入信封字段：`fileId, chunkIds, tagIds, removedChunkIds, vectorIndexWritten,
 skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
-验证视角：`tests/engine/test-engine.test.js`、`tests/pipelines/test-pipelines.test.js`。
+验证视角：`tests/engine/test-engine.test.ts`、`tests/pipelines/test-pipelines.test.ts`。
 
 ## 2. 七条阶段族（真实 stage 类名）
 
@@ -38,24 +38,24 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 | 顺序 | Stage 类名 | 文件 | 行为要点 |
 |------|-----------|------|----------|
-| 1 | `FileReaderStage` | `stages/ingestion/file-reader.js` | 读盘（或取预置 content/mtime/size）；md5 校验和；相对路径 `/` 归一化；目录首段为 diaryName；md5+mtime+size 全匹配 → `needsEmbedding:false`；读前后快照守卫（unstable 标记） |
-| 2 | `TagExtractorStage` | `tag-extractor.js` | 提取文末连续 `Tag:` 行；黑名单 / 超集黑名单 / 长度与日期过滤 / maxTagsPerFile |
-| 3 | `ChunkerStage` | `text-chunker.js` | 按句子切块（`split(/(?<=[。？！.!?\n])/)`），tiktoken 计数，超长句强制切分，相邻块按 overlapTokens 重叠 |
-| 4 | `ChunkEmbedderStage` | `chunk-embedder.js` | 块批量嵌入；失败（null）项剔除，块序保持 |
-| 5 | `TagEmbedderStage` | `tag-embedder.js` | 标签批量嵌入 |
-| 6 | `MetadataWriterStage` | `metadata-writer.js` | SQLite 写入：file upsert → chunk 行（BLOB 向量）→ tag upsert → file_tags 重建；旧块 id 输出为 `removedChunkIds`；可选 kv_store 检查点 |
-| 7 | `VectorIndexerStage` | `vector-indexer.js` | 向量写入：日记索引（名 = diaryName）+ `global_tags` 标签索引；先删遗留后 upsert（幂等重嵌）；触发延迟落盘 |
-| 8 | `CooccurrenceBuilderStage` | `co-occurrence-builder.js` | 默认 no-op；`cooccurrenceRebuild` 开启时重建共现矩阵 |
+| 1 | `FileReaderStage` | `stages/ingestion/file-reader.ts` | 读盘（或取预置 content/mtime/size）；md5 校验和；相对路径 `/` 归一化；目录首段为 diaryName；md5+mtime+size 全匹配 → `needsEmbedding:false`；读前后快照守卫（unstable 标记） |
+| 2 | `TagExtractorStage` | `tag-extractor.ts` | 提取文末连续 `Tag:` 行；黑名单 / 超集黑名单 / 长度与日期过滤 / maxTagsPerFile |
+| 3 | `ChunkerStage` | `text-chunker.ts` | 按句子切块（`split(/(?<=[。？！.!?\n])/)`），tiktoken 计数，超长句强制切分，相邻块按 overlapTokens 重叠 |
+| 4 | `ChunkEmbedderStage` | `chunk-embedder.ts` | 块批量嵌入；失败（null）项剔除，块序保持 |
+| 5 | `TagEmbedderStage` | `tag-embedder.ts` | 标签批量嵌入 |
+| 6 | `MetadataWriterStage` | `metadata-writer.ts` | SQLite 写入：file upsert → chunk 行（BLOB 向量）→ tag upsert → file_tags 重建；旧块 id 输出为 `removedChunkIds`；可选 kv_store 检查点 |
+| 7 | `VectorIndexerStage` | `vector-indexer.ts` | 向量写入：日记索引（名 = diaryName）+ `global_tags` 标签索引；先删遗留后 upsert（幂等重嵌）；触发延迟落盘 |
+| 8 | `CooccurrenceBuilderStage` | `co-occurrence-builder.ts` | 默认 no-op；`cooccurrenceRebuild` 开启时重建共现矩阵 |
 
 分块参数：`chunkMaxTokens`（默认 600，别名 `maxTokens`）、`chunkOverlapTokens`
 （默认 96，别名 `overlapTokens`）；超长单句由 `forceSplitLongText` 硬切。
 
-验证视角：`tests/stages/test-ingestion-stages.test.js`（读/提取/分块/嵌入）
-与 `test-ingestion-write-stages.test.js`（写侧 3 阶段）。
+验证视角：`tests/stages/test-ingestion-stages.test.ts`（读/提取/分块/嵌入）
+与 `test-ingestion-write-stages.test.ts`（写侧 3 阶段）。
 
 ### 2.2 Embedding（嵌入）
 
-接口 `EmbeddingProvider`（`src/interfaces/embedding-provider.js`）；引擎默认装配
+接口 `EmbeddingProvider`（`src/interfaces/embedding-provider.ts`）；引擎默认装配
 `OpenAIEmbeddingProvider`；可选 `DashScopeEmbeddingProvider` 与离线
 `FakeEmbeddingProvider`。查询侧嵌入由 `QueryEmbedderStage` 以
 `{textType:'query'}` 调起（DashScope 非对称检索规格）。详见
@@ -65,12 +65,12 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 | Stage 类名 | 文件 | 职责 |
 |-----------|------|------|
-| `QueryEmbedderStage` | `stages/retrieval/query-embedder.js` | 查询嵌入 + 可选变体（`queryExpansion>1` 且注入 `rephraserFn`）+ epsilon 掩码；输出 `queries: [{text, vector}]` |
-| `VectorSearcherStage` | `stages/retrieval/vector-searcher.js` | 索引解析优先级：`indexNames > diaryNames > diaryName > searchAllIndices > 'Root'`；逐查询逐索引 KNN（每索引 `perIndexK`），按 chunkId 保留最高分；可选标签索引召回扩展（`tagSearchEnabled`） |
-| `BM25SearcherStage` | `stages/retrieval/bm25-searcher.js` | 全库 BM25（k1=1.5，b=0.75）；默认分词 = 英文词 + CJK 二元组/单字；IDF 标准公式；仅保留正分项，按 `bm25PoolK` 截断 |
-| `CandidateMergerStage` | `stages/retrieval/candidate-merger.js` | 双路归一化 + 加权和融合；`minScore` 过滤；可选时效衰减；按 `topK` 截断 |
+| `QueryEmbedderStage` | `stages/retrieval/query-embedder.ts` | 查询嵌入 + 可选变体（`queryExpansion>1` 且注入 `rephraserFn`）+ epsilon 掩码；输出 `queries: [{text, vector}]` |
+| `VectorSearcherStage` | `stages/retrieval/vector-searcher.ts` | 索引解析优先级：`indexNames > diaryNames > diaryName > searchAllIndices > 'Root'`；逐查询逐索引 KNN（每索引 `perIndexK`），按 chunkId 保留最高分；可选标签索引召回扩展（`tagSearchEnabled`） |
+| `BM25SearcherStage` | `stages/retrieval/bm25-searcher.ts` | 全库 BM25（k1=1.5，b=0.75）；默认分词 = 英文词 + CJK 二元组/单字；IDF 标准公式；仅保留正分项，按 `bm25PoolK` 截断 |
+| `CandidateMergerStage` | `stages/retrieval/candidate-merger.ts` | 双路归一化 + 加权和融合；`minScore` 过滤；可选时效衰减；按 `topK` 截断 |
 
-验证视角：`tests/stages/test-retrieval-stages.test.js`。
+验证视角：`tests/stages/test-retrieval-stages.test.ts`。
 
 ### 2.4 Retrieval（检索主链编排）
 
@@ -82,32 +82,32 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 | Stage 类名 | 文件 | 职责 |
 |-----------|------|------|
-| `EPAProjectorStage` | `stages/memo/epa-projector.js` | 查询 EPA 投影：`{ready, queryAnalysis: {logicDepth, dominantAxes, resonance}, candidateAnalyses}` |
-| `ResidualPyramidStage` | `stages/memo/residual-pyramid.js` | 残差金字塔：`{levels, totalExplainedEnergy, finalResidual, features}` |
-| `ResultDeduplicatorStage` | `stages/postprocess/result-deduplicator.js` | 硬去重 + 语义去重（阈值 0.92） |
-| `ExternalRerankerStage` | `external-reranker.js` | 调用 `config.reranker || ctx.reranker(query, candidates)` 重排（门：externalRerankEnabled / useLLMRerank） |
-| `TimeDecayStage` | `time-decay.js` | `decay = 0.5^(ageDays/halfLife)`；`timeDecayUpperBound` 封顶 |
-| `TruncatorStage` | `truncator.js` | `topK || maxResults` 条数截断 + `maxContentLength` 内容截断 + 可选省略号 |
-| `ExpanderStage` | `expander.js` | 前 `expandCount` 个候选展开同文件兄弟块，分数 ×`expansionBoost` |
-| `ResultFormatterStage` | `stages/output/result-formatter.js` | 终格式化：`{id, chunkId, content, path, sourceFile, fileId, diaryName, score, similarity, updatedAt, mtime, tags, matchedTags, memoScore?, source, decay?, rerankScore?}` + `resultCount`；缺失字段从元数据回查 |
+| `EPAProjectorStage` | `stages/memo/epa-projector.ts` | 查询 EPA 投影：`{ready, queryAnalysis: {logicDepth, dominantAxes, resonance}, candidateAnalyses}` |
+| `ResidualPyramidStage` | `stages/memo/residual-pyramid.ts` | 残差金字塔：`{levels, totalExplainedEnergy, finalResidual, features}` |
+| `ResultDeduplicatorStage` | `stages/postprocess/result-deduplicator.ts` | 硬去重 + 语义去重（阈值 0.92） |
+| `ExternalRerankerStage` | `external-reranker.ts` | 调用 `config.reranker || ctx.reranker(query, candidates)` 重排（门：externalRerankEnabled / useLLMRerank） |
+| `TimeDecayStage` | `time-decay.ts` | `decay = 0.5^(ageDays/halfLife)`；`timeDecayUpperBound` 封顶 |
+| `TruncatorStage` | `truncator.ts` | `topK || maxResults` 条数截断 + `maxContentLength` 内容截断 + 可选省略号 |
+| `ExpanderStage` | `expander.ts` | 前 `expandCount` 个候选展开同文件兄弟块，分数 ×`expansionBoost` |
+| `ResultFormatterStage` | `stages/output/result-formatter.ts` | 终格式化：`{id, chunkId, content, path, sourceFile, fileId, diaryName, score, similarity, updatedAt, mtime, tags, matchedTags, memoScore?, source, decay?, rerankScore?}` + `resultCount`；缺失字段从元数据回查 |
 
 另有 TagMemo 家族 5 个算子（`TagMemoV9Stage` / `TagMemoV10Stage` /
 `RiverMemoStage` / `TagExpanderStage` / `VectorReshaperStage`），全部配置门
 默认关闭。
 
-验证视角：`tests/stages/test-memo-stages.test.js`、`test-tagmemo-stages.test.js`、
-`test-postprocess-stages.test.js`。
+验证视角：`tests/stages/test-memo-stages.test.ts`、`test-tagmemo-stages.test.ts`、
+`test-postprocess-stages.test.ts`。
 
 ### 2.6 Storage（存储：SQLite 元数据 + Rust 向量）
 
 | 组件 | 文件 | 要点 |
 |------|------|------|
-| `SqliteMetadataStore` | `providers/sqlite-metadata-store.js` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async |
-| `VexusVectorStore` | `providers/vexus-vector-store.js` | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex` 控制标签索引持久化 |
+| `SqliteMetadataStore` | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async |
+| `VexusVectorStore` | `providers/vexus-vector-store.ts` | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex` 控制标签索引持久化 |
 | `VectorStore` / `MetadataStore` 接口 | `interfaces/` | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；`upsertFile/getFileByPath/insertChunks/upsertTags/setFileTags/getFileIdsByTagId/buildCooccurrenceMatrix/checkpoint/healthCheck` 等 |
 
-验证视角：`tests/providers/test-sqlite-metadata-store.test.js`、
-`test-vexus-vector-store.test.js`。
+验证视角：`tests/providers/test-sqlite-metadata-store.test.ts`、
+`test-vexus-vector-store.test.ts`。
 
 ## 3. 混合检索（向量 + BM25 融合权重）
 
@@ -120,7 +120,7 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
   `hybridAlpha`/`hybridBeta` 同值；stage 兜底 0.6/0.4）→ 按 chunkId 去重取高
   → `minScore` 过滤 → `topK` 截断。
 - **结果两种字段格式**（键名差异注意）：
-  - 主检索管线（`result-formatter.js`）：**`content`**（块文本）、
+  - 主检索管线（`result-formatter.ts`）：**`content`**（块文本）、
     **`path`**（相对路径）、`sourceFile`（basename）、`score`/`similarity`、
     `tags`/`matchedTags`、`memoScore`、`decay`、`rerankScore`。
   - 兼容层 legacy 向量路径（`KnowledgeBaseAdapter.search(diary, vec, k)`）：
@@ -128,12 +128,12 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
     `coreTagsMatched`、`boostFactor`、`tagMatchScore`。
   格式化阶段对输入同时接受 `candidate.text` 与 `candidate.content`。
 
-验证视角：`tests/engine/test-engine.test.js`（端到端混合检索）、
-`tests/stages/test-retrieval-stages.test.js`（融合单测）。
+验证视角：`tests/engine/test-engine.test.ts`（端到端混合检索）、
+`tests/stages/test-retrieval-stages.test.ts`（融合单测）。
 
 ## 4. 语义去重（ResultDeduplicator）
 
-算法文件 `src/algorithms/result-deduplicator.js`，双层：
+算法文件 `src/algorithms/result-deduplicator.ts`，双层：
 
 1. **硬去重**（无条件，始终）：三种精确身份——`chunkId`、规范化正文
    （NFKC + 空白/换行规整 + 小写）、`path:chunkIndex`；无稳定身份的候选不合并。
@@ -150,9 +150,9 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 输出：`dedupeStats: { removed, kept, duplicates: [{chunkId}] }`。
 
-验证视角：`tests/algorithms/`（去重器单测）、`tests/stages/test-postprocess-stages.test.js`。
+验证视角：`tests/algorithms/`（去重器单测）、`tests/stages/test-postprocess-stages.test.ts`。
 
-## 5. EPA 三个量（src/algorithms/epa.js）
+## 5. EPA 三个量（src/algorithms/epa.ts）
 
 `EPA` 从标签向量构建正交语义基（`EPA.computeBasis` → `clusterTags` →
 `computeWeightedPCA` → `selectBasisDimension`），对查询 `project()` 输出：
@@ -168,12 +168,12 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 JS。残差金字塔另输出 `features = {depth, coverage, novelty, coherence,
 tagMemoActivation, expansionSignal}`（逐层残差正交投影 + 能量解释比 + 方向相干）。
 
-验证视角：`tests/algorithms/test-epa.test.js`、`test-residual-pyramid.test.js`、
-`tests/engine/test-knowledge-base-adapter-rag.test.js`（`getEPAAnalysis`）。
+验证视角：`tests/algorithms/test-epa.test.ts`、`test-residual-pyramid.test.ts`、
+`tests/engine/test-knowledge-base-adapter-rag.test.ts`（`getEPAAnalysis`）。
 
 ## 6. 标签体系
 
-- **提取**（`utils/text-preprocessor.js → extractTags`）：仅解析文末连续
+- **提取**（`utils/text-preprocessor.ts → extractTags`）：仅解析文末连续
   `Tag:` 行（遇非 Tag 行即停）；分隔符 `[,，、;|｜]`；`tagBlacklist` 完全匹配
   剔除、`tagBlacklistSuper` 并集正则删除；中文 >20 字符 / 非中文 >40 拒绝；
   日期形态拒绝；去重后截 `maxTagsPerFile`（默认 50）。预清洗
@@ -185,19 +185,19 @@ tagMemoActivation, expansionSignal}`（逐层残差正交投影 + 能量解释�
 - **标签召回**：`tagSearchEnabled` 开启时，`VectorSearcherStage` 在标签索引
   取前 `tagK`（默认 10）个标签，经 `getFileIdsByTagId` → `getChunksByFileId`
   展开为候选块（打分继承标签命中分）。
-- **聚类 / 结构化**：`algorithms/svd.js`——`clusterTags`（k-means，余弦分配，
+- **聚类 / 结构化**：`algorithms/svd.ts`——`clusterTags`（k-means，余弦分配，
   Forgy 初始化，空质心以最远点重初始化，最多 50 轮）、`computeWeightedPCA`
   （加权 Gram 阵 + 幂法 + 收缩）、`selectBasisDimension`（95% 方差，至少 8 维）；
   供 EPA 基构建与独立调用。
 - **共现图**：`buildCooccurrenceMatrix`（SQL 自联接）；TagMemo 所需的
   `ctx.tagGraph` 由调用方在内存中注入（库本身不内置监听器）。
 
-验证视角：`tests/utils/test-text-preprocessor.test.js`、
-`tests/algorithms/test-svd.test.js`、`tests/stages/test-ingestion-stages.test.js`。
+验证视角：`tests/utils/test-text-preprocessor.test.ts`、
+`tests/algorithms/test-svd.test.ts`、`tests/stages/test-ingestion-stages.test.ts`。
 
 ## 7. 删除级联
 
-`DeletePipeline → FileDeleterStage`（`stages/ingestion/file-deleter.js`）：
+`DeletePipeline → FileDeleterStage`（`stages/ingestion/file-deleter.ts`）：
 
 1. 相对路径归一化 → `getFileByPath` 查找
 2. `metadataStore.deleteFile(fileId)`——SQLite FK 级联删 `chunks` /
@@ -208,7 +208,7 @@ tagMemoActivation, expansionSignal}`（逐层残差正交投影 + 能量解释�
 
 **标签行与 `global_tags` 不参与级联删除**（设计使然：标签跨文件共享）。
 
-验证视角：`tests/pipelines/test-pipelines.test.js`、`tests/engine/test-engine.test.js`
+验证视角：`tests/pipelines/test-pipelines.test.ts`、`tests/engine/test-engine.test.ts`
 （删除后再查询消失）。
 
 ## 8. TDB 冷知识库（`src/tdb/`）
@@ -227,7 +227,7 @@ tdbExpandDepth=1`；查询 `options.libraries` 映射为共享阶段的
 `diaryNames`。结果字段：`{library, id, score, payload, text, sourceFile,
 chunkIndex}`。
 
-验证视角：`tests/tdb/test-tdb.test.js`。
+验证视角：`tests/tdb/test-tdb.test.ts`。
 
 ## 9. 统计 / usage
 
@@ -239,4 +239,4 @@ chunkIndex}`。
   未对外导出）；引擎亦无 usage 计数器。需要用量审计时应在 Provider 外自包
   计数装饰器。
 
-验证视角：`tests/engine/test-engine.test.js`（getStats 字段断言）。
+验证视角：`tests/engine/test-engine.test.ts`（getStats 字段断言）。

@@ -28,10 +28,11 @@
 
 ```text
 memoria/
-├── index.js                     # 库导出入口（createMemoryEngine / 算法族 / 工具）
+├── index.ts                     # TypeScript 源入口（保留 CommonJS 导出面）
+├── dist/index.js                # 编译后的 CommonJS 库入口
 ├── src/
 │   ├── core/                    # Pipeline / Stage / Context 编排内核
-│   ├── engine.js                # MemoryEngine 生命周期（init / flush / search / delete / close）
+│   ├── engine.ts                # MemoryEngine 生命周期（init / flush / search / delete / close）
 │   ├── config/                  # DEFAULT_CONFIG 与 mergeConfig
 │   ├── pipelines/               # ingest / search / delete 三级主管线
 │   ├── stages/                  # ingestion / retrieval / memo / postprocess 算子
@@ -41,10 +42,10 @@ memoria/
 │   ├── compat/                  # KnowledgeBaseAdapter 兼容面
 │   └── interfaces/              # EmbeddingProvider / VectorStore / MetadataStore 契约
 ├── rust-vexus-lite/             # Rust N-API 原生向量引擎（6 平台预编译二进制）
-├── tests/                       # 318 项测试（10 目录，node --test）
+├── tests/                       # TypeScript 测试源（编译到 dist-test/ 后由 node --test 执行）
 ├── examples/
-│   ├── demo/                    # 离线章节演示（零配置：main.js + fake-embedding.js）
-│   └── real-embed/              # 真实嵌入记忆召回演示（demo-recall.js）
+│   ├── demo/                    # 离线章节演示（零配置：main.ts + fake-embedding.ts）
+│   └── real-embed/              # 真实嵌入记忆召回演示（demo-recall.ts）
 ├── docs/                        # 文档导航见下表
 ├── knowledge/                   # TDB 运行期知识目录（运行时 I/O）
 ├── VectorStoreTDB/              # TDB 向量库运行目录（运行时 I/O）
@@ -58,8 +59,11 @@ memoria/
 
 ```bash
 git clone <你的仓库地址> && cd memoria
-npm install
-node examples/demo/main.js   # 6 章节完整演示：初始化 → 摄取 → 检索 → 删除 → 关闭
+npm ci
+npm run typecheck
+npm run build
+npm run build:test
+node dist-test/examples/demo/main.js   # 6 章节完整演示：初始化 → 摄取 → 检索 → 删除 → 关闭
 ```
 
 Rust 向量引擎二进制随仓库分发，**无需本地 Rust 工具链**；如需自行重建，执行
@@ -67,10 +71,11 @@ Rust 向量引擎二进制随仓库分发，**无需本地 Rust 工具链**；�
 
 也可以用约 20 行代码跑通最小链路（以 `examples/demo` 的真实调用为蓝本）：
 
-```js
-const path = require('node:path');
-const { createMemoryEngine } = require('memoria');
-const { FakeEmbeddingProvider } = require('./examples/demo/fake-embedding');
+```ts
+import path = require('node:path');
+
+import { createMemoryEngine } from 'memoria';
+import { FakeEmbeddingProvider } from './examples/demo/fake-embedding';
 
 const engine = createMemoryEngine({
   config: {
@@ -86,7 +91,7 @@ const engine = createMemoryEngine({
   embeddingProvider: new FakeEmbeddingProvider(128) // 离线确定性伪嵌入
 });
 
-(async () => {
+async function main(): Promise<void> {
   await engine.initialize();
   await engine.flushBatch([
     { path: path.join(__dirname, 'notes', 'life', 'coffee.md') }
@@ -99,7 +104,12 @@ const engine = createMemoryEngine({
 
   await engine.handleDelete({ path: path.join(__dirname, 'notes', 'life', 'coffee.md') });
   await engine.close();
-})();
+}
+
+void main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
 ```
 
 ### 真实嵌入（DashScope / OpenAI 兼容）
@@ -107,24 +117,29 @@ const engine = createMemoryEngine({
 在 `examples/real-embed` 下放置 `.env`（`EMBED_API_KEY=sk-xxxx`），然后：
 
 ```bash
-node examples/real-embed/demo-recall.js
+npm run build:test
+node dist-test/examples/real-embed/demo-recall.js
 ```
 
 它会用真实模型（qwen3.7-text-embedding，1024 维）灌入 10 篇中文文档并执行
 6 组难度递增的语义召回（直配 / 同义改写 / 跨主题联想 / 概念等价 / 模糊记忆）。
 在自有代码中接入真实嵌入：
 
-```js
-const { createMemoryEngine } = require('memoria');
-const DashScopeEmbeddingProvider =
-  require('./src/providers/dashscope-embedding-provider');
+```ts
+import path = require('node:path');
+
+import { createMemoryEngine } from 'memoria';
+import DashScopeEmbeddingProvider = require('./src/providers/dashscope-embedding-provider');
 // 亦可用 ./src/providers/openai-embedding-provider（OpenAI 兼容，需 apiUrl）
+
+const rootPath = path.join(__dirname, 'notes');
+const storePath = path.join(__dirname, 'indices');
 
 const engine = createMemoryEngine({
   config: { dimension: 1024, rootPath, storePath, chunkMaxTokens: 600, chunkOverlapTokens: 96 },
   dbPath: path.join(storePath, 'memory.sqlite'),
   embeddingProvider: new DashScopeEmbeddingProvider({
-    apiKey: process.env.EMBED_API_KEY,
+    apiKey: process.env.EMBED_API_KEY ?? '',
     model: 'qwen3.7-text-embedding',
     dimension: 1024
   })
@@ -136,24 +151,37 @@ const engine = createMemoryEngine({
 面向既有调用的 drop-in 接口，方法：`initialize / flushBatch / getStats / search /
 removeDocument / shutdown`（另有 `runExternalFileMutation`、`getEPAAnalysis` 等扩展面）：
 
-```js
-const { createMemoryEngine, KnowledgeBaseAdapter } = require('memoria');
-const kb = new KnowledgeBaseAdapter({ engine: createMemoryEngine({ /* ... */ }) });
+```ts
+import { createMemoryEngine, KnowledgeBaseAdapter } from 'memoria';
 
-await kb.initialize();
-await kb.flushBatch(docs);                       // [{ path }]
-const stats = await kb.getStats();               // { files, chunks, tags, vectorStats }
-const out = await kb.search('量子纠缠 叠加态');    // 文本走引擎检索管线
-await kb.removeDocument('/abs/path/file.md');     // 移除单个已索引文件
-await kb.shutdown();
+async function main(): Promise<void> {
+  const kb = new KnowledgeBaseAdapter({ engine: createMemoryEngine({ /* ... */ }) });
+  const docs: Array<{ path: string }> = [
+    { path: '/abs/path/file.md' }
+  ];
+
+  await kb.initialize();
+  await kb.flushBatch(docs);                       // [{ path }]
+  const stats = await kb.getStats();               // { files, chunks, tags, vectorStats }
+  const out = await kb.search('量子纠缠 叠加态');    // 文本走引擎检索管线
+  await kb.removeDocument('/abs/path/file.md');     // 移除单个已索引文件
+  await kb.shutdown();
+  void stats;
+  void out;
+}
+
+void main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
 ```
 
 ## 示例
 
 | 目录 | 说明 |
 |------|------|
-| `examples/demo/` | 离线章节演示：`main.js`（6 章节生命周期）+ `fake-embedding.js`（128 维确定性伪嵌入，接口与真实 Provider 一致），`node main.js` 一键运行、结果可复现 |
-| `examples/real-embed/` | 真实 API 记忆召回：`demo-recall.js` 用 qwen3.7-text-embedding 灌库 10 篇中文文档并做 6 组语义召回排序（需 `EMBED_API_KEY`，无 key 时脚本友好退出） |
+| `examples/demo/` | 离线章节演示：`main.ts`（6 章节生命周期）+ `fake-embedding.ts`（128 维确定性伪嵌入，接口与真实 Provider 一致），编译后从 `dist-test/examples/demo/main.js` 运行 |
+| `examples/real-embed/` | 真实 API 记忆召回：`demo-recall.ts` 用 qwen3.7-text-embedding 灌库 10 篇中文文档并做 6 组语义召回排序（需 `EMBED_API_KEY`，编译后运行 `dist-test/examples/real-embed/demo-recall.js`） |
 
 ## 文档导航
 
@@ -165,7 +193,7 @@ await kb.shutdown();
 | [docs/ALGORITHMS.md](docs/ALGORITHMS.md) | 算法族数学说明：TagMemo 浪潮 / EPA / 残差金字塔 / SVD |
 | [docs/EMBEDDING.md](docs/EMBEDDING.md) | 嵌入 Provider 体系：接口契约与三种实现 |
 | [docs/PERSISTENCE.md](docs/PERSISTENCE.md) | 持久化与重启恢复：SQLite + Rust 双写盘 / 懒加载 |
-| [docs/API.md](docs/API.md) | 导出参考：index.js 全部导出签名 |
+| [docs/API.md](docs/API.md) | 导出参考：`dist/index.js` 的全部导出与 TypeScript 类型 |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 常见问题：构建 / 维度不匹配 / 索引恢复 |
 
 ## 测试
@@ -174,9 +202,9 @@ await kb.shutdown();
 npm test
 ```
 
-318 项测试（10 目录显式列出），其中 4 项 integration 实测为真实 API 冒烟——
-无 key 时自动 skip，其余 314 项全量通过；验证覆盖算法、管线、阶段、Provider、
-TDB 与兼容层。
+当前编译后测试共 319 项：315 项通过、4 项真实 API 冒烟因无 key 自动 skip、0 项失败。
+其中相对迁移前基线（314 通过、4 skip）新增 1 项公共导出面类型/运行时兼容测试；验证覆盖
+算法、管线、阶段、Provider、TDB 与兼容层。
 
 ## License 与贡献
 

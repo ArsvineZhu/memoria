@@ -154,7 +154,6 @@ class CandidateMergerStage extends Stage {
       bm25Weight: bm25Weight / total,
     };
   }
-
 }
 
 export default CandidateMergerStage;

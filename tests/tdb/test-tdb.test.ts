@@ -10,6 +10,9 @@ import { TDBEngine } from "../../src/tdb/tdb-engine.js";
 import TDBSearchPipeline from "../../src/tdb/tdb-search-pipeline.js";
 import TDBStore from "../../src/tdb/tdb-store.js";
 import TriviumDBAdapter from "../../src/tdb/triviumdb-adapter.js";
+import TDBResultFormatterStage from "../../src/stages/tdb/result-formatter.js";
+import PipelineContext from "../../src/core/context.js";
+import { MemoriaError } from "../../src/errors.js";
 import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
 import { DEFAULT_CONFIG, mergeConfig } from "../../src/config/default-config.js";
 import type {
@@ -364,6 +367,7 @@ test("TDBSearchPipeline exposes the tdb stage chain", () => {
   const expected = [
     "tdbQueryNormalizer",
     "queryEmbedder",
+    "searchScopeResolver",
     "vectorSearcher",
     "bm25Searcher",
     "candidateMerger",
@@ -408,6 +412,24 @@ test("TDBSearchPipeline ranks the overlapping-token fact on top", async (t) => {
   assert.ok(out.results.length >= 1);
   assert.match(out.results[0].text, /老虎/);
   assert.strictEqual(out.results[0].library, "facts");
+  await engine.close();
+});
+
+test("TDB search applies one library scope to vector and BM25 retrieval", async (t) => {
+  const engine = new TDBEngine({
+    config: baseConfig({ tdbDimension: DIM }),
+    embeddingProvider: fakeEmbeddingProvider,
+    vectorStore: newVectorStore(),
+  });
+  await engine.initialize();
+  await engine.upsertText("shared keyword from A", { library: "A", path: "a.md" });
+  await engine.upsertText("shared keyword from B", { library: "B", path: "b.md" });
+
+  const scoped = await engine.search("shared keyword", { libraries: ["A"] });
+  assert.ok(scoped.results.length > 0);
+  assert.ok(scoped.results.every((result) => result.library === "A"));
+  const unscoped = await engine.search("shared keyword");
+  assert.ok(unscoped.results.some((result) => result.library === "B"));
   await engine.close();
 });
 
@@ -460,6 +482,56 @@ test("default config exposes the TDB mirror keys", () => {
   assert.strictEqual(DEFAULT_CONFIG.tdbHybridAlpha, 0.7);
   assert.ok(Number.isFinite(DEFAULT_CONFIG.tdbDimension));
   assert.ok(Array.isArray(DEFAULT_CONFIG.tdbExtensions));
+});
+
+test("TDB result formatting surfaces metadata provider failures", async () => {
+  const store = new TDBStore({ dbPath: ":memory:" });
+  const cause = new Error("tdb chunk lookup failed");
+  store.getChunkById = async () => {
+    throw cause;
+  };
+  const stage = new TDBResultFormatterStage();
+  await assert.rejects(
+    () =>
+      stage.process(
+        { mergedCandidates: [{ chunkId: 1, score: 1 }] },
+        new PipelineContext({ config: baseConfig(), metadataStore: store as never }),
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof MemoriaError);
+      assert.equal(error.code, "persistence");
+      assert.equal((error as Error & { cause?: unknown }).cause, cause);
+      return true;
+    },
+  );
+  store.close();
+});
+
+test("TDB Trivium search does not silently succeed when both providers fail", async () => {
+  const store = new TDBStore({ dbPath: ":memory:" });
+  const vectorStore = newVectorStore();
+  const engine = new TDBEngine({
+    config: baseConfig({ tdbDimension: DIM }),
+    metadataStore: store,
+    vectorStore,
+    embeddingProvider: fakeEmbeddingProvider,
+    trivium: {
+      async searchHybrid() {
+        throw new Error("hybrid failed");
+      },
+      async search() {
+        throw new Error("vector failed");
+      },
+    },
+  });
+  await engine.initialize();
+  await engine.upsertText(FACT_ALPHA, { library: "facts", path: "a.md" });
+  await assert.rejects(
+    () => engine.search("alpha"),
+    (error: unknown) => error instanceof MemoriaError && error.code === "retrieval",
+  );
+  await engine.close();
+  store.close();
 });
 
 // ── TriviumDBAdapter ───────────────────────────────────────────────

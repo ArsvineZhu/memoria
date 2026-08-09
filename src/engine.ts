@@ -523,9 +523,14 @@ class MemoryEngine {
       try {
         return await this._reconcileInternal();
       } catch (error) {
-        throw asMemoriaError(error, "integrity", "MemoryEngine reconciliation failed.", {
-          retryable: true,
-        });
+        throw asMemoriaError(
+          error,
+          "integrity",
+          "MemoryEngine reconciliation failed.",
+          {
+            retryable: true,
+          },
+        );
       }
     });
   }
@@ -583,9 +588,7 @@ class MemoryEngine {
   flushBatch(
     files?: FileInput | readonly FileInput[] | string,
   ): Promise<IngestEnvelope[]> {
-    return this._runReadyOperation("flushBatch", () =>
-      this._flushBatchInternal(files),
-    );
+    return this._runReadyOperation("flushBatch", () => this._flushBatchInternal(files));
   }
 
   private async _flushBatchInternal(
@@ -727,7 +730,8 @@ class MemoryEngine {
         throw new MemoriaError("ingestion", "Logical document batch must be an array.");
       }
       const results: MemoryDocumentIngestResult[] = [];
-      for (const document of documents) results.push(await this._ingestInternal(document));
+      for (const document of documents)
+        results.push(await this._ingestInternal(document));
       return results;
     });
   }
@@ -786,9 +790,7 @@ class MemoryEngine {
    * @param {Array|object|undefined} files
    * @returns {Promise<Array<object>>}
    */
-  flush(
-    files?: FileInput | readonly FileInput[] | string,
-  ): Promise<IngestEnvelope[]> {
+  flush(files?: FileInput | readonly FileInput[] | string): Promise<IngestEnvelope[]> {
     return this._runReadyOperation("flush", () => this._flushBatchInternal(files));
   }
 
@@ -805,7 +807,9 @@ class MemoryEngine {
     query: string | PipelineData,
     options: UnknownRecord = {},
   ): Promise<SearchEnvelope> {
-    return this._runReadyOperation("search", () => this._searchInternal(query, options));
+    return this._runReadyOperation("search", () =>
+      this._searchInternal(query, options),
+    );
   }
 
   private async _searchInternal(
@@ -840,7 +844,9 @@ class MemoryEngine {
     );
   }
 
-  private async _handleDeleteInternal(input: string | FileInput): Promise<DeleteEnvelope> {
+  private async _handleDeleteInternal(
+    input: string | FileInput,
+  ): Promise<DeleteEnvelope> {
     try {
       const source: FileInput = typeof input === "string" ? { path: input } : input;
       return (await this._runSerializedMutation(

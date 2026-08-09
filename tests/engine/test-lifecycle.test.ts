@@ -427,10 +427,7 @@ test("initialization cleanup does not reuse an owned provider closed before a si
 
   await assert.rejects(() => engine.initialize());
   assert.equal(engine.state, "created");
-  assert.equal(
-    (engine as unknown as { vectorStore?: unknown }).vectorStore,
-    undefined,
-  );
+  assert.equal((engine as unknown as { vectorStore?: unknown }).vectorStore, undefined);
   failReady = false;
   await engine.initialize();
   assert.notEqual(engine.vectorStore, firstVectorStores[0]);

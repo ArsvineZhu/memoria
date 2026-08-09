@@ -1,8 +1,4 @@
-import type {
-  VectorHit,
-  VectorLike,
-  VectorStoreContract,
-} from "../types.js";
+import type { VectorHit, VectorLike, VectorStoreContract } from "../types.js";
 import { at } from "../utils/numerical.js";
 
 /**
@@ -63,7 +59,6 @@ class VectorStore implements VectorStoreContract {
   async remove(_indexName: string, _id: number): Promise<void> {
     throw new Error("VectorStore.remove() must be implemented");
   }
-
 }
 
 export default VectorStore;

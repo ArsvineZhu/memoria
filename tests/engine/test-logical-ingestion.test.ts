@@ -352,7 +352,10 @@ test("partial logical embedding fails before any metadata row is committed", asy
         }),
       (error: unknown) => error instanceof MemoriaError && error.code === "embedding",
     );
-    assert.equal(await engine.metadataStore.getFileByDocumentId?.("partial:batch"), null);
+    assert.equal(
+      await engine.metadataStore.getFileByDocumentId?.("partial:batch"),
+      null,
+    );
     assert.equal((await engine.getStats()).files, 0);
   } finally {
     await engine.close();

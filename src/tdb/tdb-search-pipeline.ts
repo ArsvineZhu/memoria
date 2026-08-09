@@ -5,6 +5,7 @@ import Stage from "../core/stage.js";
 
 import TDBQueryNormalizerStage from "../stages/tdb/query-normalizer.js";
 import QueryEmbedderStage from "../stages/retrieval/query-embedder.js";
+import SearchScopeResolverStage from "../stages/retrieval/search-scope-resolver.js";
 import VectorSearcherStage from "../stages/retrieval/vector-searcher.js";
 import BM25SearcherStage from "../stages/retrieval/bm25-searcher.js";
 import CandidateMergerStage from "../stages/retrieval/candidate-merger.js";
@@ -119,6 +120,7 @@ class TDBSearchPipeline extends Pipeline {
     const stages: Stage<PipelineData, PipelineData>[] = [
       new TDBQueryNormalizerStage(),
       new TDBQueryEmbedderStage(),
+      new SearchScopeResolverStage(),
       new VectorSearcherStage(),
       new BM25SearcherStage(),
       new CandidateMergerStage(),
@@ -149,9 +151,19 @@ class TDBSearchPipeline extends Pipeline {
     const payload = { ...(input || {}) };
     const options = (input && input.options) || {};
     Object.assign(payload, options, { query: input && input.query });
-    if (Array.isArray(payload.libraries) && payload.libraries.length > 0) {
-      payload.diaryNames = payload.libraries;
-    }
+    const explicitAlpha = options.hybridAlpha;
+    runCtx.config = {
+      ...runConfig,
+      topK: options.topK ?? runConfig.tdbTopK,
+      minScore: options.minScore ?? runConfig.tdbMinScore,
+      hybridAlpha: explicitAlpha ?? runConfig.tdbHybridAlpha,
+      hybridBeta:
+        explicitAlpha != null
+          ? 1 - Number(explicitAlpha)
+          : 1 - Number(runConfig.tdbHybridAlpha),
+      timeDecayEnabled: runConfig.tdbTimeDecayEnabled === true,
+      timeDecayHalfLife: runConfig.timeDecayHalfLife,
+    } as MemoryConfig;
 
     if (runConfig.tdbEnabled === false) {
       return {

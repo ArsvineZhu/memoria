@@ -561,7 +561,10 @@ test("retrieval stages honor one resolved scope across vector and BM25", async (
     },
     ctx,
   );
-  assert.deepEqual(vector.vectorResults.map((result) => result.chunkId), [chunkA]);
+  assert.deepEqual(
+    vector.vectorResults.map((result) => result.chunkId),
+    [chunkA],
+  );
 
   const sparse = await new BM25SearcherStage().process(
     {
@@ -570,7 +573,10 @@ test("retrieval stages honor one resolved scope across vector and BM25", async (
     },
     ctx,
   );
-  assert.deepEqual(sparse.bm25Results.map((result) => result.chunkId), [chunkA]);
+  assert.deepEqual(
+    sparse.bm25Results.map((result) => result.chunkId),
+    [chunkA],
+  );
 
   metadataStore.close();
   for (const timer of vectorStore.saveTimers.values()) clearTimeout(timer);

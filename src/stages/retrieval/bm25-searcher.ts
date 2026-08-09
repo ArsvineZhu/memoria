@@ -89,9 +89,7 @@ class BM25SearcherStage extends Stage {
     try {
       if (typeof metadataStore.getSearchCorpus === "function") {
         chunks = await metadataStore.getSearchCorpus(
-          Array.isArray(info.resolvedIndexNames)
-            ? info.resolvedIndexNames
-            : undefined,
+          Array.isArray(info.resolvedIndexNames) ? info.resolvedIndexNames : undefined,
         );
       } else {
         const explicitScope =

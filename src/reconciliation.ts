@@ -50,7 +50,9 @@ async function loadExpectedIndexNames(
   hasTags: boolean,
 ): Promise<string[]> {
   if (typeof metadataStore.getExpectedVectorIndexNames === "function") {
-    return [...new Set((await metadataStore.getExpectedVectorIndexNames()).filter(Boolean))].sort();
+    return [
+      ...new Set((await metadataStore.getExpectedVectorIndexNames()).filter(Boolean)),
+    ].sort();
   }
 
   const names = new Set<string>(await metadataStore.getDistinctDiaryNames());
@@ -70,7 +72,10 @@ export async function buildVectorReconciliationPlan(
   try {
     const rows = await loadIndexableChunks(metadataStore);
     const tags = await metadataStore.getAllTags();
-    const expectedIndexNames = await loadExpectedIndexNames(metadataStore, tags.length > 0);
+    const expectedIndexNames = await loadExpectedIndexNames(
+      metadataStore,
+      tags.length > 0,
+    );
     const knownIndexNames = new Set(expectedIndexNames);
     const indexEntries = new Map<string, VectorIndexEntry[]>();
     let rebuiltChunkCount = 0;
@@ -189,6 +194,9 @@ export async function applyVectorReconciliationPlan(
 export async function reconcileVectorIndexes(
   options: ReconciliationOptions,
 ): Promise<ReconciliationReport> {
-  const plan = await buildVectorReconciliationPlan(options.metadataStore, options.dimension);
+  const plan = await buildVectorReconciliationPlan(
+    options.metadataStore,
+    options.dimension,
+  );
   return applyVectorReconciliationPlan(plan, options.vectorStore);
 }

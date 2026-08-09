@@ -1,7 +1,4 @@
-import type {
-  PipelineContextLike,
-  PipelineData,
-} from "../../types.js";
+import type { PipelineContextLike, PipelineData } from "../../types.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
@@ -29,7 +26,9 @@ class SearchScopeResolverStage extends Stage {
   override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, "resolvedIndexNames"> & { resolvedIndexNames: string[] }> {
+  ): Promise<
+    Omit<PipelineData, "resolvedIndexNames"> & { resolvedIndexNames: string[] }
+  > {
     const info = input || {};
     const config = ctx.config || {};
     const explicit = this._firstExplicit(
@@ -42,7 +41,10 @@ class SearchScopeResolverStage extends Stage {
     if (explicit !== null) return { ...info, resolvedIndexNames: explicit };
 
     const metadataStore = ctx.metadataStore;
-    if (metadataStore && typeof metadataStore.getExpectedVectorIndexNames === "function") {
+    if (
+      metadataStore &&
+      typeof metadataStore.getExpectedVectorIndexNames === "function"
+    ) {
       try {
         const names = await metadataStore.getExpectedVectorIndexNames();
         return { ...info, resolvedIndexNames: normalizeNames(names) };

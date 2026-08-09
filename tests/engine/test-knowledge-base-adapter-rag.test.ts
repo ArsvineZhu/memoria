@@ -148,7 +148,9 @@ test("adapter result deduplication hydrates vectors through metadata", async () 
   const first = chunks[0]!;
   const second = chunks[1]!;
   let loaderCalls = 0;
-  const originalGetChunkById = engine.metadataStore.getChunkById.bind(engine.metadataStore);
+  const originalGetChunkById = engine.metadataStore.getChunkById.bind(
+    engine.metadataStore,
+  );
   engine.metadataStore.getChunkById = async (chunkId) => {
     loaderCalls += 1;
     const row = await originalGetChunkById(chunkId);

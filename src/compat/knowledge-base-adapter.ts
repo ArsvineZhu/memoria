@@ -513,7 +513,8 @@ class KnowledgeBaseAdapter {
   _createResultDeduplicator(): ResultDeduplicator {
     const engine = this.engine;
     const store = engine && engine.metadataStore;
-    const dimension = Number(engine && engine.config && engine.config.dimension) || 3072;
+    const dimension =
+      Number(engine && engine.config && engine.config.dimension) || 3072;
     const loadVector = store
       ? async (chunkId: number) => {
           const row = await store.getChunkById(chunkId);

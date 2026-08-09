@@ -339,9 +339,7 @@ class VexusVectorStore extends VectorStore {
     this._writeIndexMetadata(resolvedPath);
   }
 
-  async restorePersistedIndexes(
-    indexNames: readonly string[],
-  ): Promise<boolean> {
+  async restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean> {
     if (!this.indexLoadEnabled) return false;
     const VexusIndex = getVexusIndex();
     const loadedIndexes = new Map<string, VexusIndex>();

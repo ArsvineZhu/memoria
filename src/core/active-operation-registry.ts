@@ -16,17 +16,19 @@ class ActiveOperationRegistry {
     }
 
     this.operations.add(promise);
-    void promise.finally(() => {
-      this.operations.delete(promise);
-      if (this.operations.size === 0) {
-        const waiters = [...this.drainWaiters];
-        this.drainWaiters.clear();
-        for (const resolve of waiters) resolve();
-      }
-    }).catch(() => {
-      // The original promise carries the rejection to its caller. This
-      // observer must be handled to avoid an unhandled rejection of finally().
-    });
+    void promise
+      .finally(() => {
+        this.operations.delete(promise);
+        if (this.operations.size === 0) {
+          const waiters = [...this.drainWaiters];
+          this.drainWaiters.clear();
+          for (const resolve of waiters) resolve();
+        }
+      })
+      .catch(() => {
+        // The original promise carries the rejection to its caller. This
+        // observer must be handled to avoid an unhandled rejection of finally().
+      });
     return promise;
   }
 

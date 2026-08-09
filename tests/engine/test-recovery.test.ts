@@ -234,7 +234,10 @@ test("clean close and reopen restores persisted indexes without rebuilding", asy
 test("reconciliation planning failure leaves the live vector index usable", async () => {
   const root = mkdtempSync(join(tmpdir(), "memoria-recovery-plan-failure-"));
   const storePath = join(root, "indices");
-  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: DIMENSION });
+  const metadataStore = new SqliteMetadataStore({
+    dbPath: ":memory:",
+    dimension: DIMENSION,
+  });
   const vectorStore = new VexusVectorStore({
     dimension: DIMENSION,
     storePath,
@@ -291,8 +294,14 @@ test("reconciliation application failure remains dirty and rebuilds on reopen", 
     () => engine.reconcile(),
     (error: unknown) => error instanceof MemoriaError && error.code === "integrity",
   );
-  assert.equal((engine as unknown as { _vectorStateComplete: boolean })._vectorStateComplete, false);
-  assert.equal((engine as unknown as { _vectorMutationFailed: boolean })._vectorMutationFailed, true);
+  assert.equal(
+    (engine as unknown as { _vectorStateComplete: boolean })._vectorStateComplete,
+    false,
+  );
+  assert.equal(
+    (engine as unknown as { _vectorMutationFailed: boolean })._vectorMutationFailed,
+    true,
+  );
   await engine.close();
 
   const dirty = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
@@ -348,7 +357,8 @@ test("search reconciles authoritative SQLite state after a same-session vector f
   };
   await assert.rejects(
     () => engine.ingest({ id: "autoheal:one", content: "new authoritative text" }),
-    (error: unknown) => error instanceof MemoriaError && error.code === "vector_backend",
+    (error: unknown) =>
+      error instanceof MemoriaError && error.code === "vector_backend",
   );
   vectorStore.add = originalAdd;
 
@@ -364,7 +374,10 @@ test("search reconciles authoritative SQLite state after a same-session vector f
     ),
     false,
   );
-  assert.equal((engine as unknown as { _vectorStateComplete: boolean })._vectorStateComplete, true);
+  assert.equal(
+    (engine as unknown as { _vectorStateComplete: boolean })._vectorStateComplete,
+    true,
+  );
   await engine.close();
 });
 

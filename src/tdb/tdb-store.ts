@@ -142,9 +142,9 @@ class TDBStore implements TdbStoreContract {
   }
 
   private _migrateSchema(): void {
-    const columns = this.db
-      .prepare("PRAGMA table_info(chunks)")
-      .all() as Array<{ name?: string }>;
+    const columns = this.db.prepare("PRAGMA table_info(chunks)").all() as Array<{
+      name?: string;
+    }>;
     if (!columns.some((column) => column.name === "vector")) {
       this.db.exec("ALTER TABLE chunks ADD COLUMN vector BLOB");
     }
@@ -314,14 +314,12 @@ class TDBStore implements TdbStoreContract {
       const rows = this.db
         .prepare("SELECT id, node_id FROM chunks WHERE library = ? AND path = ?")
         .all(library, path) as Array<{ id: number; node_id: number }>;
-      this.db.prepare("DELETE FROM chunks WHERE library = ? AND path = ?").run(
-        library,
-        path,
-      );
-      this.db.prepare("DELETE FROM files WHERE library = ? AND path = ?").run(
-        library,
-        path,
-      );
+      this.db
+        .prepare("DELETE FROM chunks WHERE library = ? AND path = ?")
+        .run(library, path);
+      this.db
+        .prepare("DELETE FROM files WHERE library = ? AND path = ?")
+        .run(library, path);
       const metadataGeneration = this._incrementMetadataGeneration();
       this._setMetaInTransaction("tdb.vector_dirty", "1");
       return {
@@ -454,10 +452,10 @@ class TDBStore implements TdbStoreContract {
         "SELECT id, chunk_index, node_id, text, checksum, vector FROM chunks WHERE library = ? AND path = ? ORDER BY chunk_index",
       )
       .all(library, path) as Array<
-        Pick<
-          TdbChunkQueryRow,
-          "id" | "chunk_index" | "node_id" | "text" | "checksum" | "vector"
-        >
+      Pick<
+        TdbChunkQueryRow,
+        "id" | "chunk_index" | "node_id" | "text" | "checksum" | "vector"
+      >
     >;
     return rows.map((r) => ({
       library,
@@ -506,6 +504,7 @@ class TDBStore implements TdbStoreContract {
   }
 
   async getSearchCorpus(libraries?: readonly string[]): Promise<SearchCorpusChunk[]> {
+    if (Array.isArray(libraries) && libraries.length === 0) return [];
     const names = Array.isArray(libraries)
       ? [...new Set(libraries.map((name) => String(name).trim()).filter(Boolean))]
       : [];
@@ -559,9 +558,7 @@ class TDBStore implements TdbStoreContract {
 
   async getTdbRebuildChunks(): Promise<TdbRebuildChunk[]> {
     const rows = this.db
-      .prepare(
-        "SELECT id, node_id, library, text, vector FROM chunks ORDER BY id",
-      )
+      .prepare("SELECT id, node_id, library, text, vector FROM chunks ORDER BY id")
       .all() as Array<{
       id: number;
       node_id: number;

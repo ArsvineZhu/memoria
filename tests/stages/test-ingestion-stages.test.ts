@@ -273,10 +273,30 @@ test("ChunkEmbedderStage rejects any incomplete or invalid embedding batch", asy
     name: string;
     vectors: (number[] | null)[];
   }> = [
-    { name: "short result", vectors: [[0, 1, 2], [1, 2, 3]] },
+    {
+      name: "short result",
+      vectors: [
+        [0, 1, 2],
+        [1, 2, 3],
+      ],
+    },
     { name: "null result", vectors: [[0, 1, 2], null, [2, 3, 4]] },
-    { name: "wrong dimension", vectors: [[0, 1, 2], [1, 2], [2, 3, 4]] },
-    { name: "non-finite result", vectors: [[0, 1, 2], [Number.NaN, 2, 3], [2, 3, 4]] },
+    {
+      name: "wrong dimension",
+      vectors: [
+        [0, 1, 2],
+        [1, 2],
+        [2, 3, 4],
+      ],
+    },
+    {
+      name: "non-finite result",
+      vectors: [
+        [0, 1, 2],
+        [Number.NaN, 2, 3],
+        [2, 3, 4],
+      ],
+    },
   ];
 
   for (const testCase of cases) {

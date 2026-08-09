@@ -225,9 +225,11 @@ test("getStats vector-stat failures cross the boundary as vector_backend errors"
   const { engine, metadataStore } = makeEngine();
   try {
     await engine.initialize();
-    (engine.vectorStore as VectorStoreContract & {
-      indices?: Map<string, unknown>;
-    }).indices?.set("Root", new Map());
+    (
+      engine.vectorStore as VectorStoreContract & {
+        indices?: Map<string, unknown>;
+      }
+    ).indices?.set("Root", new Map());
     engine.vectorStore.getIndexStats = async () => {
       throw cause;
     };

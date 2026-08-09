@@ -7,6 +7,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { asMemoriaError } from "../../errors.js";
 
 /**
  * Output stage: assembles the final TDB search result array.
@@ -64,8 +65,13 @@ class TDBResultFormatterStage extends Stage {
     if (store && typeof store.getChunkById === "function") {
       try {
         chunk = await store.getChunkById(chunkId);
-      } catch (_) {
-        chunk = null;
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "TDB metadata store failed while loading a search chunk.",
+          { retryable: true },
+        );
       }
     }
     if (!chunk) return null;
@@ -74,8 +80,13 @@ class TDBResultFormatterStage extends Stage {
     if (store && typeof store.getFileByChunkId === "function") {
       try {
         file = await store.getFileByChunkId(chunk.id);
-      } catch (_) {
-        file = null;
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "TDB metadata store failed while loading chunk lineage.",
+          { retryable: true },
+        );
       }
     }
 

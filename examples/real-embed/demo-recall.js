@@ -43,8 +43,6 @@ const QUERIES = [
   { tag: '模糊记忆', query: '上次记的猫粮挑选要点是什么来着', hint: '→ 猫咪养护' }
 ];
 
-const RESULT_COLORS = { on: true };
-
 // ── 主流程 ───────────────────────────────────────────────────────────
 async function main() {
   const apiKey = loadApiKey();

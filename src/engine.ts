@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { DEFAULT_CONFIG, mergeConfig } from "./config/default-config.js";
 import { loadRagParams } from "./config/rag-params-loader.js";
 import PipelineContext from "./core/context.js";
+import ActiveOperationRegistry from "./core/active-operation-registry.js";
 import IngestPipeline from "./pipelines/ingest-pipeline.js";
 import DeletePipeline from "./pipelines/delete-pipeline.js";
 import SearchPipeline from "./pipelines/search-pipeline.js";
@@ -125,6 +126,7 @@ class MemoryEngine {
   private _ownsEmbeddingProvider = false;
   private _vectorStateComplete = false;
   private _vectorMutationFailed = false;
+  private readonly _activeOperations = new ActiveOperationRegistry();
   private readonly _mutationTails = new Map<string, Promise<void>>();
   _closed: boolean;
   ragParams: UnknownRecord;
@@ -346,6 +348,18 @@ class MemoryEngine {
     }
   }
 
+  private _runReadyOperation<T>(
+    operationName: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      this._assertReady(operationName);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this._activeOperations.run(operation);
+  }
+
   private async _recoverIndexes(): Promise<ReconciliationReport> {
     const generationState =
       typeof this.metadataStore.getGenerationState === "function"
@@ -440,31 +454,38 @@ class MemoryEngine {
     if (vectorOwned && vectorStore && typeof vectorStore.close === "function") {
       try {
         await vectorStore.close();
+        this._ownsVectorStore = false;
+        this.vectorStore = undefined as unknown as RuntimeVectorStore;
       } catch (error) {
         firstError ??= error;
       }
+    } else if (vectorOwned) {
+      this._ownsVectorStore = false;
+      this.vectorStore = undefined as unknown as RuntimeVectorStore;
     }
     if (metadataOwned && metadataStore && typeof metadataStore.close === "function") {
       try {
         await metadataStore.close();
+        this._ownsMetadataStore = false;
+        this.metadataStore = undefined as unknown as RuntimeMetadataStore;
       } catch (error) {
         firstError ??= error;
       }
+    } else if (metadataOwned) {
+      this._ownsMetadataStore = false;
+      this.metadataStore = undefined as unknown as RuntimeMetadataStore;
     }
-    if (firstError) throw firstError;
-
-    this._ownsVectorStore = false;
-    this._ownsMetadataStore = false;
+    // Embedding providers currently have no close capability. Releasing the
+    // ownership/reference is still important after a failed initialization so
+    // a later initialize cannot reuse a half-disposed provider.
     this._ownsEmbeddingProvider = false;
-    if (resetReferences) {
-      if (vectorOwned) this.vectorStore = undefined as unknown as RuntimeVectorStore;
-      if (metadataOwned) {
-        this.metadataStore = undefined as unknown as RuntimeMetadataStore;
-      }
-      if (embeddingOwned) {
-        this.embeddingProvider = undefined as unknown as EmbeddingProviderContract;
-      }
+    if (embeddingOwned) {
+      this.embeddingProvider = undefined as unknown as EmbeddingProviderContract;
     }
+    // Keep the parameter as part of the private compatibility surface; owned
+    // resources are now cleared immediately after each successful cleanup.
+    void resetReferences;
+    if (firstError) throw firstError;
   }
 
   private _runSerializedMutation<T>(
@@ -497,15 +518,16 @@ class MemoryEngine {
   }
 
   /** Rebuild derived vector indices from the metadata/content authority. */
-  async reconcile(): Promise<ReconciliationReport> {
-    this._assertReady("reconcile");
-    try {
-      return await this._reconcileInternal();
-    } catch (error) {
-      throw asMemoriaError(error, "integrity", "MemoryEngine reconciliation failed.", {
-        retryable: true,
-      });
-    }
+  reconcile(): Promise<ReconciliationReport> {
+    return this._runReadyOperation("reconcile", async () => {
+      try {
+        return await this._reconcileInternal();
+      } catch (error) {
+        throw asMemoriaError(error, "integrity", "MemoryEngine reconciliation failed.", {
+          retryable: true,
+        });
+      }
+    });
   }
 
   /**
@@ -558,10 +580,17 @@ class MemoryEngine {
    *              {path:string, ...}|undefined} files
    * @returns {Promise<Array<object>>} per-file ingest envelopes
    */
-  async flushBatch(
+  flushBatch(
     files?: FileInput | readonly FileInput[] | string,
   ): Promise<IngestEnvelope[]> {
-    this._assertReady("flushBatch");
+    return this._runReadyOperation("flushBatch", () =>
+      this._flushBatchInternal(files),
+    );
+  }
+
+  private async _flushBatchInternal(
+    files?: FileInput | readonly FileInput[] | string,
+  ): Promise<IngestEnvelope[]> {
     try {
       const entries = normalizeFiles(files);
       const results: IngestEnvelope[] = [];
@@ -611,8 +640,13 @@ class MemoryEngine {
    * Ingest one host-neutral logical document. The filesystem adapter uses
    * flushBatch(), while this method is the core content-centered contract.
    */
-  async ingest(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
-    this._assertReady("ingest");
+  ingest(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+    return this._runReadyOperation("ingest", () => this._ingestInternal(document));
+  }
+
+  private async _ingestInternal(
+    document: MemoryDocumentInput,
+  ): Promise<MemoryDocumentIngestResult> {
     if (!document || typeof document !== "object") {
       throw new MemoriaError("ingestion", "A logical document object is required.");
     }
@@ -681,26 +715,31 @@ class MemoryEngine {
   }
 
   /** Explicit replacement spelling for callers that do not use revisioned ingest. */
-  async upsert(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
-    this._assertReady("upsert");
-    return this.ingest(document);
+  upsert(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+    return this._runReadyOperation("upsert", () => this._ingestInternal(document));
   }
 
-  async ingestBatch(
+  ingestBatch(
     documents: readonly MemoryDocumentInput[],
   ): Promise<MemoryDocumentIngestResult[]> {
-    this._assertReady("ingestBatch");
-    if (!Array.isArray(documents)) {
-      throw new MemoriaError("ingestion", "Logical document batch must be an array.");
-    }
-    const results: MemoryDocumentIngestResult[] = [];
-    for (const document of documents) results.push(await this.ingest(document));
-    return results;
+    return this._runReadyOperation("ingestBatch", async () => {
+      if (!Array.isArray(documents)) {
+        throw new MemoriaError("ingestion", "Logical document batch must be an array.");
+      }
+      const results: MemoryDocumentIngestResult[] = [];
+      for (const document of documents) results.push(await this._ingestInternal(document));
+      return results;
+    });
   }
 
   /** Remove a logical document by stable identity, without requiring its source path. */
-  async remove(documentId: string): Promise<MemoryDocumentDeleteResult> {
-    this._assertReady("remove");
+  remove(documentId: string): Promise<MemoryDocumentDeleteResult> {
+    return this._runReadyOperation("remove", () => this._removeInternal(documentId));
+  }
+
+  private async _removeInternal(
+    documentId: string,
+  ): Promise<MemoryDocumentDeleteResult> {
     try {
       const normalizedId = normalizeDocumentId(documentId);
       return await this._runSerializedMutation(`document:${normalizedId}`, async () => {
@@ -747,11 +786,10 @@ class MemoryEngine {
    * @param {Array|object|undefined} files
    * @returns {Promise<Array<object>>}
    */
-  async flush(
+  flush(
     files?: FileInput | readonly FileInput[] | string,
   ): Promise<IngestEnvelope[]> {
-    this._assertReady("flush");
-    return this.flushBatch(files);
+    return this._runReadyOperation("flush", () => this._flushBatchInternal(files));
   }
 
   /**
@@ -763,11 +801,17 @@ class MemoryEngine {
    * @param {object} [options]    - per-call options (topK, diaryNames, ...)
    * @returns {Promise<object>}   - { ..., results, resultCount }
    */
-  async search(
+  search(
     query: string | PipelineData,
     options: UnknownRecord = {},
   ): Promise<SearchEnvelope> {
-    this._assertReady("search");
+    return this._runReadyOperation("search", () => this._searchInternal(query, options));
+  }
+
+  private async _searchInternal(
+    query: string | PipelineData,
+    options: UnknownRecord = {},
+  ): Promise<SearchEnvelope> {
     const input: PipelineData = {
       ...(isRecord(query) ? query : { query }),
     };
@@ -790,8 +834,13 @@ class MemoryEngine {
    * @param {{path:string}|string} input
    * @returns {Promise<object>} delete envelope { deleted, fileId, removedChunkIds, ... }
    */
-  async handleDelete(input: string | FileInput): Promise<DeleteEnvelope> {
-    this._assertReady("handleDelete");
+  handleDelete(input: string | FileInput): Promise<DeleteEnvelope> {
+    return this._runReadyOperation("handleDelete", () =>
+      this._handleDeleteInternal(input),
+    );
+  }
+
+  private async _handleDeleteInternal(input: string | FileInput): Promise<DeleteEnvelope> {
     try {
       const source: FileInput = typeof input === "string" ? { path: input } : input;
       return (await this._runSerializedMutation(
@@ -833,9 +882,10 @@ class MemoryEngine {
    * @param {string} filePath
    * @returns {Promise<object>}
    */
-  async deleteFile(filePath: string): Promise<DeleteEnvelope> {
-    this._assertReady("deleteFile");
-    return this.handleDelete({ path: filePath });
+  deleteFile(filePath: string): Promise<DeleteEnvelope> {
+    return this._runReadyOperation("deleteFile", () =>
+      this._handleDeleteInternal({ path: filePath }),
+    );
   }
 
   /**
@@ -844,47 +894,64 @@ class MemoryEngine {
    *   diaries:string[], lastIndexed:number|null, vectorStats:object,
    *   healthy:boolean, initialized:boolean}>}
    */
-  async getStats(): Promise<EngineStats> {
-    this._assertReady("getStats");
-    const store = this.metadataStore;
-    const chunks = (await store.getAllChunks()) || [];
-    const tags = (await store.getAllTags()) || [];
-    const diaries = await store.getDistinctDiaryNames();
+  getStats(): Promise<EngineStats> {
+    return this._runReadyOperation("getStats", () => this._getStatsInternal());
+  }
 
-    const files = await this._countFiles();
-    const lastIndexed = await this._resolveLastIndexed();
+  private async _getStatsInternal(): Promise<EngineStats> {
+    const store = this.metadataStore;
+    let chunks: Awaited<ReturnType<MetadataStoreContract["getAllChunks"]>>;
+    let tags: Awaited<ReturnType<MetadataStoreContract["getAllTags"]>>;
+    let diaries: string[];
+    let files: number;
+    let lastIndexed: number | null;
+    let healthy: EngineStats["healthy"] = { healthy: true, issues: [] };
+    try {
+      chunks = (await store.getAllChunks()) || [];
+      tags = (await store.getAllTags()) || [];
+      diaries = await store.getDistinctDiaryNames();
+      files = await this._countFiles();
+      lastIndexed = await this._resolveLastIndexed();
+      if (typeof store.healthCheck === "function") {
+        healthy = await store.healthCheck();
+      }
+    } catch (error) {
+      throw asMemoriaError(
+        error,
+        "persistence",
+        "MemoryEngine statistics persistence failed.",
+        { retryable: true },
+      );
+    }
 
     let vectorStats: EngineStats["vectorStats"] = {
       totalVectors: 0,
       indices: 0,
       dimension: this.config.dimension,
     };
-    if (typeof this.vectorStore.getIndexStats === "function") {
-      let total = 0;
-      let count = 0;
-      if (
-        this.vectorStore.indices instanceof Map &&
-        typeof this.vectorStore.getIndexStats === "function"
-      ) {
-        for (const name of this.vectorStore.indices.keys()) {
-          const stats = await this.vectorStore.getIndexStats(name);
-          total += Number(stats && stats.size) || 0;
-          count += 1;
+    try {
+      if (typeof this.vectorStore.getIndexStats === "function") {
+        let total = 0;
+        let count = 0;
+        if (
+          this.vectorStore.indices instanceof Map &&
+          typeof this.vectorStore.getIndexStats === "function"
+        ) {
+          for (const name of this.vectorStore.indices.keys()) {
+            const stats = await this.vectorStore.getIndexStats(name);
+            total += Number(stats && stats.size) || 0;
+            count += 1;
+          }
         }
+        vectorStats = { ...vectorStats, totalVectors: total, indices: count };
       }
-      vectorStats = { ...vectorStats, totalVectors: total, indices: count };
-    }
-
-    let healthy: EngineStats["healthy"] = { healthy: true, issues: [] };
-    if (typeof store.healthCheck === "function") {
-      try {
-        healthy = await store.healthCheck();
-      } catch (e) {
-        healthy = {
-          healthy: false,
-          issues: [e instanceof Error ? e.message : String(e)],
-        };
-      }
+    } catch (error) {
+      throw asMemoriaError(
+        error,
+        "vector_backend",
+        "MemoryEngine vector statistics failed.",
+        { retryable: true },
+      );
     }
 
     return {
@@ -949,7 +1016,7 @@ class MemoryEngine {
       }
 
       this.state = "closing";
-      await Promise.all([...this._mutationTails.values()]);
+      await this._activeOperations.drain();
       let firstError: unknown = null;
       let flushed = false;
       const metadataOwned = this._ownsMetadataStore;

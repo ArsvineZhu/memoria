@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
+import ActiveOperationRegistry from "../../src/core/active-operation-registry.js";
 import { createMemoryEngine } from "../../src/index.js";
 import { MemoriaError } from "../../src/errors.js";
 import type {
@@ -285,4 +286,153 @@ test("close drains an in-flight keyed mutation before closing", async () => {
     releaseMutation();
     await closeInjected(engine, metadataStore);
   }
+});
+
+test("active operation registry drains successful and failed operations without swallowing errors", async () => {
+  const registry = new ActiveOperationRegistry();
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const pending = registry.run(async () => {
+    await barrier;
+    return "done";
+  });
+  assert.equal(registry.size, 1);
+  const draining = registry.drain();
+  assert.equal(registry.size, 1);
+  release();
+  assert.equal(await pending, "done");
+  await draining;
+  assert.equal(registry.size, 0);
+
+  const cause = new Error("operation failed");
+  await assert.rejects(
+    registry.run(async () => {
+      throw cause;
+    }),
+    cause,
+  );
+  assert.equal(registry.size, 0);
+  await registry.drain();
+});
+
+test("close waits for an in-flight search before flushing and closing", async () => {
+  const { engine, metadataStore } = makeInjectedEngine();
+  let lookupStarted!: () => void;
+  let releaseLookup!: () => void;
+  const started = new Promise<void>((resolve) => {
+    lookupStarted = resolve;
+  });
+  const lookupBarrier = new Promise<void>((resolve) => {
+    releaseLookup = resolve;
+  });
+  const originalCorpus = metadataStore.getSearchCorpus.bind(metadataStore);
+  metadataStore.getSearchCorpus = async (...args) => {
+    lookupStarted();
+    await lookupBarrier;
+    return originalCorpus(...args);
+  };
+
+  try {
+    await engine.initialize();
+    const searching = engine.search("blocked until close drains");
+    await started;
+    const closing = engine.close();
+    await Promise.resolve();
+    assert.equal(engine.state, "closing");
+    assert.notStrictEqual(engine.state, "closed");
+    releaseLookup();
+    await searching;
+    await closing;
+    assert.equal(engine.state, "closed");
+  } finally {
+    releaseLookup();
+    await closeInjected(engine, metadataStore);
+  }
+});
+
+test("close drains the whole already-started flushBatch", async () => {
+  const { engine, metadataStore } = makeInjectedEngine();
+  let firstStarted!: () => void;
+  let releaseFirst!: () => void;
+  let secondStarted!: () => void;
+  let releaseSecond!: () => void;
+  const first = new Promise<void>((resolve) => {
+    firstStarted = resolve;
+  });
+  const firstBarrier = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const second = new Promise<void>((resolve) => {
+    secondStarted = resolve;
+  });
+  const secondBarrier = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  let calls = 0;
+  engine.ingestPipeline.run = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      firstStarted();
+      await firstBarrier;
+    } else {
+      secondStarted();
+      await secondBarrier;
+    }
+    return { skipped: false, fileId: calls, chunkIds: [], tagIds: [] };
+  }) as typeof engine.ingestPipeline.run;
+
+  try {
+    await engine.initialize();
+    const batch = engine.flushBatch([
+      { path: "batch-a.md", content: "a", mtime: 0, size: 1 },
+      { path: "batch-b.md", content: "b", mtime: 0, size: 1 },
+    ]);
+    await first;
+    releaseFirst();
+    const closing = engine.close();
+    await second;
+    assert.equal(engine.state, "closing");
+    releaseSecond();
+    await batch;
+    await closing;
+    assert.equal(engine.state, "closed");
+  } finally {
+    releaseFirst();
+    releaseSecond();
+    await closeInjected(engine, metadataStore);
+  }
+});
+
+test("initialization cleanup does not reuse an owned provider closed before a sibling failed", async () => {
+  const firstVectorStores: unknown[] = [];
+  let failReady = true;
+  const engine = createMemoryEngine({
+    config: { dimension: DIM },
+    onReady: async (value) => {
+      const readyEngine = value as ReturnType<typeof createMemoryEngine>;
+      firstVectorStores.push(readyEngine.vectorStore);
+      if (failReady) {
+        const metadata = readyEngine.metadataStore;
+        const originalClose = metadata.close?.bind(metadata);
+        metadata.close = () => {
+          if (failReady) throw new Error("metadata cleanup failed");
+          originalClose?.();
+        };
+        throw new Error("ready hook failed");
+      }
+    },
+  });
+
+  await assert.rejects(() => engine.initialize());
+  assert.equal(engine.state, "created");
+  assert.equal(
+    (engine as unknown as { vectorStore?: unknown }).vectorStore,
+    undefined,
+  );
+  failReady = false;
+  await engine.initialize();
+  assert.notEqual(engine.vectorStore, firstVectorStores[0]);
+  await engine.close();
 });

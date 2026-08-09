@@ -163,6 +163,7 @@ test("search vector failures are not silently downgraded", async () => {
   const { engine, metadataStore } = makeEngine({
     vector: { searchFailure: cause },
   });
+  engine.config.indexNames = ["Root"];
   try {
     await engine.initialize();
     await assert.rejects(
@@ -180,6 +181,8 @@ test("search vector failures are not silently downgraded", async () => {
 test("search getAllChunks failures cross the boundary as persistence errors", async () => {
   const cause = new Error("chunks persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
+  (metadataStore as unknown as { getSearchCorpus?: unknown }).getSearchCorpus =
+    undefined;
   metadataStore.getAllChunks = async () => {
     throw cause;
   };
@@ -197,15 +200,61 @@ test("search getAllChunks failures cross the boundary as persistence errors", as
   }
 });
 
-test("search getDistinctDiaryNames failures cross the boundary as persistence errors", async () => {
-  const cause = new Error("diary names persistence secret=do-not-copy");
+test("getStats metadata failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("stats persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
-  engine.config.searchAllIndices = true;
-  metadataStore.getDistinctDiaryNames = async () => {
+  metadataStore.getAllChunks = async () => {
     throw cause;
   };
   try {
     await engine.initialize();
+    await assert.rejects(
+      () => engine.getStats(),
+      (error: unknown) => {
+        assertBoundary(error, "persistence", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
+test("getStats vector-stat failures cross the boundary as vector_backend errors", async () => {
+  const cause = new Error("stats vector secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  try {
+    await engine.initialize();
+    (engine.vectorStore as VectorStoreContract & {
+      indices?: Map<string, unknown>;
+    }).indices?.set("Root", new Map());
+    engine.vectorStore.getIndexStats = async () => {
+      throw cause;
+    };
+    await assert.rejects(
+      () => engine.getStats(),
+      (error: unknown) => {
+        assertBoundary(error, "vector_backend", cause);
+        return true;
+      },
+    );
+  } finally {
+    await dispose(engine, metadataStore);
+  }
+});
+
+test("search getDistinctDiaryNames failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("diary names persistence secret=do-not-copy");
+  const { engine, metadataStore } = makeEngine();
+  engine.config.searchAllIndices = true;
+  try {
+    await engine.initialize();
+    (
+      metadataStore as unknown as { getExpectedVectorIndexNames?: unknown }
+    ).getExpectedVectorIndexNames = undefined;
+    metadataStore.getDistinctDiaryNames = async () => {
+      throw cause;
+    };
     await assert.rejects(
       () => engine.search("private content"),
       (error: unknown) => {
@@ -221,6 +270,7 @@ test("search getDistinctDiaryNames failures cross the boundary as persistence er
 test("search getChunkById failures cross the boundary as persistence errors", async () => {
   const cause = new Error("chunk lookup persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
+  engine.config.indexNames = ["Root"];
   try {
     await engine.initialize();
     metadataStore.getAllChunks = async () => [];
@@ -243,6 +293,7 @@ test("search getChunkById failures cross the boundary as persistence errors", as
 test("search getFileByChunkId failures cross the boundary as persistence errors", async () => {
   const cause = new Error("file lookup persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
+  engine.config.indexNames = ["Root"];
   try {
     await engine.initialize();
     metadataStore.getAllChunks = async () => [];
@@ -320,6 +371,7 @@ test("search tag chunk lookup failures cross the boundary as persistence errors"
 test("search getFileTags failures cross the boundary as persistence errors", async () => {
   const cause = new Error("tag hydration persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
+  engine.config.indexNames = ["Root"];
   try {
     await engine.initialize();
     metadataStore.getAllChunks = async () => [];

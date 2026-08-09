@@ -1,12 +1,16 @@
 import type {
   ChunkCandidate,
+  DatabaseLike,
   DedupeStats,
+  MetadataStoreContract,
   PipelineContextLike,
   PipelineData,
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
 import ResultDeduplicator from "../../algorithms/result-deduplicator.js";
+
+type MetadataStoreWithDb = MetadataStoreContract & { db?: DatabaseLike };
 
 /**
  * Postprocess stage: deduplicates merged candidates.
@@ -58,7 +62,7 @@ class ResultDeduplicatorStage extends Stage {
       return { ...info, mergedCandidates: candidates, dedupeSkipped: true };
     }
 
-    const db = ctx.metadataStore?.db;
+    const db = (ctx.metadataStore as MetadataStoreWithDb | null | undefined)?.db;
 
     const deduplicator = new ResultDeduplicator(db, {
       dimension: Number(config.dimension) || 3072,

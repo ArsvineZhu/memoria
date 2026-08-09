@@ -5,7 +5,6 @@ import type {
   PipelineContextOptions,
   VectorStoreContract,
 } from "../types.js";
-import type { VexusIndex } from "../native/vexus-lite.js";
 
 /**
  * Dependency injection container shared across all stages in a pipeline.
@@ -15,7 +14,8 @@ class PipelineContext {
   readonly embeddingProvider?: EmbeddingProviderContract | null;
   readonly vectorStore?: VectorStoreContract | null;
   readonly metadataStore?: MetadataStoreContract | null;
-  readonly vexusIndex?: VexusIndex;
+  /** @deprecated Compatibility escape hatch; native backend types stay internal. */
+  readonly vexusIndex?: unknown;
   epa?: PipelineContextOptions["epa"];
   readonly riverStateStore?: PipelineContextOptions["riverStateStore"];
   readonly tagGraph?: Map<number, Map<number, number>>;

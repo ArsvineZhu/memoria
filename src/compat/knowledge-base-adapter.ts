@@ -25,6 +25,7 @@ import type {
 } from "../types.js";
 
 type FlushInput = FileInput | readonly FileInput[] | string;
+type MetadataStoreWithDb = MetadataStoreContract & { db?: DatabaseLike };
 type CompatResult = SearchResult & {
   fullPath?: string;
   matchedTags?: string[];
@@ -168,7 +169,8 @@ class KnowledgeBaseAdapter {
 
   /** toolExecutor surface: raw SQLite handle (guard: `if (!kbm.db)`). */
   get db(): DatabaseLike | null {
-    const store = this.engine && this.engine.metadataStore;
+    const store = this.engine &&
+      (this.engine.metadataStore as unknown as MetadataStoreWithDb);
     return (store && store.db) || null;
   }
 
@@ -259,7 +261,8 @@ class KnowledgeBaseAdapter {
    * @returns {{status:string, healthy:boolean, issues:string[]}}
    */
   getHealthStatus() {
-    const store = this.engine && this.engine.metadataStore;
+    const store = this.engine &&
+      (this.engine.metadataStore as unknown as MetadataStoreWithDb);
     if (!store) {
       return { status: "unavailable", healthy: false, issues: [] };
     }
@@ -509,7 +512,8 @@ class KnowledgeBaseAdapter {
    */
   _createResultDeduplicator(): ResultDeduplicator {
     const engine = this.engine;
-    const store = engine && engine.metadataStore;
+    const store = engine &&
+      (engine.metadataStore as unknown as MetadataStoreWithDb);
     return new ResultDeduplicator(store?.db, {
       dimension: Number(engine && engine.config && engine.config.dimension) || 3072,
     });

@@ -28,6 +28,8 @@ test("public import and custom-provider initialization do not load native defaul
     const { createMemoryEngine } = await import("./dist/index.js");
     const metadataStore = {
       async upsertFile() { return 1; },
+      async countFiles() { return 0; },
+      async getLastIndexedAt() { return null; },
       async getFileByPath() { return null; },
       async getDistinctDiaryNames() { return []; },
       async getFileByChunkId() { return null; },
@@ -36,6 +38,8 @@ test("public import and custom-provider initialization do not load native defaul
       async getChunksByFileId() { return []; },
       async getChunkById() { return null; },
       async getAllChunks() { return []; },
+      async getIndexableChunks() { return []; },
+      async getExpectedVectorIndexNames() { return []; },
       async upsertTags() { return []; },
       async getTagByName() { return null; },
       async getAllTags() { return []; },

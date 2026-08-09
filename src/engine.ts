@@ -9,7 +9,6 @@ import IngestPipeline from "./pipelines/ingest-pipeline.js";
 import DeletePipeline from "./pipelines/delete-pipeline.js";
 import SearchPipeline from "./pipelines/search-pipeline.js";
 import type {
-  DatabaseLike,
   DeleteEnvelope,
   EmbeddingProviderContract,
   FileInput,
@@ -31,7 +30,6 @@ import { logicalDocumentPath, normalizeDocumentId } from "./utils/logical-docume
 import { reconcileVectorIndexes } from "./reconciliation.js";
 
 interface RuntimeMetadataStore extends MetadataStoreContract {
-  db?: DatabaseLike;
   close?: () => void;
 }
 
@@ -803,42 +801,26 @@ class MemoryEngine {
   }
 
   /**
-   * Number of stored files. Raw SQLite is preferred when the default
-   * provider is in use; a chunk-derived estimate is the fallback.
+   * Number of stored files through the metadata domain contract.
    * @private
    */
-  async _countFiles() {
+  async _countFiles(): Promise<number> {
     const store = this.metadataStore;
-    if (store.db && typeof store.db.prepare === "function") {
-      try {
-        const rowValue = store.db.prepare("SELECT COUNT(*) AS c FROM files").get();
-        const row = isRecord(rowValue) ? rowValue : null;
-        return Number(row?.c) || 0;
-      } catch (e) {
-        // Fall through to the interface query below.
-      }
+    if (typeof store.countFiles === "function") {
+      return store.countFiles();
     }
     const chunks = await store.getAllChunks();
     return new Set(chunks.map((c) => Number(c.fileId)).filter(Number.isFinite)).size;
   }
 
   /**
-   * Latest ingest time (wall-clock of the most recently flushed file,
-   * or the db-side MAX(files.updated_at) when raw SQLite is available).
+   * Latest ingest time through the metadata domain contract.
    * @private
    */
-  async _resolveLastIndexed() {
+  async _resolveLastIndexed(): Promise<number | null> {
     const store = this.metadataStore;
-    if (store.db && typeof store.db.prepare === "function") {
-      try {
-        const rowValue = store.db
-          .prepare("SELECT MAX(updated_at) AS m FROM files")
-          .get();
-        const row = isRecord(rowValue) ? rowValue : null;
-        if (row && row.m != null) return Number(row.m) * 1000;
-      } catch (e) {
-        // fall back to the session-level timestamp
-      }
+    if (typeof store.getLastIndexedAt === "function") {
+      return store.getLastIndexedAt();
     }
     return this._lastIndexedAt;
   }

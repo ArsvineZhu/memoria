@@ -276,6 +276,20 @@ class SqliteMetadataStore extends MetadataStore {
     return row ? Number(row.id) : null;
   }
 
+  override async countFiles(): Promise<number> {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS c FROM files")
+      .get() as { c?: number } | undefined;
+    return Number(row?.c) || 0;
+  }
+
+  override async getLastIndexedAt(): Promise<number | null> {
+    const row = this.db
+      .prepare("SELECT MAX(updated_at) AS m FROM files")
+      .get() as { m?: number | null } | undefined;
+    return row?.m == null ? null : Number(row.m) * 1000;
+  }
+
   override async getFileByPath(path: string): Promise<FileRow | null> {
     return (
       (this.db.prepare("SELECT * FROM files WHERE path = ?").get(path) as
@@ -522,7 +536,7 @@ class SqliteMetadataStore extends MetadataStore {
     }));
   }
 
-  async getIndexableChunks(): Promise<IndexableChunkRow[]> {
+  override async getIndexableChunks(): Promise<IndexableChunkRow[]> {
     const rows = this.db
       .prepare(
         `
@@ -544,7 +558,7 @@ class SqliteMetadataStore extends MetadataStore {
     }));
   }
 
-  async getExpectedVectorIndexNames(): Promise<string[]> {
+  override async getExpectedVectorIndexNames(): Promise<string[]> {
     const names = (
       this.db
         .prepare(

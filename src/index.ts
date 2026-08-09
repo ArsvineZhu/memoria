@@ -144,6 +144,7 @@ export type {
   MemoryEngineOptions,
   MetadataStore,
   MetadataStoreContract,
+  PipelineContextOptions,
   PipelineContextLike,
   PipelineData,
   ReconciliationReport,

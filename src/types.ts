@@ -1,5 +1,3 @@
-import type { VexusIndex } from "./native/vexus-lite.js";
-
 /** A vector accepted at the public boundary before it is normalised. */
 export type VectorLike = Float32Array | readonly number[];
 export type Vector = Float32Array;
@@ -170,7 +168,8 @@ export interface MemoryConfig {
   textType?: string;
   timeoutMs?: number;
   tdbForceMode?: string;
-  vexusIndex?: VexusIndex;
+  /** @deprecated Compatibility escape hatch; the concrete native type is internal. */
+  vexusIndex?: unknown;
   [key: string]: unknown;
 }
 
@@ -695,11 +694,12 @@ export interface HealthStatus {
 }
 
 export interface MetadataStoreContract {
-  db?: DatabaseLike;
   dimension?: number | null;
   /** Exposed for compatibility diagnostics used by the legacy tests/callers. */
   _closed?: boolean;
   upsertFile(fileMeta: FileMetadataInput): Promise<number | null>;
+  countFiles(): Promise<number>;
+  getLastIndexedAt(): Promise<number | null>;
   getFileByPath(path: string): Promise<FileRow | null>;
   getFileByDocumentId?(documentId: string): Promise<FileRow | null>;
   getDistinctDiaryNames(): Promise<string[]>;
@@ -715,8 +715,8 @@ export interface MetadataStoreContract {
   getChunksByFileId(fileId: number): Promise<ChunkRow[]>;
   getChunkById(id: number): Promise<ChunkRow | null>;
   getAllChunks(): Promise<ChunkRow[]>;
-  getIndexableChunks?(): Promise<IndexableChunkRow[]>;
-  getExpectedVectorIndexNames?(): Promise<string[]>;
+  getIndexableChunks(): Promise<IndexableChunkRow[]>;
+  getExpectedVectorIndexNames(): Promise<string[]>;
   getGenerationState?(): Promise<GenerationState>;
   markVectorStateClean?(): Promise<void>;
   upsertTags(tags: readonly TagMetadataInput[]): Promise<number[]>;
@@ -810,7 +810,8 @@ export interface PipelineContextOptions {
   embeddingProvider?: EmbeddingProviderContract | null;
   vectorStore?: VectorStoreContract | null;
   metadataStore?: MetadataStoreContract | null;
-  vexusIndex?: VexusIndex;
+  /** @deprecated Compatibility escape hatch; the concrete native type is internal. */
+  vexusIndex?: unknown;
   epa?: EpaLike;
   riverStateStore?: RiverStateStore;
   tagGraph?: Map<number, Map<number, number>>;
@@ -826,7 +827,8 @@ export interface PipelineContextLike {
   embeddingProvider?: EmbeddingProviderContract | null;
   vectorStore?: VectorStoreContract | null;
   metadataStore?: MetadataStoreContract | null;
-  vexusIndex?: VexusIndex;
+  /** @deprecated Compatibility escape hatch; the concrete native type is internal. */
+  vexusIndex?: unknown;
   epa?: EpaLike;
   riverStateStore?: RiverStateStore;
   tagGraph?: Map<number, Map<number, number>>;

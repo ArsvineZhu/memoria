@@ -80,3 +80,26 @@ test("compiled ESM package preserves the public export surface", async () => {
   assert.deepStrictEqual(Object.keys(cjsApi).sort(), Object.keys(esmApi));
   assert.strictEqual(Object.keys(cjsApi).length, 41);
 });
+
+test("public declarations do not pull the native Vexus type into metadata APIs", async () => {
+  const distRoot = [
+    path.resolve(__dirname, "../../dist"),
+    path.resolve(__dirname, "../../../dist"),
+  ].find((candidate) => fs.existsSync(path.join(candidate, "index.d.ts")));
+  assert.ok(distRoot, "compiled declaration root must exist");
+  const declarationFiles = [
+    path.join(distRoot, "index.d.ts"),
+    path.join(distRoot, "types.d.ts"),
+    path.join(distRoot, "core", "context.d.ts"),
+    path.join(distRoot, "engine.d.ts"),
+  ];
+
+  for (const declarationFile of declarationFiles) {
+    const declarations = await fs.promises.readFile(declarationFile, "utf8");
+    assert.doesNotMatch(
+      declarations,
+      /native[\\/]vexus-lite|VexusIndex/,
+      `${path.basename(declarationFile)} must not expose the native Vexus type`,
+    );
+  }
+});

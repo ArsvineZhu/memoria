@@ -4,6 +4,8 @@ import type {
   MemoryDocumentInput,
   MemoryDocumentSource,
   MemoryEngineOptions,
+  MetadataStoreContract,
+  PipelineContextOptions,
   PipelineContext,
   SearchEnvelope,
   Stage,
@@ -50,7 +52,23 @@ const vectorStore: VectorStore = {
   remove: async () => undefined,
 };
 
+type DomainMetadataMethods = Pick<
+  MetadataStoreContract,
+  "countFiles" | "getLastIndexedAt" | "getExpectedVectorIndexNames" | "getIndexableChunks"
+>;
+const domainMetadataMethods = null as unknown as DomainMetadataMethods;
+const compatibilityContext: PipelineContextOptions = {
+  config: {},
+  vexusIndex: { nativeCompatibilityEscape: true },
+};
+const compatibilityConfig: MemoryConfigOverrides = {
+  vexusIndex: { nativeCompatibilityEscape: true },
+};
+
 void options;
 void stage;
 void vectorStore;
 void document;
+void domainMetadataMethods;
+void compatibilityContext;
+void compatibilityConfig;

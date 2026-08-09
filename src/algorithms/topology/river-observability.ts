@@ -1,7 +1,11 @@
-import type { RiverObservabilityResult, UnknownRecord } from '../../types';
+import type { RiverObservabilityResult, UnknownRecord } from "../../types.js";
 
-interface RiverNode extends UnknownRecord { hop?: number }
-interface RiverEdge extends UnknownRecord { flow?: number }
+interface RiverNode extends UnknownRecord {
+  hop?: number;
+}
+interface RiverEdge extends UnknownRecord {
+  flow?: number;
+}
 interface RiverGraph {
   diagnostics?: UnknownRecord;
   nodes?: readonly RiverNode[];
@@ -29,7 +33,7 @@ interface ObservabilityOptions extends UnknownRecord {
  * of edge-ratio, emergence-ratio and flow-entropy sub-observables.
  */
 
-const SCHEMA = 'tagmemo-v10-river-observability-v1';
+const SCHEMA = "tagmemo-v10-river-observability-v1";
 
 function clamp01(value: unknown): number {
   return Math.max(0, Math.min(1, Number(value) || 0));
@@ -42,8 +46,8 @@ function finitePositive(value: unknown, fallback: number): number {
 
 function normalizedFlowEntropy(edges: readonly RiverEdge[]): number {
   const positiveFlows = edges
-    .map(edge => Math.max(0, Number(edge?.flow) || 0))
-    .filter(flow => flow > 0);
+    .map((edge) => Math.max(0, Number(edge?.flow) || 0))
+    .filter((flow) => flow > 0);
 
   if (positiveFlows.length === 0) return 0;
   if (positiveFlows.length === 1) return 0.5;
@@ -79,21 +83,20 @@ function computeRiverObservability(
   const kappaRatio = finitePositive(options.kappaRatio, 0.3);
   const epsilon = Math.max(
     Number.EPSILON,
-    Math.min(1, finitePositive(options.epsilon ?? options.omegaEpsilon, 0.02))
+    Math.min(1, finitePositive(options.epsilon ?? options.omegaEpsilon, 0.02)),
   );
   const collapsedThreshold = clamp01(
-    options.collapsedThreshold
-    ?? options.structRoleMinOmega
-    ?? 0.12
+    options.collapsedThreshold ?? options.structRoleMinOmega ?? 0.12,
   );
   const sparseThreshold = Math.max(
     collapsedThreshold,
-    clamp01(options.sparseThreshold ?? 0.45)
+    clamp01(options.sparseThreshold ?? 0.45),
   );
 
-  const river: RiverGraph = riverGraph && riverGraph.queryRiverGraph
-    ? riverGraph.queryRiverGraph
-    : (riverGraph || {});
+  const river: RiverGraph =
+    riverGraph && riverGraph.queryRiverGraph
+      ? riverGraph.queryRiverGraph
+      : riverGraph || {};
   const riverDiagnostics = river.diagnostics || {};
   const edges = Array.isArray(river.edges) ? river.edges : [];
   const nodes = Array.isArray(river.nodes) ? river.nodes : [];
@@ -102,19 +105,19 @@ function computeRiverObservability(
     0,
     Number.isFinite(Number(riverDiagnostics.activeEdges))
       ? Number(riverDiagnostics.activeEdges)
-      : edges.length
+      : edges.length,
   );
   const seedNodes = Math.max(
     0,
     Number.isFinite(Number(riverDiagnostics.seedNodes))
       ? Number(riverDiagnostics.seedNodes)
-      : nodes.filter(node => Number(node?.hop) === 0).length
+      : nodes.filter((node) => Number(node?.hop) === 0).length,
   );
   const reachedNodes = Math.max(
     0,
     Number.isFinite(Number(riverDiagnostics.reachedNodes))
       ? Number(riverDiagnostics.reachedNodes)
-      : nodes.length
+      : nodes.length,
   );
 
   const safeSeedNodes = Math.max(1, seedNodes);
@@ -129,17 +132,18 @@ function computeRiverObservability(
   let omega = 0;
   if (omegaEdge > 0 || omegaEmerge > 0 || omegaFlow > 0) {
     const geometricOmega = Math.cbrt(
-      Math.max(omegaEdge, epsilon)
-      * Math.max(omegaEmerge, epsilon)
-      * Math.max(omegaFlow, epsilon)
+      Math.max(omegaEdge, epsilon) *
+        Math.max(omegaEmerge, epsilon) *
+        Math.max(omegaFlow, epsilon),
     );
     omega = clamp01(geometricOmega * observationFactor);
   }
-  const regime = omega < collapsedThreshold
-    ? 'collapsed'
-    : omega < sparseThreshold
-      ? 'sparse'
-      : 'dense';
+  const regime =
+    omega < collapsedThreshold
+      ? "collapsed"
+      : omega < sparseThreshold
+        ? "sparse"
+        : "dense";
 
   return Object.freeze({
     schema: SCHEMA,
@@ -160,13 +164,9 @@ function computeRiverObservability(
       kappaRatio,
       epsilon,
       collapsedThreshold,
-      sparseThreshold
-    })
+      sparseThreshold,
+    }),
   });
 }
 
-export {
-  SCHEMA,
-  normalizedFlowEntropy,
-  computeRiverObservability
-};
+export { SCHEMA, normalizedFlowEntropy, computeRiverObservability };

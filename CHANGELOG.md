@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- 完成原生 TypeScript 迁移：Node 24.18.1 / pnpm 11.20.0 / TypeScript 7.0.2、ES2024
+  NodeNext、ESM-first `src/index.ts` → `dist/`，并保留历史 `require('memoria')` facade。
+- 增加无 filesystem 依赖的 logical `ingest` / `upsert` / `ingestBatch` / `remove` API，
+  以及独立 `memoria/adapters/filesystem` 文件系统 adapter。
+- SQLite 文件元数据与内容 BLOB 作为权威状态，增加 revision/source/metadata 字段、
+  启动 reconciliation、向量索引重建和结构化 `MemoriaError`。
+- 增加数值边界校验、严格类型检查、ESM consumer、packed consumer 与双平台原生 smoke
+  覆盖，README 与维护文档统一为 TypeScript/ESM/pnpm 示例。
+
 ## 0.1.0 (2026-08-08)
 
 首个独立发布，能力继承 vcp-memory 全部积累：

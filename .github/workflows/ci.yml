@@ -7,13 +7,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run typecheck:public
-      - run: npm test
-      - run: npm pack --dry-run
+          node-version: 24.18.1
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm typecheck:public
+      - run: pnpm test
+      - run: pnpm verify:pack
+      - run: pnpm pack --dry-run
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -30,6 +35,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
-      - run: npm ci
-      - run: npm run test:native
+          node-version: 24.18.1
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:native

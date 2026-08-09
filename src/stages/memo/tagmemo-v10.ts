@@ -1,4 +1,3 @@
-
 import type {
   ChunkCandidate,
   MemoryConfig,
@@ -6,11 +5,18 @@ import type {
   PipelineData,
   TagMemoData,
   UnknownRecord,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import { buildRowOperator, solveDualScaledFields, fieldToEntries } from '../../algorithms/topology/scaled-field-solver';
-import type { ScaledFieldResult, FieldOperator } from '../../algorithms/topology/scaled-field-solver';
+import Stage from "../../core/stage.js";
+import {
+  buildRowOperator,
+  solveDualScaledFields,
+  fieldToEntries,
+} from "../../algorithms/topology/scaled-field-solver.js";
+import type {
+  ScaledFieldResult,
+  FieldOperator,
+} from "../../algorithms/topology/scaled-field-solver.js";
 
 type FieldEntry = readonly [number, number];
 type PrunedField = Array<FieldEntry> & { prunedEntries: number };
@@ -45,17 +51,19 @@ type PrunedField = Array<FieldEntry> & { prunedEntries: number };
 class TagMemoV10Stage extends Stage {
   constructor() {
     super();
-    this.name = 'tagMemoV10';
+    this.name = "tagMemoV10";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'tagMemo' | 'mergedCandidates'> & {
-    tagMemo?: TagMemoData;
-    mergedCandidates?: ChunkCandidate[];
-    tagMemoV10Skipped?: boolean;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "tagMemo" | "mergedCandidates"> & {
+      tagMemo?: TagMemoData;
+      mergedCandidates?: ChunkCandidate[];
+      tagMemoV10Skipped?: boolean;
+    }
+  > {
     const info = input || {};
     const config = ctx.config;
 
@@ -89,21 +97,22 @@ class TagMemoV10Stage extends Stage {
         local: {
           alpha: config.localAlpha ?? 0.15,
           maxIterations: config.localMaxIterations ?? config.solverMaxIterations ?? 200,
-          tolerance: config.solverTolerance ?? 1e-9
+          tolerance: config.solverTolerance ?? 1e-9,
         },
         transfer: {
           alpha: config.transferAlpha ?? 0.55,
-          maxIterations: config.transferMaxIterations ?? config.solverMaxIterations ?? 200,
-          tolerance: config.solverTolerance ?? 1e-9
+          maxIterations:
+            config.transferMaxIterations ?? config.solverMaxIterations ?? 200,
+          tolerance: config.solverTolerance ?? 1e-9,
         },
         support: {
-          method: config.supportMethod || 'mass_ratio',
+          method: config.supportMethod || "mass_ratio",
           localMassRatio: config.localMassRatio ?? 0.8,
-          transferMassRatio: config.transferMassRatio ?? 0.9
-        }
+          transferMassRatio: config.transferMassRatio ?? 0.9,
+        },
       });
     } catch (e) {
-      if (e instanceof Error && 'code' in e && e.code === 'TAGMEMO_V10_EMPTY_SOURCE') {
+      if (e instanceof Error && "code" in e && e.code === "TAGMEMO_V10_EMPTY_SOURCE") {
         return { ...info, tagMemoV10Skipped: true };
       }
       throw e;
@@ -113,7 +122,7 @@ class TagMemoV10Stage extends Stage {
     const sourceField = fieldToEntries(solved.sourceVector, operator);
     const pruneConfig = {
       enabled: config.pruneByEnergy === true,
-      minEnergy: Math.max(0, Number(config.minFieldEnergy) || 0)
+      minEnergy: Math.max(0, Number(config.minFieldEnergy) || 0),
     };
     const localField: ReadonlyArray<FieldEntry> = pruneConfig.enabled
       ? this._pruneField(solved.localField, pruneConfig.minEnergy)
@@ -123,19 +132,21 @@ class TagMemoV10Stage extends Stage {
       : 0;
 
     const ranked = localField
-      .map(entry => ({
+      .map((entry) => ({
         id: Number(entry[0]),
         name: nameById.get(Number(entry[0])) || null,
-        energy: Number(entry[1]) || 0
+        energy: Number(entry[1]) || 0,
       }))
-      .sort((left, right) => (right.energy - left.energy) || (left.id - right.id));
+      .sort((left, right) => right.energy - left.energy || left.id - right.id);
 
     const mergedCandidates = await this._rerankCandidates(
-      info.mergedCandidates, solved, ctx
+      info.mergedCandidates,
+      solved,
+      ctx,
     );
 
     const tagMemo: TagMemoData = {
-      version: 'v10',
+      version: "v10",
       sourceField,
       localField,
       transferField: solved.transferField,
@@ -143,9 +154,11 @@ class TagMemoV10Stage extends Stage {
       transferDomain: solved.transferDomain,
       ranked,
       solverDiagnostics: solved.diagnostics,
-      activations: new Map(solved.localField.map(entry => [Number(entry[0]), Number(entry[1])])),
+      activations: new Map(
+        solved.localField.map((entry) => [Number(entry[0]), Number(entry[1])]),
+      ),
       pruneSkipped: true,
-      prunedFieldEntries: 0
+      prunedFieldEntries: 0,
     };
 
     if (pruneConfig.enabled) {
@@ -157,7 +170,7 @@ class TagMemoV10Stage extends Stage {
     return {
       ...info,
       tagMemo,
-      mergedCandidates
+      mergedCandidates,
     };
   }
 
@@ -179,12 +192,12 @@ class TagMemoV10Stage extends Stage {
           entries.push([numericId, numericEnergy]);
         }
       }
-      return entries.sort((left, right) =>
-        (right[1] - left[1]) || (left[0] - right[0])
-      );
+      return entries.sort((left, right) => right[1] - left[1] || left[0] - right[0]);
     }
     if (memo && Array.isArray(memo.sourceField) && memo.sourceField.length > 0) {
-      return memo.sourceField.map(entry => [Number(entry[0]), Number(entry[1])] as const);
+      return memo.sourceField.map(
+        (entry) => [Number(entry[0]), Number(entry[1])] as const,
+      );
     }
     const pyramidTags = info.pyramid?.levels?.[0]?.tags || [];
     const entries: FieldEntry[] = [];
@@ -213,7 +226,7 @@ class TagMemoV10Stage extends Stage {
   async _nameIndex(ctx: PipelineContextLike): Promise<Map<number, string>> {
     const names = new Map<number, string>();
     const metadataStore = ctx.metadataStore;
-    if (!metadataStore || typeof metadataStore.getAllTags !== 'function') {
+    if (!metadataStore || typeof metadataStore.getAllTags !== "function") {
       return names;
     }
     let rows;
@@ -229,7 +242,10 @@ class TagMemoV10Stage extends Stage {
     return names;
   }
 
-  async _candidateTagIds(candidate: ChunkCandidate, ctx: PipelineContextLike): Promise<number[]> {
+  async _candidateTagIds(
+    candidate: ChunkCandidate,
+    ctx: PipelineContextLike,
+  ): Promise<number[]> {
     const metadataStore = ctx.metadataStore;
     const tags = candidate && candidate.tags;
     if (Array.isArray(tags) && tags.length > 0) {
@@ -242,7 +258,7 @@ class TagMemoV10Stage extends Stage {
           continue;
         }
         let tag = null;
-        if (metadataStore && typeof metadataStore.getTagByName === 'function') {
+        if (metadataStore && typeof metadataStore.getTagByName === "function") {
           try {
             tag = await metadataStore.getTagByName(name);
           } catch (e) {
@@ -254,8 +270,10 @@ class TagMemoV10Stage extends Stage {
       return ids;
     }
 
-    if (typeof metadataStore?.getFileByChunkId !== 'function'
-      || typeof metadataStore?.getFileTags !== 'function') {
+    if (
+      typeof metadataStore?.getFileByChunkId !== "function" ||
+      typeof metadataStore?.getFileTags !== "function"
+    ) {
       return [];
     }
     try {
@@ -264,7 +282,7 @@ class TagMemoV10Stage extends Stage {
       const file = await metadataStore.getFileByChunkId(chunkId);
       if (!file) return [];
       const tagRows = await metadataStore.getFileTags(file.id);
-      return (tagRows || []).map(row => Number(row.id)).filter(Number.isFinite);
+      return (tagRows || []).map((row) => Number(row.id)).filter(Number.isFinite);
     } catch (e) {
       return [];
     }
@@ -278,29 +296,26 @@ class TagMemoV10Stage extends Stage {
     const source = Array.isArray(candidates) ? candidates : [];
     if (source.length === 0) return source;
     const cap = Math.max(0, Number(ctx.config?.topologyBonusCap) || 0.08);
-    const saturation = Math.max(1e-6, Number(ctx.config?.topologyPathSaturation) || 0.15);
-    const domain = new Set([
-      ...solved.localDomain.ids,
-      ...solved.transferDomain.ids
-    ]);
+    const saturation = Math.max(
+      1e-6,
+      Number(ctx.config?.topologyPathSaturation) || 0.15,
+    );
+    const domain = new Set([...solved.localDomain.ids, ...solved.transferDomain.ids]);
 
     const results: ChunkCandidate[] = [];
     for (const candidate of source) {
       const tagIds = await this._candidateTagIds(candidate, ctx);
-      const hits = tagIds.filter(id => domain.has(id)).length;
+      const hits = tagIds.filter((id) => domain.has(id)).length;
       const topologyRaw = tagIds.length > 0 ? hits / tagIds.length : 0;
       const pathReliability = Math.min(
         1,
-        topologyRaw >= 1 ? 1 : topologyRaw / saturation
+        topologyRaw >= 1 ? 1 : topologyRaw / saturation,
       );
       const topologyReliability = Math.sqrt(pathReliability * 1);
-      const topologyBonus = Math.min(
-        cap,
-        cap * topologyRaw * topologyReliability
-      );
+      const topologyBonus = Math.min(cap, cap * topologyRaw * topologyReliability);
       const score = Math.max(
         0,
-        Math.min(1, (Number(candidate.score) || 0) + topologyBonus)
+        Math.min(1, (Number(candidate.score) || 0) + topologyBonus),
       );
       results.push({
         ...candidate,
@@ -308,14 +323,14 @@ class TagMemoV10Stage extends Stage {
         topologyBonus,
         topologyRaw,
         topologyReliability,
-        domainHits: tagIds.filter(id => domain.has(id))
+        domainHits: tagIds.filter((id) => domain.has(id)),
       });
     }
-    results.sort((left, right) =>
-      (right.score - left.score) || (left.chunkId - right.chunkId)
+    results.sort(
+      (left, right) => right.score - left.score || left.chunkId - right.chunkId,
     );
     return results;
   }
 }
 
-export = TagMemoV10Stage;
+export default TagMemoV10Stage;

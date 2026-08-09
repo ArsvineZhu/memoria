@@ -1,13 +1,13 @@
-
 import type {
   EmbeddingVector,
   MemoryConfigOverrides,
   PipelineContextLike,
   PipelineData,
   QueryVector,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
+import { at } from "../../utils/numerical.js";
 
 /**
  * Embeds the raw query text into one or more query vectors.
@@ -32,21 +32,26 @@ import Stage = require('../../core/stage');
 class QueryEmbedderStage extends Stage {
   constructor() {
     super();
-    this.name = 'queryEmbedder';
+    this.name = "queryEmbedder";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'queries' | 'failed'> & { queries: QueryVector[]; failed: boolean }> {
+  ): Promise<
+    Omit<PipelineData, "queries" | "failed"> & {
+      queries: QueryVector[];
+      failed: boolean;
+    }
+  > {
     const info = input || {};
     const embeddingProvider = ctx.embeddingProvider;
 
-    const query = typeof info.query === 'string' ? info.query : '';
+    const query = typeof info.query === "string" ? info.query : "";
     if (
-      !embeddingProvider
-      || typeof embeddingProvider.embedBatch !== 'function'
-      || !query.trim()
+      !embeddingProvider ||
+      typeof embeddingProvider.embedBatch !== "function" ||
+      !query.trim()
     ) {
       return { ...info, failed: true, queries: [] };
     }
@@ -57,16 +62,18 @@ class QueryEmbedderStage extends Stage {
 
     // 1. Build the ordered query text list (original + injected variants).
     const texts = [query];
-    if (expansionCount > 1 && typeof rephraserFn === 'function') {
+    if (expansionCount > 1 && typeof rephraserFn === "function") {
       for (let i = 0; i < expansionCount - 1; i++) {
         let variant: string | null = null;
         try {
           variant = await rephraserFn(query, i);
         } catch (e) {
-          console.warn(`[QueryEmbedder] Rephraser ${i} failed: ${e instanceof Error ? e.message : String(e)}`);
+          console.warn(
+            `[QueryEmbedder] Rephraser ${i} failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
           continue;
         }
-        if (typeof variant === 'string' && variant.trim()) {
+        if (typeof variant === "string" && variant.trim()) {
           texts.push(variant.trim());
         }
       }
@@ -78,9 +85,11 @@ class QueryEmbedderStage extends Stage {
     //    providers that ignore the second argument.
     let vectors: Array<EmbeddingVector | null> | null = null;
     try {
-      vectors = await embeddingProvider.embedBatch(texts, { textType: 'query' });
+      vectors = await embeddingProvider.embedBatch(texts, { textType: "query" });
     } catch (e) {
-      console.warn(`[QueryEmbedder] Embedding failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[QueryEmbedder] Embedding failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
 
     if (!vectors || vectors.length !== texts.length) {
@@ -90,32 +99,34 @@ class QueryEmbedderStage extends Stage {
     // 3. Keep successfully embedded queries, applying the epsilon mask.
     const queries: QueryVector[] = [];
     for (let i = 0; i < texts.length; i++) {
-      const vector = vectors[i];
+      const vector = at(vectors, i, "query embeddings");
       if (vector == null) continue;
       queries.push({
-        text: texts[i],
-        vector: this._maskEpsilon(vector, config)
+        text: at(texts, i, "query texts"),
+        vector: this._maskEpsilon(vector, config),
       });
     }
 
     return { ...info, queries, failed: queries.length === 0 };
   }
 
-  _maskEpsilon(vector: EmbeddingVector, config: MemoryConfigOverrides): EmbeddingVector {
+  _maskEpsilon(
+    vector: EmbeddingVector,
+    config: MemoryConfigOverrides,
+  ): EmbeddingVector {
     const epsilon = Number(
-      config.queryEpsilon != null ? config.queryEpsilon : config.epsilon
+      config.queryEpsilon != null ? config.queryEpsilon : config.epsilon,
     );
     if (!(epsilon > 0)) return vector;
 
-    const src = vector instanceof Float32Array
-      ? vector
-      : new Float32Array(vector);
+    const src = vector instanceof Float32Array ? vector : new Float32Array(vector);
     const masked = new Float32Array(src.length);
     for (let i = 0; i < src.length; i++) {
-      if (Math.abs(src[i]) >= epsilon) masked[i] = src[i];
+      const value = at(src, i, "query vector");
+      if (Math.abs(value) >= epsilon) masked[i] = value;
     }
     return masked;
   }
 }
 
-export = QueryEmbedderStage;
+export default QueryEmbedderStage;

@@ -1,20 +1,16 @@
-interface TokenEncoding {
-  encode(text: string): Uint8Array;
-}
+import { get_encoding, type Tiktoken } from "@dqbd/tiktoken";
+import { at } from "./numerical.js";
 
 export interface ChunkOptions {
   maxTokens?: number;
   overlapTokens?: number;
 }
 
-let _encoding: TokenEncoding | null = null;
+let _encoding: Tiktoken | null = null;
 
-function getEncoding(): TokenEncoding {
-  if (!_encoding) {
-    const { get_encoding } = require('@dqbd/tiktoken') as {
-      get_encoding: (name: string) => TokenEncoding;
-    };
-    _encoding = get_encoding('cl100k_base');
+function getEncoding(): Tiktoken {
+  if (_encoding === null) {
+    _encoding = get_encoding("cl100k_base");
   }
   return _encoding;
 }
@@ -26,7 +22,10 @@ function getEncoding(): TokenEncoding {
  * @param {{ maxTokens?: number, overlapTokens?: number }} [options]
  * @returns {string[]}
  */
-function chunkText(text: string | null | undefined, options: ChunkOptions = {}): string[] {
+function chunkText(
+  text: string | null | undefined,
+  options: ChunkOptions = {},
+): string[] {
   if (!text) return [];
 
   const maxTokens = options.maxTokens || 6800; // 8000 * 0.85
@@ -35,20 +34,25 @@ function chunkText(text: string | null | undefined, options: ChunkOptions = {}):
 
   const sentences = text.split(/(?<=[。？！.!?\n])/g);
   const chunks: string[] = [];
-  let currentChunk = '';
+  let currentChunk = "";
   let currentTokens = 0;
 
   for (let i = 0; i < sentences.length; i++) {
-    let sentence = sentences[i];
+    const sentence = at(sentences, i, "sentences");
     let sentenceTokens = encoding.encode(sentence).length;
 
     if (sentenceTokens > maxTokens) {
       if (currentChunk.trim()) {
         chunks.push(currentChunk.trim());
-        currentChunk = '';
+        currentChunk = "";
         currentTokens = 0;
       }
-      const forceSplitChunks = forceSplitLongText(sentence, maxTokens, overlapTokens, encoding);
+      const forceSplitChunks = forceSplitLongText(
+        sentence,
+        maxTokens,
+        overlapTokens,
+        encoding,
+      );
       chunks.push(...forceSplitChunks);
       continue;
     }
@@ -56,10 +60,10 @@ function chunkText(text: string | null | undefined, options: ChunkOptions = {}):
     if (currentTokens + sentenceTokens > maxTokens) {
       chunks.push(currentChunk.trim());
 
-      let overlapChunk = '';
+      let overlapChunk = "";
       let overlapTokenCount = 0;
       for (let j = i - 1; j >= 0; j--) {
-        const prevSentence = sentences[j];
+        const prevSentence = at(sentences, j, "sentences");
         const prevSentenceTokens = encoding.encode(prevSentence).length;
         if (overlapTokenCount + prevSentenceTokens > overlapTokens) break;
         overlapChunk = prevSentence + overlapChunk;
@@ -84,12 +88,12 @@ function forceSplitLongText(
   text: string,
   maxTokens: number,
   overlapTokens: number,
-  encoding: TokenEncoding,
+  encoding: Tiktoken,
 ): string[] {
   const chunks: string[] = [];
   const tokens = encoding.encode(text);
   const safeOverlap = Math.min(overlapTokens, Math.max(0, maxTokens - 1));
-  const decoder = new TextDecoder('utf-8');
+  const decoder = new TextDecoder("utf-8");
 
   let start = 0;
   while (start < tokens.length) {
@@ -97,13 +101,17 @@ function forceSplitLongText(
 
     if (end < tokens.length) {
       const chunkTokens = tokens.slice(start, end);
-      let chunkTextStr = decoder.decode(chunkTokens);
+      let chunkTextStr = decoder.decode(encoding.decode(chunkTokens));
 
-      const breakPoints = ['\n', '。', '！', '？', '，', '；', '：', ' ', '\t'];
+      const breakPoints = ["\n", "。", "！", "？", "，", "；", "：", " ", "\t"];
       let bestBreakPoint = -1;
 
-      for (let i = chunkTextStr.length - 1; i >= Math.max(0, chunkTextStr.length - 200); i--) {
-        if (breakPoints.includes(chunkTextStr[i])) {
+      for (
+        let i = chunkTextStr.length - 1;
+        i >= Math.max(0, chunkTextStr.length - 200);
+        i--
+      ) {
+        if (breakPoints.includes(at(chunkTextStr, i, "decoded chunk"))) {
           bestBreakPoint = i + 1;
           break;
         }
@@ -113,7 +121,7 @@ function forceSplitLongText(
       if (bestBreakPoint > 0) {
         const candidateText = chunkTextStr.substring(0, bestBreakPoint);
         const newTokens = encoding.encode(candidateText);
-        if (newTokens.length > safeOverlap || newTokens.length === (end - start)) {
+        if (newTokens.length > safeOverlap || newTokens.length === end - start) {
           finalChunkText = candidateText;
           end = start + newTokens.length;
         }
@@ -122,13 +130,13 @@ function forceSplitLongText(
       chunks.push(finalChunkText.trim());
     } else {
       const chunkTokens = tokens.slice(start);
-      chunks.push(decoder.decode(chunkTokens).trim());
+      chunks.push(decoder.decode(encoding.decode(chunkTokens)).trim());
     }
 
     start = Math.max(start + 1, end - safeOverlap);
   }
 
-  return chunks.filter(chunk => chunk.length > 0);
+  return chunks.filter((chunk) => chunk.length > 0);
 }
 
 export { chunkText };

@@ -1,13 +1,12 @@
-
 import type {
   PipelineContextLike,
   PipelineData,
   VectorStoreContract,
-} from '../../types';
+} from "../../types.js";
 
-import path = require('path');
+import * as path from "node:path";
 
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
 
 /**
  * Removes a single file from the knowledge base: file row, chunk rows and
@@ -31,39 +30,45 @@ import Stage = require('../../core/stage');
 class FileDeleterStage extends Stage {
   constructor() {
     super();
-    this.name = 'fileDeleter';
+    this.name = "fileDeleter";
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<Omit<PipelineData, 'deleted' | 'fileId' | 'removedChunkIds'> & {
-    deleted: boolean;
-    fileId?: number | null;
-    removedChunkIds?: number[];
-  }> {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<
+    Omit<PipelineData, "deleted" | "fileId" | "removedChunkIds"> & {
+      deleted: boolean;
+      fileId?: number | null;
+      removedChunkIds?: number[];
+    }
+  > {
     const info = input || {};
     const metadataStore = ctx.metadataStore;
-    if (!metadataStore) throw new Error('FileDeleterStage requires metadataStore');
+    if (!metadataStore) throw new Error("FileDeleterStage requires metadataStore");
     const rootPath = ctx.config && ctx.config.rootPath;
 
     let relPath = info.relPath;
-    if (typeof relPath !== 'string' && typeof info.path === 'string') {
-      relPath = (rootPath && path.isAbsolute(info.path))
-        ? path.relative(rootPath, info.path)
-        : info.path;
+    if (typeof relPath !== "string" && typeof info.path === "string") {
+      relPath =
+        rootPath && path.isAbsolute(info.path)
+          ? path.relative(rootPath, info.path)
+          : info.path;
     }
     // Relative paths are stored with forward slashes on every platform.
-    if (typeof relPath === 'string') {
-      relPath = relPath.split(path.sep).join('/');
+    if (typeof relPath === "string") {
+      relPath = relPath.split(path.sep).join("/");
     }
-    if (typeof relPath !== 'string' || relPath.length === 0) {
+    if (typeof relPath !== "string" || relPath.length === 0) {
       return { ...info, deleted: false };
     }
 
     const row = await metadataStore.getFileByPath(relPath);
     if (!row) return { ...info, deleted: false };
 
-    const diaryName = info.diaryName || row.diary_name || row.diaryName || 'Root';
+    const diaryName = info.diaryName || row.diary_name || row.diaryName || "Root";
     const oldChunks = await metadataStore.getChunksByFileId(row.id);
-    const removedChunkIds = oldChunks.map(c => c.id);
+    const removedChunkIds = oldChunks.map((c) => c.id);
 
     await metadataStore.deleteFile(row.id);
 
@@ -72,7 +77,7 @@ class FileDeleterStage extends Stage {
       for (const id of removedChunkIds) {
         await this._safeRemove(ctx.vectorStore, indexName, id);
       }
-      if (typeof ctx.vectorStore.scheduleIndexSave === 'function') {
+      if (typeof ctx.vectorStore.scheduleIndexSave === "function") {
         ctx.vectorStore.scheduleIndexSave(indexName);
       }
     }
@@ -80,7 +85,11 @@ class FileDeleterStage extends Stage {
     return { ...info, deleted: true, fileId: row.id, removedChunkIds };
   }
 
-  async _safeRemove(vectorStore: VectorStoreContract, indexName: string, id: number): Promise<void> {
+  async _safeRemove(
+    vectorStore: VectorStoreContract,
+    indexName: string,
+    id: number,
+  ): Promise<void> {
     try {
       await vectorStore.remove(indexName, id);
     } catch (e) {
@@ -95,4 +104,4 @@ class FileDeleterStage extends Stage {
   }
 }
 
-export = FileDeleterStage;
+export default FileDeleterStage;

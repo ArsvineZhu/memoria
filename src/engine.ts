@@ -1,27 +1,34 @@
-'use strict';
+"use strict";
 
-import { DEFAULT_CONFIG, mergeConfig } from './config/default-config';
-import { loadRagParams } from './config/rag-params-loader';
-import PipelineContext = require('./core/context');
-import IngestPipeline = require('./pipelines/ingest-pipeline');
-import DeletePipeline = require('./pipelines/delete-pipeline');
-import SearchPipeline = require('./pipelines/search-pipeline');
-import OpenAIEmbeddingProvider = require('./providers/openai-embedding-provider');
-import VexusVectorStore = require('./providers/vexus-vector-store');
-import SqliteMetadataStore = require('./providers/sqlite-metadata-store');
+import { DEFAULT_CONFIG, mergeConfig } from "./config/default-config.js";
+import { loadRagParams } from "./config/rag-params-loader.js";
+import PipelineContext from "./core/context.js";
+import IngestPipeline from "./pipelines/ingest-pipeline.js";
+import DeletePipeline from "./pipelines/delete-pipeline.js";
+import SearchPipeline from "./pipelines/search-pipeline.js";
+import OpenAIEmbeddingProvider from "./providers/openai-embedding-provider.js";
+import VexusVectorStore from "./providers/vexus-vector-store.js";
+import SqliteMetadataStore from "./providers/sqlite-metadata-store.js";
 import type {
   DatabaseLike,
   DeleteEnvelope,
   FileInput,
   IngestEnvelope,
   MemoryConfig,
+  MemoryDocumentDeleteResult,
+  MemoryDocumentIngestResult,
+  MemoryDocumentInput,
   MemoryEngineOptions,
   MetadataStoreContract,
   PipelineData,
+  ReconciliationReport,
   SearchEnvelope,
   UnknownRecord,
   VectorStoreContract,
-} from './types';
+} from "./types.js";
+import { MemoriaError } from "./errors.js";
+import { logicalDocumentPath, normalizeDocumentId } from "./utils/logical-document.js";
+import { reconcileVectorIndexes } from "./reconciliation.js";
 
 interface RuntimeMetadataStore extends MetadataStoreContract {
   db?: DatabaseLike;
@@ -45,7 +52,7 @@ export interface EngineStats {
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
@@ -60,14 +67,14 @@ function normalizeFiles(files: unknown): FileInput[] {
   if (files == null) return [];
   const list: unknown[] = Array.isArray(files) ? files : [files];
   return list.map((entry: unknown): FileInput => {
-    if (typeof entry === 'string') return { path: entry };
-    if (!isRecord(entry)) return { path: '' };
+    if (typeof entry === "string") return { path: entry };
+    if (!isRecord(entry)) return { path: "" };
     return {
-      path: typeof entry.path === 'string' ? entry.path : '',
-      relPath: typeof entry.relPath === 'string' ? entry.relPath : undefined,
-      content: typeof entry.content === 'string' ? entry.content : undefined,
-      mtime: typeof entry.mtime === 'number' ? entry.mtime : undefined,
-      size: typeof entry.size === 'number' ? entry.size : undefined,
+      path: typeof entry.path === "string" ? entry.path : "",
+      relPath: typeof entry.relPath === "string" ? entry.relPath : undefined,
+      content: typeof entry.content === "string" ? entry.content : undefined,
+      mtime: typeof entry.mtime === "number" ? entry.mtime : undefined,
+      size: typeof entry.size === "number" ? entry.size : undefined,
     };
   });
 }
@@ -97,7 +104,7 @@ class MemoryEngine {
   config: MemoryConfig;
   metadataStore: RuntimeMetadataStore;
   vectorStore: RuntimeVectorStore;
-  embeddingProvider: import('./types').EmbeddingProviderContract;
+  embeddingProvider: import("./types.js").EmbeddingProviderContract;
   ctx: PipelineContext;
   ingestPipeline: IngestPipeline;
   deletePipeline: DeletePipeline;
@@ -107,15 +114,16 @@ class MemoryEngine {
   _closed: boolean;
   ragParams: UnknownRecord;
   _lastIndexedAt: number | null;
+  lastReconciliation: ReconciliationReport | null;
   /**
    * @param {object} [options={}]
    * @param {object} [options.config]          - merged over DEFAULT_CONFIG
    * @param {string} [options.dbPath]          - SQLite path (default ':memory:')
    * @param {string} [options.ragParamsPath]   - rag_params.json (optional)
    * @param {object} [options.ragParams]       - rag params overrides (optional)
-   * @param {import('./interfaces/embedding-provider')} [options.embeddingProvider]
-   * @param {import('./interfaces/vector-store')} [options.vectorStore]
-   * @param {import('./interfaces/metadata-store')} [options.metadataStore]
+   * @param {import('./interfaces/embedding-provider.js')} [options.embeddingProvider]
+   * @param {import('./interfaces/vector-store.js')} [options.vectorStore]
+   * @param {import('./interfaces/metadata-store.js')} [options.metadataStore]
    * @param {object} [options.ctx]             - extra PipelineContext fields
    *                                             (vexusIndex, epa, tagGraph, ...)
    * @param {object} [options.ingestOptions]   - forwarded to IngestPipeline (stages...)
@@ -123,41 +131,45 @@ class MemoryEngine {
    * @param {object} [options.searchOptions]   - forwarded to SearchPipeline
    */
   constructor(options: MemoryEngineOptions = {}) {
-    this.name = 'memoryEngine';
+    this.name = "memoryEngine";
     this.options = options || {};
 
     // 1. Merged configuration (providers read from here).
     this.config = mergeConfig(options.config);
-    if (options.dbPath !== undefined && this.config.dbPath === ':memory:') {
+    if (options.dbPath !== undefined && this.config.dbPath === ":memory:") {
       this.config.dbPath = options.dbPath;
     }
 
     // 2. Providers — injected instances win; otherwise build the defaults.
-    this.metadataStore = (options.metadataStore || new SqliteMetadataStore({
-      dbPath: this.config.dbPath,
-      dimension: this.config.dimension,
-      busyTimeout: this.config.busyTimeout,
-      busyRetryDelay: this.config.busyRetryDelay
-    })) as RuntimeMetadataStore;
-    this.vectorStore = (options.vectorStore || new VexusVectorStore({
-      dimension: this.config.dimension,
-      storePath: this.config.storePath,
-      tagIndexCapacity: this.config.tagIndexCapacity,
-      indexSaveDelay: this.config.indexSaveDelay,
-      tagIndexSaveDelay: this.config.tagIndexSaveDelay,
-      persistTagIndex: this.config.persistTagIndex
-    })) as RuntimeVectorStore;
-    this.embeddingProvider = options.embeddingProvider || new OpenAIEmbeddingProvider({
-      apiUrl: this.config.apiUrl,
-      apiKey: this.config.apiKey,
-      model: this.config.model,
-      modelSig: this.config.modelSig,
-      dimension: this.config.dimension,
-      maxBatchItems: this.config.maxBatchItems,
-      maxToken: this.config.maxToken,
-      concurrency: this.config.concurrency,
-      fallbackModels: this.config.fallbackModels
-    });
+    this.metadataStore = (options.metadataStore ||
+      new SqliteMetadataStore({
+        dbPath: this.config.dbPath,
+        dimension: this.config.dimension,
+        busyTimeout: this.config.busyTimeout,
+        busyRetryDelay: this.config.busyRetryDelay,
+      })) as RuntimeMetadataStore;
+    this.vectorStore = (options.vectorStore ||
+      new VexusVectorStore({
+        dimension: this.config.dimension,
+        storePath: this.config.storePath,
+        tagIndexCapacity: this.config.tagIndexCapacity,
+        indexSaveDelay: this.config.indexSaveDelay,
+        tagIndexSaveDelay: this.config.tagIndexSaveDelay,
+        persistTagIndex: this.config.persistTagIndex,
+      })) as RuntimeVectorStore;
+    this.embeddingProvider =
+      options.embeddingProvider ||
+      new OpenAIEmbeddingProvider({
+        apiUrl: this.config.apiUrl,
+        apiKey: this.config.apiKey,
+        model: this.config.model,
+        modelSig: this.config.modelSig,
+        dimension: this.config.dimension,
+        maxBatchItems: this.config.maxBatchItems,
+        maxToken: this.config.maxToken,
+        concurrency: this.config.concurrency,
+        fallbackModels: this.config.fallbackModels,
+      });
 
     // 3. Shared pipeline context (DI container for every stage).
     this.ctx = new PipelineContext({
@@ -165,7 +177,7 @@ class MemoryEngine {
       embeddingProvider: this.embeddingProvider,
       vectorStore: this.vectorStore,
       metadataStore: this.metadataStore,
-      ...(options.ctx || {})
+      ...(options.ctx || {}),
     });
 
     // 4. Pipelines.
@@ -179,6 +191,7 @@ class MemoryEngine {
     this._closed = false;
     this.ragParams = {};
     this._lastIndexedAt = null;
+    this.lastReconciliation = null;
   }
 
   /**
@@ -194,18 +207,34 @@ class MemoryEngine {
       const { ragParamsPath, ragParams: ragOverrides } = this.options;
       this.ragParams = await loadRagParams({
         path: ragParamsPath,
-        overrides: ragOverrides
+        overrides: ragOverrides,
       });
 
       this._applyRagParamsToConfig(this.ragParams);
-      if (this.options.onReady && typeof this.options.onReady === 'function') {
+      this.lastReconciliation = await this.reconcile();
+      if (this.options.onReady && typeof this.options.onReady === "function") {
         await this.options.onReady(this);
       }
       this.initialized = true;
     })();
 
-    await this._initPromise;
+    try {
+      await this._initPromise;
+    } catch (error) {
+      this._initPromise = null;
+      this.initialized = false;
+      throw error;
+    }
     return undefined;
+  }
+
+  /** Rebuild derived vector indices from the metadata/content authority. */
+  async reconcile(): Promise<ReconciliationReport> {
+    return reconcileVectorIndexes({
+      metadataStore: this.metadataStore,
+      vectorStore: this.vectorStore,
+      dimension: this.config.dimension,
+    });
   }
 
   /**
@@ -258,7 +287,9 @@ class MemoryEngine {
    *              {path:string, ...}|undefined} files
    * @returns {Promise<Array<object>>} per-file ingest envelopes
    */
-  async flushBatch(files?: FileInput | readonly FileInput[] | string): Promise<IngestEnvelope[]> {
+  async flushBatch(
+    files?: FileInput | readonly FileInput[] | string,
+  ): Promise<IngestEnvelope[]> {
     const entries = normalizeFiles(files);
     const results: IngestEnvelope[] = [];
     for (const entry of entries) {
@@ -268,9 +299,9 @@ class MemoryEngine {
           relPath: entry.relPath,
           content: entry.content,
           mtime: entry.mtime,
-          size: entry.size
+          size: entry.size,
         },
-        this.ctx
+        this.ctx,
       );
       results.push(result as IngestEnvelope);
       if (result && !result.skipped && result.fileId != null) {
@@ -278,6 +309,97 @@ class MemoryEngine {
       }
     }
     return results;
+  }
+
+  /**
+   * Ingest one host-neutral logical document. The filesystem adapter uses
+   * flushBatch(), while this method is the core content-centered contract.
+   */
+  async ingest(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+    if (!document || typeof document !== "object") {
+      throw new MemoriaError("ingestion", "A logical document object is required.");
+    }
+    const documentId = normalizeDocumentId(document.id);
+    if (typeof document.content !== "string") {
+      throw new MemoriaError(
+        "ingestion",
+        `Logical document "${documentId}" content must be a string.`,
+      );
+    }
+
+    const revision =
+      document.revision === undefined ? undefined : String(document.revision);
+    const storagePath = logicalDocumentPath(documentId);
+    const mtime = Number.isFinite(document.updatedAt) ? Number(document.updatedAt) : 0;
+    const size = Buffer.byteLength(document.content, "utf8");
+    const result = (await this.ingestPipeline.run(
+      {
+        path: storagePath,
+        relPath: storagePath,
+        content: document.content,
+        mtime,
+        size,
+        diaryName: "Logical",
+        documentId,
+        revision,
+        documentSource: document.source,
+        documentMetadata: document.metadata,
+      },
+      this.ctx,
+    )) as IngestEnvelope;
+
+    if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
+    return {
+      ...result,
+      documentId,
+      revision,
+      source: document.source,
+      metadata: document.metadata,
+      documentSource: document.source,
+      documentMetadata: document.metadata,
+    };
+  }
+
+  /** Explicit replacement spelling for callers that do not use revisioned ingest. */
+  upsert(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+    return this.ingest(document);
+  }
+
+  async ingestBatch(
+    documents: readonly MemoryDocumentInput[],
+  ): Promise<MemoryDocumentIngestResult[]> {
+    if (!Array.isArray(documents)) {
+      throw new MemoriaError("ingestion", "Logical document batch must be an array.");
+    }
+    const results: MemoryDocumentIngestResult[] = [];
+    for (const document of documents) results.push(await this.ingest(document));
+    return results;
+  }
+
+  /** Remove a logical document by stable identity, without requiring its source path. */
+  async remove(documentId: string): Promise<MemoryDocumentDeleteResult> {
+    const normalizedId = normalizeDocumentId(documentId);
+    const storagePath = logicalDocumentPath(normalizedId);
+    let row = null;
+    if (typeof this.metadataStore.getFileByDocumentId === "function") {
+      try {
+        row = await this.metadataStore.getFileByDocumentId(normalizedId);
+      } catch (_error) {
+        // Older injected metadata stores may not implement the optional lookup.
+      }
+    }
+    if (!row) row = await this.metadataStore.getFileByPath(storagePath);
+
+    const result = (await this.deletePipeline.run(
+      {
+        path: row?.path || storagePath,
+        relPath: row?.path || storagePath,
+        documentId: normalizedId,
+        diaryName: row?.diary_name || row?.diaryName || "Logical",
+      },
+      this.ctx,
+    )) as DeleteEnvelope;
+    return { ...result, documentId: normalizedId };
   }
 
   /**
@@ -298,11 +420,14 @@ class MemoryEngine {
    * @param {object} [options]    - per-call options (topK, diaryNames, ...)
    * @returns {Promise<object>}   - { ..., results, resultCount }
    */
-  async search(query: string | PipelineData, options: UnknownRecord = {}): Promise<SearchEnvelope> {
+  async search(
+    query: string | PipelineData,
+    options: UnknownRecord = {},
+  ): Promise<SearchEnvelope> {
     const input: PipelineData = {
       ...(isRecord(query) ? query : { query }),
     };
-    if (!input.query && typeof query === 'string') input.query = query;
+    if (!input.query && typeof query === "string") input.query = query;
     input.options = { ...options, ...(input.options || {}) };
     return this.searchPipeline.run(input, this.ctx) as Promise<SearchEnvelope>;
   }
@@ -313,10 +438,15 @@ class MemoryEngine {
    * @returns {Promise<object>} delete envelope { deleted, fileId, removedChunkIds, ... }
    */
   async handleDelete(input: string | FileInput): Promise<DeleteEnvelope> {
-    const source: FileInput = typeof input === 'string' ? { path: input } : input;
+    const source: FileInput = typeof input === "string" ? { path: input } : input;
     return this.deletePipeline.run(
-      { path: source.path, relPath: source.relPath },
-      this.ctx
+      {
+        path: source.path,
+        relPath: source.relPath,
+        documentId: source.documentId,
+        diaryName: source.diaryName,
+      },
+      this.ctx,
     ) as Promise<DeleteEnvelope>;
   }
 
@@ -344,11 +474,18 @@ class MemoryEngine {
     const files = await this._countFiles();
     const lastIndexed = await this._resolveLastIndexed();
 
-    let vectorStats: EngineStats['vectorStats'] = { totalVectors: 0, indices: 0, dimension: this.config.dimension };
-    if (typeof this.vectorStore.getIndexStats === 'function') {
+    let vectorStats: EngineStats["vectorStats"] = {
+      totalVectors: 0,
+      indices: 0,
+      dimension: this.config.dimension,
+    };
+    if (typeof this.vectorStore.getIndexStats === "function") {
       let total = 0;
       let count = 0;
-      if (this.vectorStore.indices instanceof Map && typeof this.vectorStore.getIndexStats === 'function') {
+      if (
+        this.vectorStore.indices instanceof Map &&
+        typeof this.vectorStore.getIndexStats === "function"
+      ) {
         for (const name of this.vectorStore.indices.keys()) {
           const stats = await this.vectorStore.getIndexStats(name);
           total += Number(stats && stats.size) || 0;
@@ -358,12 +495,15 @@ class MemoryEngine {
       vectorStats = { ...vectorStats, totalVectors: total, indices: count };
     }
 
-    let healthy: EngineStats['healthy'] = { healthy: true, issues: [] };
-    if (typeof store.healthCheck === 'function') {
+    let healthy: EngineStats["healthy"] = { healthy: true, issues: [] };
+    if (typeof store.healthCheck === "function") {
       try {
         healthy = await store.healthCheck();
       } catch (e) {
-        healthy = { healthy: false, issues: [e instanceof Error ? e.message : String(e)] };
+        healthy = {
+          healthy: false,
+          issues: [e instanceof Error ? e.message : String(e)],
+        };
       }
     }
 
@@ -375,7 +515,7 @@ class MemoryEngine {
       lastIndexed: lastIndexed,
       vectorStats,
       healthy,
-      initialized: this.initialized
+      initialized: this.initialized,
     };
   }
 
@@ -386,9 +526,9 @@ class MemoryEngine {
    */
   async _countFiles() {
     const store = this.metadataStore;
-    if (store.db && typeof store.db.prepare === 'function') {
+    if (store.db && typeof store.db.prepare === "function") {
       try {
-        const rowValue = store.db.prepare('SELECT COUNT(*) AS c FROM files').get();
+        const rowValue = store.db.prepare("SELECT COUNT(*) AS c FROM files").get();
         const row = isRecord(rowValue) ? rowValue : null;
         return Number(row?.c) || 0;
       } catch (e) {
@@ -396,19 +536,21 @@ class MemoryEngine {
       }
     }
     const chunks = await store.getAllChunks();
-    return new Set(chunks.map(c => Number(c.fileId)).filter(Number.isFinite)).size;
+    return new Set(chunks.map((c) => Number(c.fileId)).filter(Number.isFinite)).size;
   }
 
-/**
+  /**
    * Latest ingest time (wall-clock of the most recently flushed file,
    * or the db-side MAX(files.updated_at) when raw SQLite is available).
    * @private
    */
   async _resolveLastIndexed() {
     const store = this.metadataStore;
-    if (store.db && typeof store.db.prepare === 'function') {
+    if (store.db && typeof store.db.prepare === "function") {
       try {
-        const rowValue = store.db.prepare('SELECT MAX(updated_at) AS m FROM files').get();
+        const rowValue = store.db
+          .prepare("SELECT MAX(updated_at) AS m FROM files")
+          .get();
         const row = isRecord(rowValue) ? rowValue : null;
         if (row && row.m != null) return Number(row.m) * 1000;
       } catch (e) {
@@ -426,15 +568,17 @@ class MemoryEngine {
   async close() {
     if (this._closed) return;
     this._closed = true;
-    if (this.vectorStore && typeof this.vectorStore.flushPendingSaves === 'function') {
+    if (this.vectorStore && typeof this.vectorStore.flushPendingSaves === "function") {
       try {
         this.vectorStore.flushPendingSaves();
       } catch (e) {
         // Index persistence failures must not block shutdown.
-        console.error(`[MemoryEngine] flush pending saves failed: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(
+          `[MemoryEngine] flush pending saves failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
-    if (this.metadataStore && typeof this.metadataStore.close === 'function') {
+    if (this.metadataStore && typeof this.metadataStore.close === "function") {
       this.metadataStore.close();
     }
   }

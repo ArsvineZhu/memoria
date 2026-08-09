@@ -1,7 +1,12 @@
+import type {
+  ChunkCandidate,
+  ExpansionStats,
+  PipelineContextLike,
+  PipelineData,
+} from "../../types.js";
 
-import type { ChunkCandidate, ExpansionStats, PipelineContextLike, PipelineData } from '../../types';
-
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
+import { at } from "../../utils/numerical.js";
 
 /**
  * Postprocess stage: expands final results with related same-file chunks.
@@ -25,26 +30,25 @@ import Stage = require('../../core/stage');
 class ExpanderStage extends Stage {
   constructor() {
     super();
-    this.name = 'expander';
+    this.name = "expander";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'mergedCandidates' | 'expansionStats'> & {
-    mergedCandidates: ChunkCandidate[];
-    expansionStats?: ExpansionStats;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "mergedCandidates" | "expansionStats"> & {
+      mergedCandidates: ChunkCandidate[];
+      expansionStats?: ExpansionStats;
+    }
+  > {
     const info = input || {};
     const config = ctx.config || {};
     const candidates = Array.isArray(info.mergedCandidates)
       ? info.mergedCandidates
       : [];
 
-    const expandCount = Math.max(
-      0,
-      Math.round(Number(config.expandCount) || 2)
-    );
+    const expandCount = Math.max(0, Math.round(Number(config.expandCount) || 2));
     const baseBoost = Number(config.expansionBoost);
 
     // Default boost mirrors the weight used by associate-style expansion of
@@ -52,10 +56,10 @@ class ExpanderStage extends Stage {
     const expansionBoost = Number.isFinite(baseBoost) ? baseBoost : 0.5;
 
     if (
-      config.expansionEnabled !== true
-      || typeof ctx.metadataStore?.getFileByChunkId !== 'function'
-      || typeof ctx.metadataStore?.getChunksByFileId !== 'function'
-      || candidates.length === 0
+      config.expansionEnabled !== true ||
+      typeof ctx.metadataStore?.getFileByChunkId !== "function" ||
+      typeof ctx.metadataStore?.getChunksByFileId !== "function" ||
+      candidates.length === 0
     ) {
       return { ...info, mergedCandidates: candidates, expansionStats: { added: 0 } };
     }
@@ -70,7 +74,7 @@ class ExpanderStage extends Stage {
     let added = 0;
     const seedCount = Math.min(expandCount, candidates.length);
     for (let index = 0; index < seedCount; index += 1) {
-      const seed = candidates[index];
+      const seed = at(candidates, index, "expansion candidates");
       const seedChunkId = Number(seed && seed.chunkId);
       if (!Number.isFinite(seedChunkId)) continue;
 
@@ -90,30 +94,28 @@ class ExpanderStage extends Stage {
       }
       if (!Array.isArray(siblings)) continue;
 
-for (const sibling of siblings) {
+      for (const sibling of siblings) {
         const siblingId = Number(sibling && sibling.id);
         if (!Number.isFinite(siblingId) || presentIds.has(siblingId)) continue;
         result.push({
           chunkId: siblingId,
           score: (seed.score || 0) * expansionBoost,
-          source: 'expansion',
-          expansionOf: seedChunkId
+          source: "expansion",
+          expansionOf: seedChunkId,
         });
         presentIds.add(siblingId);
         added += 1;
       }
     }
 
-    result.sort(
-      (a, b) => (b.score - a.score) || (Number(a.chunkId) - Number(b.chunkId))
-    );
+    result.sort((a, b) => b.score - a.score || Number(a.chunkId) - Number(b.chunkId));
 
     return {
       ...info,
       mergedCandidates: result,
-      expansionStats: { added }
+      expansionStats: { added },
     };
   }
 }
 
-export = ExpanderStage;
+export default ExpanderStage;

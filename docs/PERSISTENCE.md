@@ -1,8 +1,9 @@
 # PERSISTENCE — 持久化与重启恢复
 
 > 本文说明 memoria 的存储架构与重启恢复机制：元数据（SQLite，better-sqlite3）
-> 与向量索引（Rust N-API `vexus-lite` 的 `.usearch` 文件）双写落盘、flush
-> 时序（`flushBatch` 双写路径 / `indexSaveDelay` / `flushPendingSaves`）、
+> 与向量索引（Rust N-API `vexus-lite` 的 `.usearch` 文件）双写落盘、逻辑文档
+> upsert、SQLite 权威重建、flush 时序（`flushBatch` / `indexSaveDelay` /
+> `flushPendingSaves`）、
 > 懒加载磁盘读回（`getOrCreateIndex`）、Rust 侧的原子发布与 Windows 权限
 > 修复历史、真实页面布局示例与清理注意事项。所有行为以
 > `src/engine.ts`、`src/providers/*`、`src/stages/ingestion/*` 与
@@ -11,7 +12,7 @@
 ## 1. 存储架构总览
 
 ```
-MemoryEngine（src/engine.ts:64；发布产物为 `dist/src/engine.js`）
+MemoryEngine（src/engine.ts；发布产物为 `dist/engine.js`）
 ├─ metadataStore: SqliteMetadataStore   （better-sqlite3，五表）
 │    dbPath 默认 ':memory:'（default-config.ts:26）；传参后落盘 memory.sqlite
 └─ vectorStore: VexusVectorStore        （Rust usearch 索引）
@@ -30,13 +31,13 @@ id ↔ 内容的映射关系完全由 SQLite 侧负责（`VexusIndex.load` 的 m
 
 建表 SQL 见 `SCHEMA_SQL`（:12–52），共五张表：
 
-| 表 | 关键列 | 说明 |
-|----|--------|------|
-| `files` | `path UNIQUE`、`diary_name`、`checksum`、`mtime`、`size`、`updated_at` | 文件元数据；`path` 为 posix 相对路径（见 TROUBLESHOOTING 空结果一节） |
-| `chunks` | `file_id`、`chunk_index`、`content`、`vector BLOB` | 分块内容 + 向量 BLOB（`encodeVectorBlob` 原始 f32 字节，长度 = dim×4，vector-codec.ts:27） |
-| `tags` | `name UNIQUE`、`vector BLOB` | 标签向量 |
-| `file_tags` | `(file_id, tag_id)` 复合主键、`position` | 文件-标签关联，`position` 保持输入顺序（:262–279） |
-| `kv_store` | `key` 主键、`value`、`vector` | 检查点等键值 |
+| 表          | 关键列                                                                                                                            | 说明                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `files`     | `path UNIQUE`、`diary_name`、`checksum`、`mtime`、`size`、`updated_at`、`document_id`、`revision`、`source_json`、`metadata_json` | 文件或逻辑文档元数据；逻辑文档使用确定性内部路径，source/metadata 为 JSON                  |
+| `chunks`    | `file_id`、`chunk_index`、`content`、`vector BLOB`                                                                                | 分块内容 + 向量 BLOB（`encodeVectorBlob` 原始 f32 字节，长度 = dim×4，vector-codec.ts:27） |
+| `tags`      | `name UNIQUE`、`vector BLOB`                                                                                                      | 标签向量                                                                                   |
+| `file_tags` | `(file_id, tag_id)` 复合主键、`position`                                                                                          | 文件-标签关联，`position` 保持输入顺序（:262–279）                                         |
+| `kv_store`  | `key` 主键、`value`、`vector`                                                                                                     | 检查点等键值                                                                               |
 
 连接 PRAGMA（:92–97）：`journal_mode = WAL`、`synchronous = NORMAL`、
 `foreign_keys = ON`、`busy_timeout = <busyTimeout 默认 10000ms>`。
@@ -67,10 +68,10 @@ WAL 模式意味着 `.sqlite-wal` / `.sqlite-shm` 伴生文件与主库同目录
   `embeddingProvider.getDimension()`（见 TROUBLESHOOTING）。
 - **加载开关**：`indexLoadEnabled`（默认 true，:35）为 false 时跳过磁盘读回。
 
-## 4. flush 时序：双写路径
+## 4. 摄入时序：SQLite 先写，向量后写
 
-`flushBatch(files)`（engine.ts:194）逐文件跑 IngestPipeline，两个写入
-stage 依次落库：
+`ingest(document)`、`ingestBatch(documents)` 是内容中心入口；`flushBatch(files)`
+保留文件快照兼容面。两者都逐条跑 IngestPipeline，两个写入 stage 依次落库：
 
 ```
 flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage（Rust 写）
@@ -89,10 +90,10 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
    每个索引名只保留一个定时器（coalesce，后续调用合并），到期执行
    `index.save(filePath)`：
 
-   | 索引 | 延迟默认值（类内 :32–33） | 引擎配置默认（default-config.ts:41–42） |
-   |------|---------------------------|------------------------------------------|
-   | `global_tags` | `tagIndexSaveDelay` = 10000ms | 300000ms |
-   | 其他（diary 索引） | `indexSaveDelay` = 5000ms | 120000ms |
+   | 索引               | 延迟默认值（类内 :32–33）     | 引擎配置默认（default-config.ts:41–42） |
+   | ------------------ | ----------------------------- | --------------------------------------- |
+   | `global_tags`      | `tagIndexSaveDelay` = 10000ms | 300000ms                                |
+   | 其他（diary 索引） | `indexSaveDelay` = 5000ms     | 120000ms                                |
 
    `persistTagIndex` 为历史兼容构造项（构造保留，:34），当前实现不按它
    门控调度——`global_tags` 同样进入定时保存。
@@ -106,22 +107,38 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
 生产停机挂钩：`knowledge-base-adapter.shutdown()` = `engine.close()`
 （compat/knowledge-base-adapter.ts:113–115）。
 
-## 5. 懒加载恢复（getOrCreateIndex）
+## 5. 权威重建与恢复一致性
+
+`MemoryEngine.initialize()` 在引擎变为 ready 前调用 `reconcile()`。
+`src/reconciliation.ts` 只读取 SQLite 的 chunks/tags 与 BLOB 向量，校验维度后通过
+`VexusVectorStore.replaceIndex()` 重建命名索引；因此磁盘索引丢失、旧索引残留或
+vector write 在 metadata commit 后失败，都能在下次启动时恢复。重建报告包含
+`metadataChunks`、`usableVectors`、`skippedVectors` 与 `rebuiltIndexes`。损坏或维度
+不符的 BLOB 会被跳过并记录，而不会伪造可搜索向量。
+
+逻辑文档以 `document_id` 唯一识别；`revision` 相同且内容摘要不变时摄入幂等，
+revision 或 content 改变时替换同一 files 行及其 chunks。`remove(documentId)` 不依赖
+原始文件路径。
+
+## 6. 懒加载恢复（getOrCreateIndex）
 
 `getOrCreateIndex(indexName)`（vexus-vector-store.ts:51–77）：
 内存 Map 命中直接返回；未命中且 `indexLoadEnabled && _indexFileExists`
 时调用 `VexusIndex.load(path, null, dimension, cap)` 从磁盘读回
 （:57–64）；读回失败（文件损坏/版本不符）打印
 `Failed to load persisted index ... creating fresh one instead`
-并**静默新建空索引**（:65–73）；文件不存在则新建。因此：
+并**静默新建空索引**（:65–73）；文件不存在则新建。因此它是启动重建前的
+优化路径，不是权威数据源：
 
 - 正常重启：进程内存清空，但 `storePath` 下的 `index_*.usearch` 仍在 →
   首次 `add`/`search` 自动读回，无需显式 `loadIndex`。
 - 测试锚点：`tests/providers/test-vexus-vector-store.test.ts:304`
   （`getOrCreateIndex lazily loads a persisted index from disk`）与
-  :331–334（同 storePath 新实例自动加载）。
+  :331–334（同 storePath 新实例自动加载）。启动时的权威路径由上一节的
+  `reconcile()` 负责；即使 `.usearch` 全部删除，只要 SQLite 和 chunk vector BLOB
+  仍在，索引也会被重建。
 
-## 6. Rust 侧原子落盘与 Windows 修复历史（rust-vexus-lite/src/lib.rs）
+## 7. Rust 侧原子落盘与 Windows 修复历史（rust-vexus-lite/src/lib.rs）
 
 `VexusIndex.save(path)`（lib.rs:345–381）三步发布：
 

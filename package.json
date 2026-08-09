@@ -2,13 +2,30 @@
   "name": "memoria",
   "version": "0.1.0",
   "description": "AI memory system with TagMemo wave algorithm, RiverMemo topology, EPA semantic analysis, and residual pyramid",
-  "type": "commonjs",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "main": "./dist/index.cjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./adapters/filesystem": {
+      "types": "./dist/adapters/filesystem-ingestion-adapter.d.ts",
+      "import": "./dist/adapters/filesystem-ingestion-adapter.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js"
+    }
+  },
   "files": [
     "dist",
     "rust-vexus-lite/index.js",
     "rust-vexus-lite/index.d.ts",
+    "rust-vexus-lite/package.json",
     "rust-vexus-lite/*.node",
     "README.md",
     "LICENSE",
@@ -16,13 +33,17 @@
   ],
   "license": "MIT",
   "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "oxlint src tests examples scripts --type-aware --deny-warnings",
     "build": "tsc -p tsconfig.build.json",
     "build:test": "tsc -p tsconfig.test.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "typecheck:public": "npm run build && tsc -p tsconfig.public.json --noEmit",
-    "test": "npm run build && npm run build:test && node --test dist-test/tests/algorithms/*.test.js dist-test/tests/algorithms/topology/*.test.js dist-test/tests/core/*.test.js dist-test/tests/engine/*.test.js dist-test/tests/integration/*.test.js dist-test/tests/pipelines/*.test.js dist-test/tests/providers/*.test.js dist-test/tests/stages/*.test.js dist-test/tests/tdb/*.test.js dist-test/tests/utils/*.test.js",
-    "test:native": "npm run build:test && node --test dist-test/tests/core/test-load-native.test.js dist-test/tests/providers/test-vexus-vector-store.test.js",
-    "verify:public": "npm run typecheck:public && npm run test:native && npm pack --dry-run"
+    "typecheck:public": "corepack pnpm build && tsc -p tsconfig.public.json --noEmit",
+    "test": "corepack pnpm build && corepack pnpm build:test && node --test dist-test/tests/algorithms/*.test.js dist-test/tests/algorithms/topology/*.test.js dist-test/tests/adapters/*.test.js dist-test/tests/core/*.test.js dist-test/tests/engine/*.test.js dist-test/tests/integration/*.test.js dist-test/tests/pipelines/*.test.js dist-test/tests/providers/*.test.js dist-test/tests/stages/*.test.js dist-test/tests/tdb/*.test.js dist-test/tests/utils/*.test.js dist-test/tests/consumer/*.test.js",
+    "test:native": "corepack pnpm build:test && node --test dist-test/tests/core/test-load-native.test.js dist-test/tests/providers/test-vexus-vector-store.test.js",
+    "verify:public": "corepack pnpm typecheck:public && corepack pnpm test:native",
+    "verify:pack": "corepack pnpm build && node scripts/verify-packed-consumer.mjs"
   },
   "dependencies": {
     "@dqbd/tiktoken": "^1.0.22",
@@ -30,11 +51,14 @@
     "chokidar": "^3.5.3"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.18.1 <25"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.13.3",
-    "typescript": "6.0.3"
+    "oxlint": "1.77.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2"
   }
 }

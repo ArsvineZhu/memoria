@@ -1,4 +1,3 @@
-
 import type {
   ChunkCandidate,
   MemoryConfigOverrides,
@@ -6,11 +5,11 @@ import type {
   PipelineContextLike,
   PipelineData,
   VectorReshapeData,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import { dotProduct, magnitude } from '../../algorithms/gram-schmidt';
-import { decodeVectorBlob } from '../../utils/vector-codec';
+import Stage from "../../core/stage.js";
+import { dotProduct, magnitude } from "../../algorithms/gram-schmidt.js";
+import { decodeVectorBlob } from "../../utils/vector-codec.js";
 
 /**
  * VectorReshaperStage — post-retrieval cosine re-ranking.
@@ -38,17 +37,19 @@ import { decodeVectorBlob } from '../../utils/vector-codec';
 class VectorReshaperStage extends Stage {
   constructor() {
     super();
-    this.name = 'vectorReshaper';
+    this.name = "vectorReshaper";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'mergedCandidates' | 'vectorReshape'> & {
-    mergedCandidates: ChunkCandidate[];
-    vectorReshape?: VectorReshapeData;
-    vectorReshapeSkipped?: boolean;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "mergedCandidates" | "vectorReshape"> & {
+      mergedCandidates: ChunkCandidate[];
+      vectorReshape?: VectorReshapeData;
+      vectorReshapeSkipped?: boolean;
+    }
+  > {
     const info = input || {};
     const config = ctx.config || {};
     const candidates = Array.isArray(info.mergedCandidates)
@@ -65,7 +66,10 @@ class VectorReshaperStage extends Stage {
       return {
         ...info,
         mergedCandidates: candidates,
-        vectorReshape: { enabled: true, traced: { checked: 0, matched: 0, skipped: 0 } }
+        vectorReshape: {
+          enabled: true,
+          traced: { checked: 0, matched: 0, skipped: 0 },
+        },
       };
     }
 
@@ -86,15 +90,14 @@ class VectorReshaperStage extends Stage {
       try {
         const row = await metadataStore.getChunkById(chunkId);
         if (row && row.vector != null) {
-          const vector = decodeVectorBlob(
-            row.vector, dimension, `chunk:${chunkId}`
-          );
+          const vector = decodeVectorBlob(row.vector, dimension, `chunk:${chunkId}`);
           if (vector) {
             const queryMag = magnitude(queryVector);
             const chunkMag = magnitude(vector);
-            embeddingSim = queryMag > 1e-9 && chunkMag > 1e-9
-              ? dotProduct(queryVector, vector) / (queryMag * chunkMag)
-              : 0;
+            embeddingSim =
+              queryMag > 1e-9 && chunkMag > 1e-9
+                ? dotProduct(queryVector, vector) / (queryMag * chunkMag)
+                : 0;
             traced.matched += 1;
           } else {
             traced.skipped += 1;
@@ -110,26 +113,31 @@ class VectorReshaperStage extends Stage {
 
     reshaped.sort(
       (a, b) =>
-        (b.embeddingSim - a.embeddingSim)
-        || (b.score - a.score)
-        || (Number(a.chunkId) - Number(b.chunkId))
+        b.embeddingSim - a.embeddingSim ||
+        b.score - a.score ||
+        Number(a.chunkId) - Number(b.chunkId),
     );
 
     return {
       ...info,
       mergedCandidates: reshaped,
-      vectorReshape: { enabled: true, traced }
+      vectorReshape: { enabled: true, traced },
     };
   }
 
-  _resolveDimension(config: MemoryConfigOverrides, queryVector: EmbeddingVector): number {
+  _resolveDimension(
+    config: MemoryConfigOverrides,
+    queryVector: EmbeddingVector,
+  ): number {
     if (config.dimension && Number.isFinite(Number(config.dimension))) {
       return Number(config.dimension);
     }
     return queryVector instanceof Float32Array
       ? queryVector.length
-      : (queryVector && queryVector.length ? queryVector.length : 3072);
+      : queryVector && queryVector.length
+        ? queryVector.length
+        : 3072;
   }
 }
 
-export = VectorReshaperStage;
+export default VectorReshaperStage;

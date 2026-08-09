@@ -4,7 +4,5 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": [
-    "tests/types/public-api.test-d.ts"
-  ]
+  "include": ["tests/types/public-api.test-d.ts"]
 }

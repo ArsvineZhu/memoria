@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * EPA (Embedding Projection Analysis) - Pure algorithm.
@@ -7,9 +7,15 @@
  * Optional Rust acceleration via config.vexusIndex.
  */
 
-import { clusterTags, computeWeightedPCA, selectBasisDimension } from './svd';
-import type { VexusIndex } from '../native/vexus-lite';
-import type { Vector, VectorLike } from '../types';
+import { clusterTags, computeWeightedPCA, selectBasisDimension } from "./svd.js";
+import type { VexusIndex } from "../native/vexus-lite.js";
+import type { Vector, VectorLike } from "../types.js";
+import {
+  at,
+  assertDimension,
+  assertFiniteVector,
+  assertVectorDimension,
+} from "../utils/numerical.js";
 
 interface EpaBasis {
   dimension?: number;
@@ -69,9 +75,12 @@ class EPA {
   constructor(basis: EpaBasis = {}, config: Partial<EpaConfig> = {}) {
     this.config = {
       dimension: config.dimension || 3072,
-      strictOrthogonalization: config.strictOrthogonalization !== undefined ? config.strictOrthogonalization : true,
+      strictOrthogonalization:
+        config.strictOrthogonalization !== undefined
+          ? config.strictOrthogonalization
+          : true,
       vexusIndex: config.vexusIndex || null,
-      ...config
+      ...config,
     };
 
     this.orthoBasis = basis.orthoBasis || null;
@@ -109,7 +118,15 @@ class EPA {
 
     const vec = vector instanceof Float32Array ? vector : new Float32Array(vector);
     const dim = vec.length;
+    assertFiniteVector(vec, "EPA vector");
     const K = this.orthoBasis.length;
+    if (!this.basisMean || this.basisMean.length !== dim) return this._emptyResult();
+    assertFiniteVector(this.basisMean, "EPA basis mean");
+    for (let k = 0; k < K; k++) {
+      const basis = at(this.orthoBasis, k, "orthoBasis");
+      assertVectorDimension(basis, dim, `orthoBasis[${k}]`);
+      assertFiniteVector(basis, `orthoBasis[${k}]`);
+    }
 
     let projections: Float32Array | null = null;
     let probabilities: Float32Array | null = null;
@@ -117,14 +134,23 @@ class EPA {
     let totalEnergy = 0;
 
     // Optional Rust acceleration
-    if (this.config.vexusIndex && typeof this.config.vexusIndex.project === 'function') {
+    if (
+      this.config.vexusIndex &&
+      typeof this.config.vexusIndex.project === "function"
+    ) {
       try {
         const flattenedBasis = this._getFlattenedBasis();
         const basisMean = this.basisMean;
-        if (!flattenedBasis || !basisMean || !this.config.vexusIndex) throw new Error('EPA basis is incomplete');
-        const result = this.config.vexusIndex.project(vec, flattenedBasis, basisMean, K);
-        projections = new Float32Array(result.projections.map(x => x));
-        probabilities = new Float32Array(result.probabilities.map(x => x));
+        if (!flattenedBasis || !basisMean || !this.config.vexusIndex)
+          throw new Error("EPA basis is incomplete");
+        const result = this.config.vexusIndex.project(
+          vec,
+          flattenedBasis,
+          basisMean,
+          K,
+        );
+        projections = new Float32Array(result.projections.map((x) => x));
+        probabilities = new Float32Array(result.probabilities.map((x) => x));
         entropy = result.entropy;
         totalEnergy = result.totalEnergy;
       } catch (e) {
@@ -137,15 +163,17 @@ class EPA {
       const centeredVec = new Float32Array(dim);
       const basisMean = this.basisMean;
       if (!basisMean) return this._emptyResult();
-      for (let i = 0; i < dim; i++) centeredVec[i] = vec[i] - basisMean[i];
+      for (let i = 0; i < dim; i++)
+        centeredVec[i] = at(vec, i, "vector") - at(basisMean, i, "basisMean");
 
       projections = new Float32Array(K);
       totalEnergy = 0;
 
       for (let k = 0; k < K; k++) {
         let dot = 0;
-        const basis = this.orthoBasis[k];
-        for (let d = 0; d < dim; d++) dot += centeredVec[d] * basis[d];
+        const basis = at(this.orthoBasis, k, "orthoBasis");
+        for (let d = 0; d < dim; d++)
+          dot += at(centeredVec, d, "centered vector") * at(basis, d, "basis vector");
         projections[k] = dot;
         totalEnergy += dot * dot;
       }
@@ -155,9 +183,11 @@ class EPA {
       probabilities = new Float32Array(K);
       entropy = 0;
       for (let k = 0; k < K; k++) {
-        probabilities[k] = (projections[k] * projections[k]) / totalEnergy;
-        if (probabilities[k] > 1e-9) {
-          entropy -= probabilities[k] * Math.log2(probabilities[k]);
+        const projection = at(projections, k, "projections");
+        const probability = (projection * projection) / totalEnergy;
+        probabilities[k] = probability;
+        if (probability > 1e-9) {
+          entropy -= probability * Math.log2(probability);
         }
       }
     }
@@ -167,12 +197,13 @@ class EPA {
     const dominantAxes: DominantAxis[] = [];
     const basisLabels = this.basisLabels || [];
     for (let k = 0; k < K; k++) {
-      if (probabilities[k] > 0.05) {
+      const probability = at(probabilities, k, "probabilities");
+      if (probability > 0.05) {
         dominantAxes.push({
           index: k,
           label: basisLabels[k],
-          energy: probabilities[k],
-          projection: projections[k]
+          energy: probability,
+          projection: at(projections, k, "projections"),
         });
       }
     }
@@ -183,7 +214,7 @@ class EPA {
       probabilities,
       entropy: normalizedEntropy,
       logicDepth: 1 - normalizedEntropy,
-      dominantAxes
+      dominantAxes,
     };
   }
 
@@ -210,10 +241,10 @@ class EPA {
       strength: number;
       balance: number;
     }> = [];
-    const topAxis = dominantAxes[0];
+    const topAxis = at(dominantAxes, 0, "dominantAxes");
 
     for (let i = 1; i < dominantAxes.length; i++) {
-      const secondaryAxis = dominantAxes[i];
+      const secondaryAxis = at(dominantAxes, i, "dominantAxes");
       const coActivation = Math.sqrt(topAxis.energy * secondaryAxis.energy);
 
       if (coActivation > 0.15) {
@@ -221,7 +252,9 @@ class EPA {
           from: topAxis.label,
           to: secondaryAxis.label,
           strength: coActivation,
-          balance: Math.min(topAxis.energy, secondaryAxis.energy) / Math.max(topAxis.energy, secondaryAxis.energy)
+          balance:
+            Math.min(topAxis.energy, secondaryAxis.energy) /
+            Math.max(topAxis.energy, secondaryAxis.energy),
         });
       }
     }
@@ -241,14 +274,18 @@ class EPA {
     tags: readonly { id: number; name: string; vector: Buffer | Vector }[],
     dim: number,
     options: EpaOptions = {},
-  ): Pick<Required<EpaBasis>, 'orthoBasis' | 'basisMean' | 'basisLabels' | 'basisEnergies'> {
+  ): Pick<
+    Required<EpaBasis>,
+    "orthoBasis" | "basisMean" | "basisLabels" | "basisEnergies"
+  > {
+    assertDimension(dim, "EPA dimension");
     const clusterCount = options.clusterCount || 64;
     const maxBasisDim = options.maxBasisDim || 64;
 
     const clusterData = clusterTags(tags, Math.min(tags.length, clusterCount), dim);
     const svdResult = computeWeightedPCA(clusterData, dim, {
       maxBasisDim,
-      strictOrthogonalization: options.strictOrthogonalization
+      strictOrthogonalization: options.strictOrthogonalization,
     });
 
     const { U, S, meanVector, labels } = svdResult;
@@ -258,7 +295,7 @@ class EPA {
       orthoBasis: U.slice(0, K),
       basisMean: meanVector,
       basisLabels: labels ? labels.slice(0, K) : clusterData.labels.slice(0, K),
-      basisEnergies: S.slice(0, K)
+      basisEnergies: S.slice(0, K),
     };
   }
 
@@ -268,10 +305,11 @@ class EPA {
       return null;
     }
     const K = this.orthoBasis.length;
-    const dim = this.orthoBasis[0].length;
+    const firstBasis = at(this.orthoBasis, 0, "orthoBasis");
+    const dim = firstBasis.length;
     const flattened = new Float32Array(K * dim);
     for (let k = 0; k < K; k++) {
-      flattened.set(this.orthoBasis[k], k * dim);
+      flattened.set(at(this.orthoBasis, k, "orthoBasis"), k * dim);
     }
     this._flattenedBasisCache = flattened;
     return flattened;
@@ -282,7 +320,13 @@ class EPA {
   }
 
   _emptyResult(): EpaProjectResult {
-    return { projections: null, probabilities: null, entropy: 1, logicDepth: 0, dominantAxes: [] };
+    return {
+      projections: null,
+      probabilities: null,
+      entropy: 1,
+      logicDepth: 0,
+      dominantAxes: [],
+    };
   }
 }
 

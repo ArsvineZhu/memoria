@@ -1,15 +1,15 @@
-'use strict';
+"use strict";
 
-import Pipeline = require('../core/pipeline');
-import Stage = require('../core/stage');
+import Pipeline from "../core/pipeline.js";
+import Stage from "../core/stage.js";
 
-import TDBQueryNormalizerStage = require('../stages/tdb/query-normalizer');
-import QueryEmbedderStage = require('../stages/retrieval/query-embedder');
-import VectorSearcherStage = require('../stages/retrieval/vector-searcher');
-import BM25SearcherStage = require('../stages/retrieval/bm25-searcher');
-import CandidateMergerStage = require('../stages/retrieval/candidate-merger');
-import TimeDecayStage = require('../stages/postprocess/time-decay');
-import TDBResultFormatterStage = require('../stages/tdb/result-formatter');
+import TDBQueryNormalizerStage from "../stages/tdb/query-normalizer.js";
+import QueryEmbedderStage from "../stages/retrieval/query-embedder.js";
+import VectorSearcherStage from "../stages/retrieval/vector-searcher.js";
+import BM25SearcherStage from "../stages/retrieval/bm25-searcher.js";
+import CandidateMergerStage from "../stages/retrieval/candidate-merger.js";
+import TimeDecayStage from "../stages/postprocess/time-decay.js";
+import TDBResultFormatterStage from "../stages/tdb/result-formatter.js";
 import type {
   MemoryConfig,
   MemoryConfigOverrides,
@@ -17,14 +17,14 @@ import type {
   PipelineData,
   TdbSearchEnvelope,
   TdbSearchOptions,
-} from '../types';
+} from "../types.js";
 
 /**
  * Default gates for the TDB search chain.
  */
 const DEFAULT_TDB_GATES = {
   tdbEnabled: true,
-  tdbTimeDecayEnabled: false
+  tdbTimeDecayEnabled: false,
 };
 
 /**
@@ -38,20 +38,23 @@ class TDBQueryEmbedderStage extends Stage {
   private _inner: QueryEmbedderStage;
   constructor() {
     super();
-    this.name = 'queryEmbedder';
+    this.name = "queryEmbedder";
     this._inner = new QueryEmbedderStage();
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<PipelineData> {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<PipelineData> {
     const info = input || {};
     if (Array.isArray(info.queries) && info.queries.length > 0) {
       return info;
     }
-    if (info.vector != null && typeof info.query === 'string') {
+    if (info.vector != null && typeof info.query === "string") {
       return {
         ...info,
         queries: [{ text: info.query, vector: info.vector }],
-        failed: false
+        failed: false,
       };
     }
     return this._inner.process(info, ctx);
@@ -90,7 +93,7 @@ class TDBSearchPipeline extends Pipeline {
   /**
    * @param {object} [config={}] - gates + retrieval knobs
    * @param {object} [options={}]
-   * @param {import('../core/stage').Stage[]} [options.stages] - explicit chain override
+   * @param {import('../core/stage.js').Stage[]} [options.stages] - explicit chain override
    */
   constructor(
     config: MemoryConfigOverrides = {},
@@ -101,22 +104,24 @@ class TDBSearchPipeline extends Pipeline {
       ? options.stages
       : TDBSearchPipeline.defaultStages(effectiveConfig);
     super(stages);
-    this.name = 'tdbSearchPipeline';
+    this.name = "tdbSearchPipeline";
     this.config = effectiveConfig;
   }
 
   /**
    * Build the default TDB search chain honoring the gates.
    * @param {object} config - effective gate config
-   * @returns {import('../core/stage').Stage[]}
+   * @returns {import('../core/stage.js').Stage[]}
    */
-  static defaultStages(config: MemoryConfigOverrides): Stage<PipelineData, PipelineData>[] {
+  static defaultStages(
+    config: MemoryConfigOverrides,
+  ): Stage<PipelineData, PipelineData>[] {
     const stages: Stage<PipelineData, PipelineData>[] = [
       new TDBQueryNormalizerStage(),
       new TDBQueryEmbedderStage(),
       new VectorSearcherStage(),
       new BM25SearcherStage(),
-      new CandidateMergerStage()
+      new CandidateMergerStage(),
     ];
     if (config.tdbTimeDecayEnabled === true) {
       stages.push(new TimeDecayStage());
@@ -131,10 +136,13 @@ class TDBSearchPipeline extends Pipeline {
    * minScore, …). The chain is inert when tdbEnabled is false.
    *
    * @param {{ query: string, vector?: Float32Array, options?: object }} input
-   * @param {import('../core/context').PipelineContext} ctx
+   * @param {import('../core/context.js').PipelineContext} ctx
    * @returns {Promise<object>} result envelope
    */
-  async run(input: PipelineData, ctx: PipelineContextLike): Promise<TdbSearchEnvelope> {
+  override async run(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<TdbSearchEnvelope> {
     const runConfig = { ...this.config, ...((ctx && ctx.config) || {}) };
     const runCtx: PipelineContextLike = { ...ctx, config: runConfig as MemoryConfig };
 
@@ -146,11 +154,16 @@ class TDBSearchPipeline extends Pipeline {
     }
 
     if (runConfig.tdbEnabled === false) {
-      return { ...payload, tdbDisabled: true, results: [], resultCount: 0 } as TdbSearchEnvelope;
+      return {
+        ...payload,
+        tdbDisabled: true,
+        results: [],
+        resultCount: 0,
+      } as TdbSearchEnvelope;
     }
 
     return super.run(payload, runCtx) as Promise<TdbSearchEnvelope>;
   }
 }
 
-export = TDBSearchPipeline;
+export default TDBSearchPipeline;

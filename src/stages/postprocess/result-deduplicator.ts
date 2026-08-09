@@ -1,8 +1,12 @@
+import type {
+  ChunkCandidate,
+  DedupeStats,
+  PipelineContextLike,
+  PipelineData,
+} from "../../types.js";
 
-import type { ChunkCandidate, DedupeStats, PipelineContextLike, PipelineData } from '../../types';
-
-import Stage = require('../../core/stage');
-import ResultDeduplicator = require('../../algorithms/result-deduplicator');
+import Stage from "../../core/stage.js";
+import ResultDeduplicator from "../../algorithms/result-deduplicator.js";
 
 /**
  * Postprocess stage: deduplicates merged candidates.
@@ -31,17 +35,19 @@ import ResultDeduplicator = require('../../algorithms/result-deduplicator');
 class ResultDeduplicatorStage extends Stage {
   constructor() {
     super();
-    this.name = 'resultDeduplicator';
+    this.name = "resultDeduplicator";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'mergedCandidates' | 'dedupeStats'> & {
-    mergedCandidates: ChunkCandidate[];
-    dedupeStats?: DedupeStats;
-    dedupeSkipped?: boolean;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "mergedCandidates" | "dedupeStats"> & {
+      mergedCandidates: ChunkCandidate[];
+      dedupeStats?: DedupeStats;
+      dedupeSkipped?: boolean;
+    }
+  > {
     const info = input || {};
     const config = ctx.config || {};
     const candidates = Array.isArray(info.mergedCandidates)
@@ -60,36 +66,32 @@ class ResultDeduplicatorStage extends Stage {
       maxResults: config.dedupeMaxResults,
       // Pipeline source names mapped onto the original priority table
       // (rag/vector = 50, time = 45, bm25 = 40, expansion/associate = 10).
-      sourcePriority: Object.assign({
-        rag: 50,
-        vector: 50,
-        hybrid: 50,
-        time: 45,
-        continuity: 35,
-        expansion: 10
-      }, config.sourcePriority || {})
+      sourcePriority: Object.assign(
+        {
+          rag: 50,
+          vector: 50,
+          hybrid: 50,
+          time: 45,
+          continuity: 35,
+          expansion: 10,
+        },
+        config.sourcePriority || {},
+      ),
     });
 
-    const queryVector = info.queryVector
-      || (Array.isArray(info.queries) && info.queries[0]
-        ? info.queries[0].vector
-        : null);
+    const queryVector =
+      info.queryVector ||
+      (Array.isArray(info.queries) && info.queries[0] ? info.queries[0].vector : null);
 
-    const deduped = await deduplicator.deduplicate(
-      candidates,
-      queryVector,
-      {
-        semantic: config.dedupeSemantic !== false,
-        semanticThreshold: config.semanticThreshold,
-        maxResults: config.dedupeMaxResults,
-        stage: 'postprocess'
-      }
-    ) as unknown as import('../../types').ChunkCandidate[];
+    const deduped = (await deduplicator.deduplicate(candidates, queryVector, {
+      semantic: config.dedupeSemantic !== false,
+      semanticThreshold: config.semanticThreshold,
+      maxResults: config.dedupeMaxResults,
+      stage: "postprocess",
+    })) as unknown as import("../../types.js").ChunkCandidate[];
 
     const keptIds = new Set(
-      deduped
-        .map(c => Number(c && c.chunkId))
-        .filter(id => Number.isFinite(id))
+      deduped.map((c) => Number(c && c.chunkId)).filter((id) => Number.isFinite(id)),
     );
     const duplicates = [];
     for (const candidate of candidates) {
@@ -105,10 +107,10 @@ class ResultDeduplicatorStage extends Stage {
       dedupeStats: {
         removed: candidates.length - deduped.length,
         kept: deduped.length,
-        duplicates
-      }
+        duplicates,
+      },
     };
   }
 }
 
-export = ResultDeduplicatorStage;
+export default ResultDeduplicatorStage;

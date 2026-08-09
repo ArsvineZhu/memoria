@@ -1,23 +1,23 @@
-
 import type {
   ChunkEntry,
   MetadataStoreContract,
   PipelineContextLike,
   PipelineData,
   TagEntry,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import { encodeVectorBlob } from '../../utils/vector-codec';
+import Stage from "../../core/stage.js";
+import { encodeVectorBlob } from "../../utils/vector-codec.js";
+import { serializeDocumentJson } from "../../utils/logical-document.js";
 
 // kv_store checkpoint keys (mirror of the legacy KnowledgeBaseManager
 // naming convention; only written when the pipeline opts in via config).
 const CHECKPOINT_KEYS = {
-  memoryCheckpoint: 'memory_checkpoint',
-  lastFileIndexed: 'last_file_indexed',
-  chunkCount: 'chunk_count',
-  tagCount: 'tag_count',
-  diaryCount: 'diary_count'
+  memoryCheckpoint: "memory_checkpoint",
+  lastFileIndexed: "last_file_indexed",
+  chunkCount: "chunk_count",
+  tagCount: "tag_count",
+  diaryCount: "diary_count",
 };
 
 /**
@@ -43,30 +43,36 @@ const CHECKPOINT_KEYS = {
 class MetadataWriterStage extends Stage {
   constructor() {
     super();
-    this.name = 'metadataWriter';
+    this.name = "metadataWriter";
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<Omit<PipelineData, 'fileId' | 'chunkIds' | 'tagIds' | 'removedChunkIds'> & {
-    fileId: number | null;
-    chunkIds: number[];
-    tagIds: number[];
-    removedChunkIds: number[];
-  }> {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<
+    Omit<PipelineData, "fileId" | "chunkIds" | "tagIds" | "removedChunkIds"> & {
+      fileId: number | null;
+      chunkIds: number[];
+      tagIds: number[];
+      removedChunkIds: number[];
+    }
+  > {
     const fileInfo = input || {};
     const metadataStore = ctx.metadataStore;
-    if (!metadataStore) throw new Error('MetadataWriterStage requires metadataStore');
+    if (!metadataStore) throw new Error("MetadataWriterStage requires metadataStore");
     const relPath = fileInfo.relPath;
     const diaryName = fileInfo.diaryName;
     const checksum = fileInfo.checksum;
     const mtime = fileInfo.mtime;
     const size = fileInfo.size;
     if (
-      typeof relPath !== 'string'
-      || typeof diaryName !== 'string'
-      || typeof checksum !== 'string'
-      || typeof mtime !== 'number'
-      || typeof size !== 'number'
-    ) throw new TypeError('MetadataWriterStage requires a complete file snapshot');
+      typeof relPath !== "string" ||
+      typeof diaryName !== "string" ||
+      typeof checksum !== "string" ||
+      typeof mtime !== "number" ||
+      typeof size !== "number"
+    )
+      throw new TypeError("MetadataWriterStage requires a complete file snapshot");
 
     // Caller-supplied skip: the file did not change, nothing to write.
     if (fileInfo.needsEmbedding === false) {
@@ -77,14 +83,16 @@ class MetadataWriterStage extends Stage {
         chunkIds: [],
         tagIds: [],
         removedChunkIds: [],
-        skipped: true
+        skipped: true,
       };
     }
 
     const chunkEntries: ChunkEntry[] = Array.isArray(fileInfo.chunkEntries)
-      ? fileInfo.chunkEntries : [];
+      ? fileInfo.chunkEntries
+      : [];
     const tagEntries: TagEntry[] = Array.isArray(fileInfo.tagEntries)
-      ? fileInfo.tagEntries : [];
+      ? fileInfo.tagEntries
+      : [];
     const tagNames: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
 
     // 1. Collect existing chunk ids BEFORE replacement so the vector index
@@ -93,7 +101,7 @@ class MetadataWriterStage extends Stage {
     const existing = await metadataStore.getFileByPath(relPath);
     if (existing) {
       const oldChunks = await metadataStore.getChunksByFileId(existing.id);
-      removedChunkIds = oldChunks.map(c => c.id);
+      removedChunkIds = oldChunks.map((c) => c.id);
     }
 
     // 2. Upsert the file row (provider refreshes updated_at).
@@ -102,22 +110,27 @@ class MetadataWriterStage extends Stage {
       diaryName,
       checksum,
       mtime,
-      size
+      size,
+      documentId: fileInfo.documentId,
+      revision: fileInfo.revision,
+      sourceJson: serializeDocumentJson(fileInfo.documentSource, "source"),
+      metadataJson: serializeDocumentJson(fileInfo.documentMetadata, "metadata"),
     });
-    if (fileId === null) throw new Error(`Unable to persist file metadata for ${relPath}`);
+    if (fileId === null)
+      throw new Error(`Unable to persist file metadata for ${relPath}`);
 
     // 3. Insert chunk rows; vectors are serialized to BLOB buffers.
-    const chunkRows = chunkEntries.map(entry => ({
+    const chunkRows = chunkEntries.map((entry) => ({
       chunkIndex: entry.chunkIndex,
       content: entry.content,
-      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector)
+      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
     }));
     const chunkIds = await metadataStore.insertChunks(fileId, chunkRows);
 
     // 4. Upsert tag rows; ids are aligned with tagEntries.
-    const tagRows = tagEntries.map(entry => ({
+    const tagRows = tagEntries.map((entry) => ({
       name: entry.name,
-      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector)
+      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
     }));
     const newTagIds = await metadataStore.upsertTags(tagRows);
     const tagIdByName = new Map<string, number>();
@@ -139,18 +152,14 @@ class MetadataWriterStage extends Stage {
     }
     await metadataStore.setFileTags(fileId, fileTagIds);
 
-    await this._maybeWriteCheckpoint(
-      fileInfo,
-      { chunkIds, tagIds: fileTagIds },
-      ctx
-    );
+    await this._maybeWriteCheckpoint(fileInfo, { chunkIds, tagIds: fileTagIds }, ctx);
 
     return {
       ...fileInfo,
       fileId,
       chunkIds,
       tagIds: newTagIds,
-      removedChunkIds
+      removedChunkIds,
     };
   }
 
@@ -161,13 +170,15 @@ class MetadataWriterStage extends Stage {
   ): Promise<void> {
     const config = ctx.config || {};
     const cp = config.checkpoint;
-    const explicitEnabled = cp === true || (typeof cp === 'object' && cp.enabled !== false);
+    const explicitEnabled =
+      cp === true || (typeof cp === "object" && cp.enabled !== false);
     const bareInterval = Number.isFinite(config.checkpointInterval);
     if (!explicitEnabled && !bareInterval) return;
 
-    const interval = typeof cp === 'object' && cp.interval != null
-      ? cp.interval
-      : (config.checkpointInterval || 1);
+    const interval =
+      typeof cp === "object" && cp.interval != null
+        ? cp.interval
+        : config.checkpointInterval || 1;
 
     ctx.checkpointState = ctx.checkpointState || { fileCount: 0, diaries: new Set() };
     const state = ctx.checkpointState;
@@ -178,11 +189,11 @@ class MetadataWriterStage extends Stage {
     const kv = ctx.metadataStore;
     if (!kv?.setKv) return;
     await kv.setKv(CHECKPOINT_KEYS.memoryCheckpoint, String(Date.now()));
-    await kv.setKv(CHECKPOINT_KEYS.lastFileIndexed, fileInfo.relPath || '');
+    await kv.setKv(CHECKPOINT_KEYS.lastFileIndexed, fileInfo.relPath || "");
     await kv.setKv(CHECKPOINT_KEYS.chunkCount, String(counts.chunkIds.length));
     await kv.setKv(CHECKPOINT_KEYS.tagCount, String(counts.tagIds.length));
     await kv.setKv(CHECKPOINT_KEYS.diaryCount, String(state.diaries.size));
   }
 }
 
-export = MetadataWriterStage;
+export default MetadataWriterStage;

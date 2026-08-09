@@ -1,7 +1,7 @@
-'use strict';
+"use strict";
 
-import path = require('path');
-import type { MemoryConfig, MemoryConfigOverrides } from '../types';
+import * as path from "node:path";
+import type { MemoryConfig, MemoryConfigOverrides } from "../types.js";
 
 /**
  * Default configuration for the memoria engine.
@@ -23,14 +23,14 @@ import type { MemoryConfig, MemoryConfigOverrides } from '../types';
 const DEFAULT_CONFIG: MemoryConfig = {
   // ── Paths ─────────────────────────────────────────────────────────
   rootPath: process.cwd(),
-  storePath: path.join(process.cwd(), 'VectorStore'),
-  dbPath: ':memory:',
+  storePath: path.join(process.cwd(), "VectorStore"),
+  dbPath: ":memory:",
 
   // ── Embedding provider ────────────────────────────────────────────
-  apiUrl: '',
-  apiKey: '',
-  model: 'google/gemini-embedding-001',
-  modelSig: 'gemini-embedding-2-preview',
+  apiUrl: "",
+  apiKey: "",
+  model: "google/gemini-embedding-001",
+  modelSig: "gemini-embedding-2-preview",
   fallbackModels: [],
   maxBatchItems: 32,
   maxToken: 8000,
@@ -79,7 +79,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
   indexNames: null,
   searchAllIndices: false,
   tagSearchEnabled: false,
-  tagIndexName: 'global_tags',
+  tagIndexName: "global_tags",
   tagK: 10,
   queryExpansion: 1,
   queryEpsilon: null,
@@ -111,7 +111,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
     bm25_tag: 40,
     continuity: 35,
     associate: 10,
-    unknown: 0
+    unknown: 0,
   },
   reranker: null,
   timeDecayHalfLife: 90,
@@ -158,7 +158,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
   transferMaxIterations: 200,
   solverMaxIterations: 200,
   solverTolerance: 1e-9,
-  supportMethod: 'mass_ratio',
+  supportMethod: "mass_ratio",
   localMassRatio: 0.8,
   transferMassRatio: 0.9,
   pruneByEnergy: false,
@@ -180,15 +180,15 @@ const DEFAULT_CONFIG: MemoryConfig = {
   //   TDB_KNOWLEDGE_EXCLUDE_FOLDERS      -> tdbExcludeFolders
   //   TDB_KNOWLEDGE_SYNC_MODE            -> tdbSyncMode
   tdbEnabled: false,
-  tdbRootPath: path.join(process.cwd(), 'knowledge'),
-  tdbStorePath: path.join(process.cwd(), 'VectorStoreTDB'),
-  tdbDbPath: ':memory:',
-  tdbModel: 'google/gemini-embedding-001',
+  tdbRootPath: path.join(process.cwd(), "knowledge"),
+  tdbStorePath: path.join(process.cwd(), "VectorStoreTDB"),
+  tdbDbPath: ":memory:",
+  tdbModel: "google/gemini-embedding-001",
   tdbDimension: 3072,
   tdbEmbeddingBatchSize: 16,
-  tdbExtensions: ['.md', '.txt', '.json', '.html'],
-  tdbExcludeFolders: ['TDBdocs'],
-  tdbSyncMode: 'normal',
+  tdbExtensions: [".md", ".txt", ".json", ".html"],
+  tdbExcludeFolders: ["TDBdocs"],
+  tdbSyncMode: "normal",
   tdbForceQuery: null,
 
   // TDB search knobs (TDBKnowledge.searchLibrary defaults).
@@ -196,7 +196,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
   tdbTopK: 10,
   tdbMinScore: 0.1,
   tdbExpandDepth: 1,
-  tdbTimeDecayEnabled: false
+  tdbTimeDecayEnabled: false,
 };
 
 /**
@@ -211,7 +211,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
  * @returns {object} a new config object
  */
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function mergeConfig(userConfig?: MemoryConfigOverrides | null): MemoryConfig {
@@ -221,10 +221,7 @@ function mergeConfig(userConfig?: MemoryConfigOverrides | null): MemoryConfig {
   for (const [key, value] of Object.entries(userConfig)) {
     if (value === undefined) continue;
     const base = DEFAULT_CONFIG[key];
-    if (
-      isRecord(value)
-      && isRecord(base)
-    ) {
+    if (isRecord(value) && isRecord(base)) {
       merged[key] = { ...base, ...value };
     } else {
       merged[key] = value;

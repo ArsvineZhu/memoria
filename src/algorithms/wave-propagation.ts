@@ -1,4 +1,5 @@
-import type { UnknownRecord } from '../types';
+import type { UnknownRecord } from "../types.js";
+import { at } from "../utils/numerical.js";
 
 type NeighborInput =
   | Map<number, number>
@@ -112,8 +113,8 @@ export interface WaveDiagnostics extends UnknownRecord {
  * edge sets are optional injected estimators with zero I/O.
  */
 
-const ALGORITHM_VERSION = 'tagmemo.wave-propagation-v9.1.soft-nonbacktracking-fir';
-const RIVER_SCHEMA = 'tagmemo-query-spike-river-v1';
+const ALGORITHM_VERSION = "tagmemo.wave-propagation-v9.1.soft-nonbacktracking-fir";
+const RIVER_SCHEMA = "tagmemo-query-spike-river-v1";
 
 function clamp01(value: unknown): number {
   return Math.max(0, Math.min(1, Number(value) || 0));
@@ -158,7 +159,9 @@ function computeFirWeights(gamma: number, maxSafeHops: number): number[] {
     sum += weight;
   }
   if (sum > 0) {
-    for (let hop = 0; hop < weights.length; hop++) weights[hop] /= sum;
+    for (let hop = 0; hop < weights.length; hop++) {
+      weights[hop] = at(weights, hop, "FIR weights") / sum;
+    }
   }
   return weights;
 }
@@ -175,7 +178,7 @@ function sourceEntries(sources: unknown): WaveSource[] {
         id,
         energy: Math.max(0, fin(raw.energy, 1)),
         isCore: raw.isCore === true,
-        name: raw.name || null
+        name: raw.name || null,
       });
     }
   }
@@ -197,22 +200,17 @@ function neighborMap(neighbors: NeighborInput): Map<number, number> {
   if (Array.isArray(neighbors)) {
     for (const entry of neighbors as readonly (readonly unknown[] | UnknownRecord)[]) {
       const row = Array.isArray(entry) ? entry : null;
-      const objectEntry = !row && entry && typeof entry === 'object'
-        ? entry as UnknownRecord
-        : null;
-      const id = entry != null
-        ? Number(objectEntry?.id ?? row?.[0])
-        : NaN;
-      const weight = entry != null
-        ? Number(objectEntry?.weight ?? row?.[1])
-        : NaN;
+      const objectEntry =
+        !row && entry && typeof entry === "object" ? (entry as UnknownRecord) : null;
+      const id = entry != null ? Number(objectEntry?.id ?? row?.[0]) : NaN;
+      const weight = entry != null ? Number(objectEntry?.weight ?? row?.[1]) : NaN;
       if (Number.isFinite(id) && Number.isFinite(weight)) {
         result.set(id, weight);
       }
     }
     return result;
   }
-  if (neighbors && typeof neighbors === 'object') {
+  if (neighbors && typeof neighbors === "object") {
     for (const [id, weight] of Object.entries(neighbors)) {
       const numericId = Number(id);
       const numericWeight = Number(weight);
@@ -231,7 +229,9 @@ function neighborMap(neighbors: NeighborInput): Map<number, number> {
  * @param {Array} edges
  * @returns {Map<number, Map<number, number>>}
  */
-function adjacencyFromEdges(edges: readonly EdgeInput[] | undefined): Map<number, Map<number, number>> {
+function adjacencyFromEdges(
+  edges: readonly EdgeInput[] | undefined,
+): Map<number, Map<number, number>> {
   const adjacency = new Map<number, Map<number, number>>();
   for (const edge of edges || []) {
     let fromId = NaN;
@@ -241,18 +241,19 @@ function adjacencyFromEdges(edges: readonly EdgeInput[] | undefined): Map<number
       fromId = Number(edge[0]);
       toId = Number(edge[1]);
       weight = Number(edge[2]);
-    } else if (edge && typeof edge === 'object') {
+    } else if (edge && typeof edge === "object") {
       const objectEdge = edge as UnknownRecord;
       fromId = Number(objectEdge.from ?? objectEdge.sourceId ?? objectEdge.source);
       toId = Number(objectEdge.to ?? objectEdge.targetId ?? objectEdge.target);
       weight = Number(objectEdge.weight ?? objectEdge.flow);
     }
     if (
-      !Number.isFinite(fromId)
-      || !Number.isFinite(toId)
-      || !Number.isFinite(weight)
-      || weight <= 0
-    ) continue;
+      !Number.isFinite(fromId) ||
+      !Number.isFinite(toId) ||
+      !Number.isFinite(weight) ||
+      weight <= 0
+    )
+      continue;
     if (!adjacency.has(fromId)) adjacency.set(fromId, new Map());
     const row = adjacency.get(fromId);
     if (!row) continue;
@@ -275,7 +276,7 @@ function neighborsOf(
   graph: Map<number, Map<number, number>> | undefined,
   neighborFn: ((nodeId: number) => NeighborInput) | undefined,
 ): Map<number, number> | undefined {
-  if (typeof neighborFn === 'function') {
+  if (typeof neighborFn === "function") {
     const raw = neighborFn(nodeId);
     return raw == null ? undefined : neighborMap(raw);
   }
@@ -307,28 +308,30 @@ export interface WavePropagationResult {
 function propagate(options: WaveOptions = {}): WavePropagationResult {
   const config = options.config || {};
   const maxSafeHops = integer(config.maxSafeHops ?? 4, 4);
-  const baseMomentum = Math.max(0, fin(config.baseMomentum ?? config.momentum ?? 2.0, 2.0));
-  const firingThreshold = Math.max(0, fin(config.firingThreshold ?? 0.10, 0.10));
+  const baseMomentum = Math.max(
+    0,
+    fin(config.baseMomentum ?? config.momentum ?? 2.0, 2.0),
+  );
+  const firingThreshold = Math.max(0, fin(config.firingThreshold ?? 0.1, 0.1));
   const baseDecay = Math.max(0, fin(config.baseDecay ?? 0.25, 0.25));
-  const wormholeDecay = Math.max(0, fin(config.wormholeDecay ?? 0.70, 0.70));
+  const wormholeDecay = Math.max(0, fin(config.wormholeDecay ?? 0.7, 0.7));
   const tensionThreshold = Math.max(0, fin(config.tensionThreshold ?? 1.0, 1.0));
   const maxNeighborsPerNode = integer(
     config.maxNeighborsPerNode ?? config.branchLimit ?? 20,
-    20
+    20,
   );
   const returnFlowFactor = clamp01(
-    config.returnFlowFactor ?? config.v91ReturnFlowFactor ?? 0.15
+    config.returnFlowFactor ?? config.v91ReturnFlowFactor ?? 0.15,
   );
   const firGamma = clamp01(config.firGamma ?? config.v91FirGamma ?? 0.6);
   const maxPropagationStates = Math.max(
     100,
-    integer(config.maxPropagationStates ?? config.stateLimit ?? 2000, 2000)
+    integer(config.maxPropagationStates ?? config.stateLimit ?? 2000, 2000),
   );
   // pruneAbove: drop activations below this ratio of the peak after readout.
   const pruneAbove = clamp01(config.pruneAbove ?? 0);
-  const graph = options.graph instanceof Map
-    ? options.graph
-    : adjacencyFromEdges(options.edges);
+  const graph =
+    options.graph instanceof Map ? options.graph : adjacencyFromEdges(options.edges);
 
   const firWeights = computeFirWeights(firGamma, maxSafeHops);
 
@@ -341,20 +344,20 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
 
   for (const tag of sources) {
     const key = `seed:${tag.id}`;
-    const sourceType = tag.isCore ? 'core' : 'seed';
+    const sourceType = tag.isCore ? "core" : "seed";
     activeSpikes.set(key, {
       nodeId: tag.id,
       previousNodeId: null,
       energy: tag.energy,
       momentum: baseMomentum,
       sourceType,
-      hop: 0
+      hop: 0,
     });
-    accumulatedEnergy.set(tag.id, tag.energy * firWeights[0]);
+    accumulatedEnergy.set(tag.id, tag.energy * at(firWeights, 0, "FIR weights"));
     fieldProvenance.set(tag.id, {
       sourceType,
       hop: 0,
-      seedId: tag.id
+      seedId: tag.id,
     });
   }
 
@@ -370,7 +373,7 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
     returnFlowSuppressedMass: 0,
     stateTruncations: 0,
     hopInFlightMass: [],
-    prunedNodeCount: 0
+    prunedNodeCount: 0,
   };
 
   let iterations = 0;
@@ -387,22 +390,22 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
       if (!synapses) continue;
 
       const sortedSynapses = [...synapses.entries()]
-        .sort((a, b) => (b[1] - a[1]) || (a[0] - b[0]))
+        .sort((a, b) => b[1] - a[1] || a[0] - b[0])
         .slice(0, maxNeighborsPerNode);
 
       for (const [neighborId, coocWeight] of sortedSynapses) {
         const neighborResidual = mapValue(options.residuals, neighborId);
-        const effectiveNeighborResidual = neighborResidual == null
-          ? 1.0
-          : Math.max(0, Number(neighborResidual) || 0);
+        const effectiveNeighborResidual =
+          neighborResidual == null ? 1.0 : Math.max(0, Number(neighborResidual) || 0);
         const tension = coocWeight * effectiveNeighborResidual;
-        const isWormhole = options.wormholeEdges instanceof Set
-          ? options.wormholeEdges.has(`${spike.nodeId}:${neighborId}`)
-          : tension >= tensionThreshold;
+        const isWormhole =
+          options.wormholeEdges instanceof Set
+            ? options.wormholeEdges.has(`${spike.nodeId}:${neighborId}`)
+            : tension >= tensionThreshold;
         const decayFactor = isWormhole ? wormholeDecay : baseDecay;
         const momentumCost = isWormhole ? 0 : 1.0;
-        const isImmediateReturn = spike.previousNodeId !== null
-          && neighborId === spike.previousNodeId;
+        const isImmediateReturn =
+          spike.previousNodeId !== null && neighborId === spike.previousNodeId;
         const flowFactor = isImmediateReturn ? returnFlowFactor : 1;
         const unpenalizedCurrent = spike.energy * coocWeight * decayFactor;
         const injectedCurrent = unpenalizedCurrent * flowFactor;
@@ -428,22 +431,22 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
             conductance: Math.max(0, Number(coocWeight) || 0),
             minHop: spike.hop + 1,
             wormhole: isWormhole,
-            immediateReturn: isImmediateReturn
+            immediateReturn: isImmediateReturn,
           });
         }
 
         const previousParent = strongestParentByNode.get(targetId);
         if (
-          !previousParent
-          || injectedCurrent > previousParent.flow
-          || (injectedCurrent === previousParent.flow
-            && spike.hop + 1 < previousParent.hop)
+          !previousParent ||
+          injectedCurrent > previousParent.flow ||
+          (injectedCurrent === previousParent.flow &&
+            spike.hop + 1 < previousParent.hop)
         ) {
           strongestParentByNode.set(targetId, {
             parentId: sourceId,
             flow: injectedCurrent,
             hop: spike.hop + 1,
-            wormhole: isWormhole
+            wormhole: isWormhole,
           });
         }
 
@@ -466,7 +469,7 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
             energy: injectedCurrent,
             momentum: nextMomentum,
             sourceType: spike.sourceType,
-            hop: spike.hop + 1
+            hop: spike.hop + 1,
           });
         }
       }
@@ -485,26 +488,30 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
     for (const newSpike of nextSpikes.values()) {
       nodeEnergyThisHop.set(
         newSpike.nodeId,
-        (nodeEnergyThisHop.get(newSpike.nodeId) || 0) + newSpike.energy
+        (nodeEnergyThisHop.get(newSpike.nodeId) || 0) + newSpike.energy,
       );
       const numericNodeId = Number(newSpike.nodeId);
       const previousProvenance = fieldProvenance.get(numericNodeId);
       if (!previousProvenance || newSpike.hop < previousProvenance.hop) {
         fieldProvenance.set(numericNodeId, {
-          sourceType: 'emergent',
+          sourceType: "emergent",
           originType: newSpike.sourceType,
-          hop: newSpike.hop
+          hop: newSpike.hop,
         });
       }
       inFlightMass += newSpike.energy;
     }
     diagnostics.hopInFlightMass.push(inFlightMass);
 
-    const fieldWeight = firWeights[Math.min(hop + 1, firWeights.length - 1)];
+    const fieldWeight = at(
+      firWeights,
+      Math.min(hop + 1, firWeights.length - 1),
+      "FIR weights",
+    );
     for (const [nodeId, energy] of nodeEnergyThisHop.entries()) {
       accumulatedEnergy.set(
         nodeId,
-        (accumulatedEnergy.get(nodeId) || 0) + energy * fieldWeight
+        (accumulatedEnergy.get(nodeId) || 0) + energy * fieldWeight,
       );
       if (energy > 0.01) propagated = true;
     }
@@ -519,7 +526,7 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
   const readoutKeys = [...accumulatedEnergy.keys()];
   const peakActivation = readoutKeys.reduce(
     (max, id) => Math.max(max, accumulatedEnergy.get(id) || 0),
-    0
+    0,
   );
   if (pruneAbove > 0 && peakActivation > 0) {
     for (const id of readoutKeys) {
@@ -535,49 +542,51 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
   const maximumNodeEnergy = Math.max(0, ...accumulatedEnergy.values());
   const maximumEdgeFlow = Math.max(
     0,
-    ...[...riverEdgeFlow.values()].map(edge => edge.flow)
+    ...[...riverEdgeFlow.values()].map((edge) => edge.flow),
   );
   const riverGraph = {
     schema: RIVER_SCHEMA,
     nodes: [...accumulatedEnergy.entries()]
       .map(([rawId, rawEnergy]) => {
         const id = Number(rawId);
-        const provenance = fieldProvenance.get(id)
-          || { sourceType: 'unknown', hop: Number.POSITIVE_INFINITY };
+        const provenance = fieldProvenance.get(id) || {
+          sourceType: "unknown",
+          hop: Number.POSITIVE_INFINITY,
+        };
         const parent = strongestParentByNode.get(id) || null;
         return {
           id,
           energy: Math.max(0, Number(rawEnergy) || 0),
-          normalizedEnergy: maximumNodeEnergy > 0
-            ? Math.max(0, Number(rawEnergy) || 0) / maximumNodeEnergy
-            : 0,
-          sourceType: provenance.sourceType || 'unknown',
+          normalizedEnergy:
+            maximumNodeEnergy > 0
+              ? Math.max(0, Number(rawEnergy) || 0) / maximumNodeEnergy
+              : 0,
+          sourceType: provenance.sourceType || "unknown",
           originType: provenance.originType || null,
           hop: Number.isFinite(provenance.hop) ? provenance.hop : null,
           seedId: Number.isFinite(provenance.seedId) ? provenance.seedId : null,
-          strongestParent: parent ? { ...parent } : null
+          strongestParent: parent ? { ...parent } : null,
         };
       })
-      .sort((left, right) =>
-        (right.energy - left.energy) || (left.id - right.id)
-      ),
+      .sort((left, right) => right.energy - left.energy || left.id - right.id),
     edges: [...riverEdgeFlow.values()]
-      .map(edge => ({
+      .map((edge) => ({
         ...edge,
-        normalizedFlow: maximumEdgeFlow > 0 ? edge.flow / maximumEdgeFlow : 0
+        normalizedFlow: maximumEdgeFlow > 0 ? edge.flow / maximumEdgeFlow : 0,
       }))
-      .sort((left, right) =>
-        (right.flow - left.flow)
-        || (left.sourceId - right.sourceId)
-        || (left.targetId - right.targetId)
+      .sort(
+        (left, right) =>
+          right.flow - left.flow ||
+          left.sourceId - right.sourceId ||
+          left.targetId - right.targetId,
       ),
     diagnostics: {
       seedNodes: sources.length,
       reachedNodes: accumulatedEnergy.size,
       activeEdges: riverEdgeFlow.size,
       maximumNodeEnergy,
-      maximumEdgeFlow
-    }
+      maximumEdgeFlow,
+    },
   };
 
   return {
@@ -589,8 +598,8 @@ function propagate(options: WaveOptions = {}): WavePropagationResult {
       ...diagnostics,
       seedNodes: sources.length,
       reachedNodes: accumulatedEnergy.size,
-      activeEdges: riverEdgeFlow.size
-    }
+      activeEdges: riverEdgeFlow.size,
+    },
   };
 }
 
@@ -599,5 +608,5 @@ export {
   RIVER_SCHEMA,
   computeFirWeights,
   adjacencyFromEdges,
-  propagate
+  propagate,
 };

@@ -1,107 +1,109 @@
+import { at } from "./numerical.js";
+
 interface TagConfig {
-    tagBlacklist?: readonly string[] | Set<string>;
-    tagBlacklistSuper?: readonly string[];
+  tagBlacklist?: readonly string[] | Set<string>;
+  tagBlacklistSuper?: readonly string[];
 }
 
 interface TagOptions {
-    maxTags?: number;
-    logPrefix?: string;
+  maxTags?: number;
+  logPrefix?: string;
 }
 
-const EMPTY_CONTENT = '[EMPTY_CONTENT]';
+const EMPTY_CONTENT = "[EMPTY_CONTENT]";
 
 function prepareTextForEmbedding(text: unknown): string {
-    if (typeof text !== 'string') return EMPTY_CONTENT;
+  if (typeof text !== "string") return EMPTY_CONTENT;
 
-    const decorativeEmojis = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu;
-    const cleaned = text
-        .replace(decorativeEmojis, ' ')
-        .replace(/<\|([^|]+)\|>/g, '$1')
-        .replace(/[ \t]+/g, ' ')
-        .replace(/ *\n */g, '\n')
-        .replace(/\n{2,}/g, '\n')
-        .trim();
+  const decorativeEmojis =
+    /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu;
+  const cleaned = text
+    .replace(decorativeEmojis, " ")
+    .replace(/<\|([^|]+)\|>/g, "$1")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
 
-    return cleaned.length === 0 ? EMPTY_CONTENT : cleaned;
+  return cleaned.length === 0 ? EMPTY_CONTENT : cleaned;
 }
 
 function extractTags(
-    content: unknown,
-    config: TagConfig = {},
-    options: TagOptions = {},
+  content: unknown,
+  config: TagConfig = {},
+  options: TagOptions = {},
 ): string[] {
-    if (typeof content !== 'string') return [];
+  if (typeof content !== "string") return [];
 
-    // Tag 只允许出现在文档末尾的连续元数据行中。
-    // 从最后一个非空行反向收集，遇到第一行非 Tag 内容立即停止，
-    // 防止正文、引用或示例中的行内/中间 Tag: 被误解析。
-    const lines = content.split(/\r?\n/);
-    let lastContentLine = lines.length - 1;
-    while (lastContentLine >= 0 && lines[lastContentLine].trim() === '') {
-        lastContentLine--;
-    }
+  // Tag 只允许出现在文档末尾的连续元数据行中。
+  // 从最后一个非空行反向收集，遇到第一行非 Tag 内容立即停止，
+  // 防止正文、引用或示例中的行内/中间 Tag: 被误解析。
+  const lines = content.split(/\r?\n/);
+  let lastContentLine = lines.length - 1;
+  while (
+    lastContentLine >= 0 &&
+    at(lines, lastContentLine, "content lines").trim() === ""
+  ) {
+    lastContentLine--;
+  }
 
-    const tagContents: string[] = [];
-    for (let i = lastContentLine; i >= 0; i--) {
-        const match = lines[i].match(/^\s*Tag:\s*(.+?)\s*$/i);
-        if (!match) break;
-        tagContents.unshift(match[1]);
-    }
-    if (tagContents.length === 0) return [];
+  const tagContents: string[] = [];
+  for (let i = lastContentLine; i >= 0; i--) {
+    const match = at(lines, i, "content lines").match(/^\s*Tag:\s*(.+?)\s*$/i);
+    if (!match) break;
+    tagContents.unshift(at(match, 1, "tag match"));
+  }
+  if (tagContents.length === 0) return [];
 
-    const allTags: string[] = [];
-    for (const tagContent of tagContents) {
-        allTags.push(
-            ...tagContent
-                .split(/[,，、;|｜]/)
-                .map(tag => tag.trim())
-                .filter(Boolean)
-        );
-    }
+  const allTags: string[] = [];
+  for (const tagContent of tagContents) {
+    allTags.push(
+      ...tagContent
+        .split(/[,，、;|｜]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    );
+  }
 
-    let tags: string[] = allTags
-        .map(tag => prepareTextForEmbedding(
-            tag.replace(/[。.]+$/g, '').trim()
-        ))
-        .filter(tag => tag !== EMPTY_CONTENT);
+  let tags: string[] = allTags
+    .map((tag) => prepareTextForEmbedding(tag.replace(/[。.]+$/g, "").trim()))
+    .filter((tag) => tag !== EMPTY_CONTENT);
 
-    const superBlacklist = Array.isArray(config.tagBlacklistSuper)
-        ? config.tagBlacklistSuper.filter((tag: string): boolean => Boolean(tag))
-        : [];
-    if (superBlacklist.length > 0) {
-        const superRegex = new RegExp(superBlacklist.join('|'), 'g');
-        tags = tags.map(tag => tag.replace(superRegex, '').trim());
-    }
+  const superBlacklist = Array.isArray(config.tagBlacklistSuper)
+    ? config.tagBlacklistSuper.filter((tag: string): boolean => Boolean(tag))
+    : [];
+  if (superBlacklist.length > 0) {
+    const superRegex = new RegExp(superBlacklist.join("|"), "g");
+    tags = tags.map((tag) => tag.replace(superRegex, "").trim());
+  }
 
-    const blacklist: Set<string> = config.tagBlacklist instanceof Set
-        ? config.tagBlacklist
-        : new Set(config.tagBlacklist || []);
-    tags = tags.filter(tag => !blacklist.has(tag) && tag.length > 0);
+  const blacklist: Set<string> =
+    config.tagBlacklist instanceof Set
+      ? config.tagBlacklist
+      : new Set(config.tagBlacklist || []);
+  tags = tags.filter((tag) => !blacklist.has(tag) && tag.length > 0);
 
-    const dateRegex = /(\d{4}年\d{1,2}月\d{1,2}日|\d{4}年\d{1,2}月|\d{1,2}月\d{1,2}日|\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{2}[-./]\d{1,2}[-./]\d{1,2}|\d{4}[-./]\d{1,2})/;
-    tags = tags.filter(tag => {
-        const isChinese = /[\u4e00-\u9fa5]/.test(tag);
-        if (isChinese && tag.length > 20) return false;
-        if (!isChinese && tag.length > 40) return false;
-        return !dateRegex.test(tag);
-    });
+  const dateRegex =
+    /(\d{4}年\d{1,2}月\d{1,2}日|\d{4}年\d{1,2}月|\d{1,2}月\d{1,2}日|\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{2}[-./]\d{1,2}[-./]\d{1,2}|\d{4}[-./]\d{1,2})/;
+  tags = tags.filter((tag) => {
+    const isChinese = /[\u4e00-\u9fa5]/.test(tag);
+    if (isChinese && tag.length > 20) return false;
+    if (!isChinese && tag.length > 40) return false;
+    return !dateRegex.test(tag);
+  });
 
-    const uniqueTags = [...new Set(tags)];
-    const maxTags = Math.max(1, Number(options.maxTags) || 50);
-    if (uniqueTags.length > maxTags) {
-        const logPrefix = options.logPrefix || 'KnowledgeBase';
-        console.warn(
-            `[${logPrefix}] ⚠️ File has too many tags (${uniqueTags.length}). ` +
-            `Truncating to top ${maxTags}.`
-        );
-        return uniqueTags.slice(0, maxTags);
-    }
+  const uniqueTags = [...new Set(tags)];
+  const maxTags = Math.max(1, Number(options.maxTags) || 50);
+  if (uniqueTags.length > maxTags) {
+    const logPrefix = options.logPrefix || "KnowledgeBase";
+    console.warn(
+      `[${logPrefix}] ⚠️ File has too many tags (${uniqueTags.length}). ` +
+        `Truncating to top ${maxTags}.`,
+    );
+    return uniqueTags.slice(0, maxTags);
+  }
 
-    return uniqueTags;
+  return uniqueTags;
 }
 
-export {
-    EMPTY_CONTENT,
-    prepareTextForEmbedding,
-    extractTags
-};
+export { EMPTY_CONTENT, prepareTextForEmbedding, extractTags };

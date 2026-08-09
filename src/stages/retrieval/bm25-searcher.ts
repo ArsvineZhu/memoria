@@ -1,4 +1,3 @@
-
 import type {
   ChunkCandidate,
   ChunkRow,
@@ -6,9 +5,10 @@ import type {
   PipelineContextLike,
   PipelineData,
   Tokenizer,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
+import { at } from "../../utils/numerical.js";
 
 // Default BM25 constants (mirror of LightMemo.BM25Ranker).
 const DEFAULT_K1 = 1.5;
@@ -40,36 +40,42 @@ const TOKEN_LIKE = /[\p{Script=Han}a-z0-9_]/u;
 class BM25SearcherStage extends Stage {
   constructor() {
     super();
-    this.name = 'bm25Searcher';
+    this.name = "bm25Searcher";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'bm25Results' | 'metadataStoreMissing'> & { bm25Results: ChunkCandidate[]; metadataStoreMissing?: boolean }> {
+  ): Promise<
+    Omit<PipelineData, "bm25Results" | "metadataStoreMissing"> & {
+      bm25Results: ChunkCandidate[];
+      metadataStoreMissing?: boolean;
+    }
+  > {
     const info = input || {};
     const metadataStore = ctx.metadataStore;
 
-    if (!metadataStore || typeof metadataStore.getAllChunks !== 'function') {
+    if (!metadataStore || typeof metadataStore.getAllChunks !== "function") {
       return { ...info, bm25Results: [], metadataStoreMissing: true };
     }
 
     const config = ctx.config || {};
-    const tokenizer: (text: string) => Promise<string[]> = typeof config.tokenizer === 'function'
-      ? this._wrapTokenizer(config.tokenizer)
-      : async (text: string) => this._tokenize(text);
+    const tokenizer: (text: string) => Promise<string[]> =
+      typeof config.tokenizer === "function"
+        ? this._wrapTokenizer(config.tokenizer)
+        : async (text: string) => this._tokenize(text);
     const stopWords = new Set(
       Array.isArray(config.stopWords)
         ? config.stopWords.map((w: string) => String(w).toLowerCase())
-        : []
+        : [],
     );
 
     // Query tokens: input.tokens wins, otherwise tokenize input.query.
     let tokens: string[] = [];
     if (Array.isArray(info.tokens) && info.tokens.length > 0) {
-      tokens = info.tokens.map(t => String(t).toLowerCase());
+      tokens = info.tokens.map((t) => String(t).toLowerCase());
     } else {
-      const query = typeof info.query === 'string' ? info.query : '';
+      const query = typeof info.query === "string" ? info.query : "";
       tokens = this._filterTokens(await tokenizer(query), stopWords);
     }
     if (tokens.length === 0) {
@@ -81,7 +87,9 @@ class BM25SearcherStage extends Stage {
     try {
       chunks = await metadataStore.getAllChunks();
     } catch (e) {
-      console.warn(`[BM25Searcher] getAllChunks failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[BM25Searcher] getAllChunks failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return { ...info, bm25Results: [] };
     }
     if (!chunks || chunks.length === 0) {
@@ -94,7 +102,7 @@ class BM25SearcherStage extends Stage {
       if (!Number.isFinite(chunkId)) continue;
       docs.push({
         chunkId,
-        tokens: this._filterTokens(await tokenizer(chunk.content), stopWords)
+        tokens: this._filterTokens(await tokenizer(chunk.content), stopWords),
       });
     }
     if (docs.length === 0) return { ...info, bm25Results: [] };
@@ -124,15 +132,13 @@ class BM25SearcherStage extends Stage {
     // Score every chunk once, keep strictly positive hits.
     const scored: ChunkCandidate[] = [];
     for (const doc of docs) {
-      const score = this.scoreDoc(
-        tokens, doc.tokens, idf, avgDocLength, k1, b
-      );
+      const score = this.scoreDoc(tokens, doc.tokens, idf, avgDocLength, k1, b);
       if (score > 0) {
         scored.push({ chunkId: doc.chunkId, score });
       }
     }
 
-    scored.sort((a, b) => (b.score - a.score) || (a.chunkId - b.chunkId));
+    scored.sort((a, b) => b.score - a.score || a.chunkId - b.chunkId);
     return { ...info, bm25Results: scored.slice(0, poolK) };
   }
 
@@ -179,7 +185,7 @@ class BM25SearcherStage extends Stage {
    * @returns {string[]}
    */
   _tokenize(text: string): string[] {
-    const raw = String(text || '').toLowerCase();
+    const raw = String(text || "").toLowerCase();
 
     const words = raw.match(/[a-z0-9_][a-z0-9_.:/@#-]*/g) || [];
 
@@ -188,35 +194,34 @@ class BM25SearcherStage extends Stage {
     for (const run of cjkRuns) {
       const chars = [...run];
       if (chars.length === 1) {
-        cjkTokens.push(chars[0]);
+        cjkTokens.push(at(chars, 0, "CJK characters"));
         continue;
       }
       for (let i = 0; i < chars.length; i++) {
         if (i + 1 < chars.length) {
-          cjkTokens.push(chars[i] + chars[i + 1]);
+          cjkTokens.push(
+            at(chars, i, "CJK characters") + at(chars, i + 1, "CJK characters"),
+          );
         }
-        cjkTokens.push(chars[i]);
+        cjkTokens.push(at(chars, i, "CJK characters"));
       }
     }
 
-    return [...words, ...cjkTokens].filter(token => TOKEN_LIKE.test(token));
+    return [...words, ...cjkTokens].filter((token) => TOKEN_LIKE.test(token));
   }
 
   _wrapTokenizer(fn: Tokenizer): (text: string) => Promise<string[]> {
     // Accept sync or async tokenizers.
     return async (text) => {
       const result = await fn(text);
-      return (Array.isArray(result) ? result : [])
-        .map(t => String(t).toLowerCase());
+      return (Array.isArray(result) ? result : []).map((t) => String(t).toLowerCase());
     };
   }
 
   _filterTokens(tokens: readonly string[], stopWords: ReadonlySet<string>): string[] {
     if (!Array.isArray(tokens)) return [];
-    return tokens.filter(
-      token => token.length > 0 && !stopWords.has(token)
-    );
+    return tokens.filter((token) => token.length > 0 && !stopWords.has(token));
   }
 }
 
-export = BM25SearcherStage;
+export default BM25SearcherStage;

@@ -1,16 +1,17 @@
-'use strict';
+"use strict";
 
-import path = require('path');
-import fs = require('fs');
-import crypto = require('crypto');
+import * as path from "node:path";
+import * as fs from "node:fs";
+import * as crypto from "node:crypto";
 
-import PipelineContext = require('../core/context');
-import TDBStore = require('./tdb-store');
-import TDBSearchPipeline = require('./tdb-search-pipeline');
-import VexusVectorStore = require('../providers/vexus-vector-store');
-import OpenAIEmbeddingProvider = require('../providers/openai-embedding-provider');
-import { chunkText } from '../utils/text-chunker';
-import { mergeConfig } from '../config/default-config';
+import PipelineContext from "../core/context.js";
+import TDBStore from "./tdb-store.js";
+import TDBSearchPipeline from "./tdb-search-pipeline.js";
+import VexusVectorStore from "../providers/vexus-vector-store.js";
+import OpenAIEmbeddingProvider from "../providers/openai-embedding-provider.js";
+import { chunkText } from "../utils/text-chunker.js";
+import { mergeConfig } from "../config/default-config.js";
+import { at } from "../utils/numerical.js";
 import type {
   EmbeddingProviderContract,
   MemoryConfig,
@@ -27,10 +28,14 @@ import type {
   TriviumSearchHit,
   VectorLike,
   VectorStoreContract,
-} from '../types';
+} from "../types.js";
 
 function safeLibraryName(name: unknown): string {
-  return String(name || 'Root').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'Root';
+  return (
+    String(name || "Root")
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+      .trim() || "Root"
+  );
 }
 
 /**
@@ -42,12 +47,15 @@ function safeLibraryName(name: unknown): string {
  * @returns {{library:string, relPath:string}}
  * @private
  */
-function resolveLibrary(rootPath: string, absPath: string): { library: string; relPath: string } {
+function resolveLibrary(
+  rootPath: string,
+  absPath: string,
+): { library: string; relPath: string } {
   const relPath = path.relative(rootPath, absPath);
   const parts = relPath.split(path.sep).filter(Boolean);
   return {
-    library: safeLibraryName(parts.length > 1 ? parts[0] : 'Root'),
-    relPath
+    library: safeLibraryName(parts.length > 1 ? parts[0] : "Root"),
+    relPath,
   };
 }
 
@@ -87,51 +95,61 @@ class TDBEngine {
   /**
    * @param {object} [options={}]
    * @param {object} [options.config]            - merged over DEFAULT_CONFIG
-   * @param {import('./tdb-store')} [options.metadataStore]
-   * @param {import('../interfaces/vector-store')} [options.vectorStore]
-   * @param {import('../interfaces/embedding-provider')} [options.embeddingProvider]
-   * @param {import('./triviumdb-adapter')} [options.trivium] - optional native adapter
+   * @param {import('./tdb-store.js')} [options.metadataStore]
+   * @param {import('../interfaces/vector-store.js')} [options.vectorStore]
+   * @param {import('../interfaces/embedding-provider.js')} [options.embeddingProvider]
+   * @param {import('./triviumdb-adapter.js')} [options.trivium] - optional native adapter
    * @param {object} [options.searchOptions]   - forwarded to TDBSearchPipeline
    */
   constructor(options: TdbEngineOptions = {}) {
-    this.name = 'tdbEngine';
+    this.name = "tdbEngine";
     this.options = options || {};
     this.config = mergeConfig(this.options.config);
     this.enabled = this.config.tdbEnabled === true;
 
     // Providers — injected instances win; disabled engines defer creation
     // so no store files are produced until initialize() succeeds.
-    this.metadataStore = (this.options.metadataStore || (this.enabled ? new TDBStore({
-      dbPath: this.config.tdbDbPath,
-      busyTimeout: this.config.busyTimeout
-    }) : null)) as unknown as TdbStoreContract;
-    this.vectorStore = (this.options.vectorStore || (this.enabled ? new VexusVectorStore({
-      dimension: Number(this.config.tdbDimension) || this.config.dimension,
-      storePath: this.config.tdbStorePath,
-      tagIndexCapacity: this.config.tagIndexCapacity,
-      indexSaveDelay: this.config.indexSaveDelay
-    }) : null)) as unknown as VectorStoreContract;
-    this.embeddingProvider = (this.options.embeddingProvider || (this.enabled ? new OpenAIEmbeddingProvider({
-      apiUrl: this.config.apiUrl,
-      apiKey: this.config.apiKey,
-      model: this.config.tdbModel || this.config.model,
-      dimension: Number(this.config.tdbDimension) || this.config.dimension,
-      maxBatchItems: this.config.maxBatchItems,
-      maxToken: this.config.maxToken,
-      concurrency: this.config.concurrency,
-      fallbackModels: this.config.fallbackModels
-    }) : null)) as unknown as EmbeddingProviderContract;
+    this.metadataStore = (this.options.metadataStore ||
+      (this.enabled
+        ? new TDBStore({
+            dbPath: this.config.tdbDbPath,
+            busyTimeout: this.config.busyTimeout,
+          })
+        : null)) as unknown as TdbStoreContract;
+    this.vectorStore = (this.options.vectorStore ||
+      (this.enabled
+        ? new VexusVectorStore({
+            dimension: Number(this.config.tdbDimension) || this.config.dimension,
+            storePath: this.config.tdbStorePath,
+            tagIndexCapacity: this.config.tagIndexCapacity,
+            indexSaveDelay: this.config.indexSaveDelay,
+          })
+        : null)) as unknown as VectorStoreContract;
+    this.embeddingProvider = (this.options.embeddingProvider ||
+      (this.enabled
+        ? new OpenAIEmbeddingProvider({
+            apiUrl: this.config.apiUrl,
+            apiKey: this.config.apiKey,
+            model: this.config.tdbModel || this.config.model,
+            dimension: Number(this.config.tdbDimension) || this.config.dimension,
+            maxBatchItems: this.config.maxBatchItems,
+            maxToken: this.config.maxToken,
+            concurrency: this.config.concurrency,
+            fallbackModels: this.config.fallbackModels,
+          })
+        : null)) as unknown as EmbeddingProviderContract;
     this.trivium = this.options.trivium || null;
 
     this.ctx = new PipelineContext({
       config: this.config,
       embeddingProvider: this.embeddingProvider,
       vectorStore: this.vectorStore,
-      metadataStore: this.metadataStore as unknown as import('../types').MetadataStoreContract
+      metadataStore: this
+        .metadataStore as unknown as import("../types.js").MetadataStoreContract,
     });
     this.searchPipeline = new TDBSearchPipeline(
       this.config,
-      this.options.searchOptions || {}
+      this.options.searchOptions || {},
     );
 
     this.initialized = false;
@@ -150,13 +168,17 @@ class TDBEngine {
 
     try {
       fs.mkdirSync(this.config.tdbRootPath, { recursive: true });
-    } catch (_) { /* root path is best-effort */ }
+    } catch (_) {
+      /* root path is best-effort */
+    }
     try {
       fs.mkdirSync(this.config.tdbStorePath, { recursive: true });
-    } catch (_) { /* store path is best-effort */ }
+    } catch (_) {
+      /* store path is best-effort */
+    }
 
     let libraries: string[] = [];
-    if (typeof this.metadataStore.listLibraries === 'function') {
+    if (typeof this.metadataStore.listLibraries === "function") {
       try {
         libraries = await this.metadataStore.listLibraries();
       } catch (_) {
@@ -173,9 +195,9 @@ class TDBEngine {
 
   async _openIndex(library: string): Promise<void> {
     const safeName = safeLibraryName(library);
-    if (!this.vectorStore || typeof this.vectorStore.loadIndex !== 'function') return;
+    if (!this.vectorStore || typeof this.vectorStore.loadIndex !== "function") return;
     try {
-      await this.vectorStore.loadIndex(safeName, '');
+      await this.vectorStore.loadIndex(safeName, "");
     } catch (_) {
       // No persisted index yet — first write creates it.
     }
@@ -183,16 +205,20 @@ class TDBEngine {
 
   async _saveIndex(library: string): Promise<void> {
     if (!this.vectorStore) return;
-    if (typeof this.vectorStore.scheduleIndexSave === 'function') {
+    if (typeof this.vectorStore.scheduleIndexSave === "function") {
       try {
         this.vectorStore.scheduleIndexSave(safeLibraryName(library));
         return;
-      } catch (_) { /* fall through to direct save */ }
+      } catch (_) {
+        /* fall through to direct save */
+      }
     }
-    if (typeof this.vectorStore.saveIndex === 'function') {
+    if (typeof this.vectorStore.saveIndex === "function") {
       try {
-        await this.vectorStore.saveIndex(safeLibraryName(library), '');
-      } catch (_) { /* in-memory store — nothing to persist */ }
+        await this.vectorStore.saveIndex(safeLibraryName(library), "");
+      } catch (_) {
+        /* in-memory store — nothing to persist */
+      }
     }
   }
 
@@ -207,8 +233,11 @@ class TDBEngine {
    * @private
    */
   _libraryFromRelPath(relPath: string): string {
-    const parts = String(relPath || '').replace(/\\/g, '/').split('/').filter(Boolean);
-    return parts.length > 1 ? parts[0] : 'Root';
+    const parts = String(relPath || "")
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean);
+    return parts.length > 1 ? at(parts, 0, "library path") : "Root";
   }
 
   /**
@@ -225,20 +254,24 @@ class TDBEngine {
    * @param {number} [options.size]
    * @returns {Promise<object>} ingest envelope
    */
-  async upsertText(text: string, options: TdbSearchOptions = {}): Promise<TdbIngestEnvelope> {
+  async upsertText(
+    text: string,
+    options: TdbSearchOptions = {},
+  ): Promise<TdbIngestEnvelope> {
     if (!this.initialized || !this.enabled) return { skipped: true, disabled: true };
-    const content = String(text || '');
-    if (!content.trim()) return { skipped: true, reason: 'empty' };
+    const content = String(text || "");
+    if (!content.trim()) return { skipped: true, reason: "empty" };
 
     const now = Number.isFinite(Number(options.now))
       ? Math.floor(Number(options.now))
       : Math.floor(Date.now() / 1000);
-    const relPath = String(options.path || '');
+    const relPath = String(options.path || "");
     const library = safeLibraryName(
-      options.library || this._libraryFromRelPath(relPath)
+      options.library || this._libraryFromRelPath(relPath),
     );
-    const checksum = crypto.createHash('sha256').update(content).digest('hex');
-    const size = options.size != null ? Number(options.size) : Buffer.byteLength(content, 'utf-8');
+    const checksum = crypto.createHash("sha256").update(content).digest("hex");
+    const size =
+      options.size != null ? Number(options.size) : Buffer.byteLength(content, "utf-8");
     const mtime = options.mtime != null ? Number(options.mtime) : now * 1000;
 
     // Content dedupe (checksum + size), mirroring the original which
@@ -247,8 +280,12 @@ class TDBEngine {
     if (existing && existing.checksum === checksum && Number(existing.size) === size) {
       if (Number(existing.mtime) !== mtime) {
         await this.metadataStore.upsertFile({
-          library, path: relPath, checksum, mtime, size,
-          updatedAt: now
+          library,
+          path: relPath,
+          checksum,
+          mtime,
+          size,
+          updatedAt: now,
         });
       }
       return { skipped: true, library, path: relPath, fileId: existing.id, checksum };
@@ -256,11 +293,12 @@ class TDBEngine {
 
     const chunks = chunkText(content, {
       maxTokens: Number(this.config.chunkMaxTokens) || 600,
-      overlapTokens: Number(this.config.chunkOverlapTokens)
-        || Math.floor((Number(this.config.chunkMaxTokens) || 600) * 0.16)
+      overlapTokens:
+        Number(this.config.chunkOverlapTokens) ||
+        Math.floor((Number(this.config.chunkMaxTokens) || 600) * 0.16),
     }).filter(Boolean);
     if (chunks.length === 0) {
-      return { skipped: true, reason: 'no-chunks', checksum };
+      return { skipped: true, reason: "no-chunks", checksum };
     }
 
     // 1. Embed chunk text (batched, mirroring TDBKnowledge embedding loop).
@@ -268,11 +306,13 @@ class TDBEngine {
     const maxBatch = Math.max(1, Number(this.config.tdbEmbeddingBatchSize) || 16);
     for (let start = 0; start < chunks.length; start += maxBatch) {
       const batch = chunks.slice(start, start + maxBatch);
-      let batchVectors: Array<import('../types').EmbeddingVector | null> = [];
+      let batchVectors: Array<import("../types.js").EmbeddingVector | null> = [];
       try {
         batchVectors = await this.embeddingProvider.embedBatch(batch);
       } catch (e) {
-        console.warn(`[TDBEngine] embedding failed for ${relPath}: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(
+          `[TDBEngine] embedding failed for ${relPath}: ${e instanceof Error ? e.message : String(e)}`,
+        );
         batchVectors = [];
       }
       for (const v of batchVectors) {
@@ -284,31 +324,43 @@ class TDBEngine {
     const rows: Array<{ chunkId: number; nodeId: number; text: string }> = [];
     const chunkRows: TdbChunkInput[] = [];
     for (let index = 0; index < chunks.length; index++) {
-      const vector = vectors[index];
+      const vector = at(vectors, index, "TDB embeddings");
       if (vector == null) continue;
-      const chunkChecksum = crypto.createHash('sha256').update(chunks[index]).digest('hex');
-      chunkRows.push({ text: chunks[index], checksum: chunkChecksum });
+      const chunk = at(chunks, index, "TDB chunks");
+      const chunkChecksum = crypto.createHash("sha256").update(chunk).digest("hex");
+      chunkRows.push({ text: chunk, checksum: chunkChecksum });
     }
     const inserted = await this.metadataStore.insertChunks(library, relPath, chunkRows);
 
     // 3. Index vectors under the library index (node id == chunk row id).
     let vectorOffset = 0;
     for (let index = 0; index < chunks.length; index++) {
-      const vector = vectors[index];
+      const vector = at(vectors, index, "TDB embeddings");
       if (vector == null) continue;
       const row = inserted[vectorOffset++];
       if (!row) continue;
       try {
         await this.vectorStore.add(library, row.nodeId, new Float32Array(vector));
       } catch (e) {
-        console.warn(`[TDBEngine] vector add failed for ${relPath}#${index}: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(
+          `[TDBEngine] vector add failed for ${relPath}#${index}: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
-      rows.push({ chunkId: row.chunkId, nodeId: row.nodeId, text: chunks[index] });
+      rows.push({
+        chunkId: row.chunkId,
+        nodeId: row.nodeId,
+        text: at(chunks, index, "TDB chunks"),
+      });
     }
 
     // 4. Persist the file header.
     const fileId = await this.metadataStore.upsertFile({
-      library, path: relPath, checksum, mtime, size, updatedAt: now
+      library,
+      path: relPath,
+      checksum,
+      mtime,
+      size,
+      updatedAt: now,
     });
 
     await this._saveIndex(library);
@@ -321,7 +373,7 @@ class TDBEngine {
       checksum,
       chunkCount: rows.length,
       fileSize: size,
-      nodeIds: rows.map(r => r.nodeId)
+      nodeIds: rows.map((r) => r.nodeId),
     };
   }
 
@@ -331,17 +383,22 @@ class TDBEngine {
    * @param {object} [options={}] - forwarded to upsertText (+ library override)
    * @returns {Promise<object>}
    */
-  async upsertFile(filePath: string, options: TdbSearchOptions = {}): Promise<TdbIngestEnvelope> {
+  async upsertFile(
+    filePath: string,
+    options: TdbSearchOptions = {},
+  ): Promise<TdbIngestEnvelope> {
     if (!this.initialized || !this.enabled) return { skipped: true, disabled: true };
     const absPath = path.resolve(filePath);
     let content: string;
     let stats: fs.Stats;
     try {
       stats = fs.statSync(absPath);
-      content = fs.readFileSync(absPath, 'utf-8');
+      content = fs.readFileSync(absPath, "utf-8");
     } catch (e) {
-      console.warn(`[TDBEngine] read failed for "${filePath}": ${e instanceof Error ? e.message : String(e)}`);
-      return { skipped: true, reason: 'unreadable' };
+      console.warn(
+        `[TDBEngine] read failed for "${filePath}": ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return { skipped: true, reason: "unreadable" };
     }
     const resolved = resolveLibrary(this.config.tdbRootPath, absPath);
     return this.upsertText(content, {
@@ -350,7 +407,7 @@ class TDBEngine {
       title: options.title || path.basename(absPath),
       mtime: options.mtime != null ? options.mtime : stats.mtimeMs,
       size: options.size != null ? options.size : stats.size,
-      now: options.now
+      now: options.now,
     });
   }
 
@@ -359,12 +416,14 @@ class TDBEngine {
    * @param {{library:string, path:string}|string} input
    * @returns {Promise<object>}
    */
-  async removeFile(input: string | { library?: string; path?: string }): Promise<TdbDeleteEnvelope> {
+  async removeFile(
+    input: string | { library?: string; path?: string },
+  ): Promise<TdbDeleteEnvelope> {
     if (!this.initialized || !this.enabled) return { removed: false, disabled: true };
-    const source = typeof input === 'string' ? { path: input } : (input || {});
-    const relPath = String(source.path || '');
+    const source = typeof input === "string" ? { path: input } : input || {};
+    const relPath = String(source.path || "");
     const library = safeLibraryName(
-      source.library || this._libraryFromRelPath(relPath)
+      source.library || this._libraryFromRelPath(relPath),
     );
 
     const file = await this.metadataStore.getFile(library, relPath);
@@ -375,17 +434,27 @@ class TDBEngine {
       try {
         await this.vectorStore.remove(library, nodeId);
       } catch (e) {
-        console.warn(`[TDBEngine] vector remove failed for node ${nodeId}: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(
+          `[TDBEngine] vector remove failed for node ${nodeId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
     await this._saveIndex(library);
-    return { removed: true, library, path: relPath, fileId: file.id, removedChunkIds: chunkIds };
+    return {
+      removed: true,
+      library,
+      path: relPath,
+      fileId: file.id,
+      removedChunkIds: chunkIds,
+    };
   }
 
   /**
    * Alias of removeFile({ library, path }).
    */
-  async removeText(options: string | { library?: string; path?: string }): Promise<TdbDeleteEnvelope> {
+  async removeText(
+    options: string | { library?: string; path?: string },
+  ): Promise<TdbDeleteEnvelope> {
     return this.removeFile(options);
   }
 
@@ -398,11 +467,14 @@ class TDBEngine {
    *                                expand, expandDepth }
    * @returns {Promise<object>} envelope { results, resultCount, ... }
    */
-  async search(queryText: string, options: TdbSearchOptions = {}): Promise<TdbSearchEnvelope> {
+  async search(
+    queryText: string,
+    options: TdbSearchOptions = {},
+  ): Promise<TdbSearchEnvelope> {
     if (!this.initialized || !this.enabled) {
       return { results: [], resultCount: 0, tdbDisabled: true };
     }
-    const safeQueryText = String(queryText || '');
+    const safeQueryText = String(queryText || "");
     let out: TdbSearchEnvelope;
     if (this.trivium) {
       const [queryVector] = safeQueryText
@@ -411,16 +483,16 @@ class TDBEngine {
       if (!queryVector) return { results: [], resultCount: 0 };
       out = await this._searchViaTrivium(queryVector, safeQueryText, options);
     } else {
-      out = await this.searchPipeline.run(
+      out = (await this.searchPipeline.run(
         { query: safeQueryText, options },
-        this.ctx
-      ) as TdbSearchEnvelope;
+        this.ctx,
+      )) as TdbSearchEnvelope;
     }
     if (options.expand && Array.isArray(out.results)) {
       out.results = await this._expandHits(out.results);
     }
     return out;
-  }  /**
+  } /**
    * Search reusing an already-computed query vector (avoids re-embedding).
    * @param {Float32Array|number[]} queryVector
    * @param {string} queryText
@@ -437,10 +509,10 @@ class TDBEngine {
     }
     const out = this.trivium
       ? await this._searchViaTrivium(queryVector, queryText, options)
-      : await this.searchPipeline.run(
+      : ((await this.searchPipeline.run(
           { query: queryText, vector: queryVector, options },
-          this.ctx
-        ) as TdbSearchEnvelope;
+          this.ctx,
+        )) as TdbSearchEnvelope);
     if (options.expand && Array.isArray(out.results)) {
       out.results = await this._expandHits(out.results);
     }
@@ -460,7 +532,7 @@ class TDBEngine {
   ): Promise<TdbSearchEnvelope> {
     const trivium = this.trivium;
     if (!trivium) return { results: [], resultCount: 0 };
-    const safeQueryText = typeof queryText === 'string' ? queryText : '';
+    const safeQueryText = typeof queryText === "string" ? queryText : "";
     const topK = Math.max(1, Math.round(Number(options.topK) || 10));
     const expandDepth = Number.isFinite(Number(options.expandDepth))
       ? Number(options.expandDepth)
@@ -472,9 +544,10 @@ class TDBEngine {
       ? Number(options.hybridAlpha)
       : Number(this.config.tdbHybridAlpha) || 0.7;
 
-    const libraries = Array.isArray(options.libraries) && options.libraries.length > 0
-      ? options.libraries.map(safeLibraryName)
-      : await this.listLibraries();
+    const libraries =
+      Array.isArray(options.libraries) && options.libraries.length > 0
+        ? options.libraries.map(safeLibraryName)
+        : await this.listLibraries();
     if (libraries.length === 0) {
       return { results: [], resultCount: 0 };
     }
@@ -482,37 +555,41 @@ class TDBEngine {
     const results: TdbSearchResult[] = [];
     for (const library of libraries) {
       let hits: TriviumSearchHit[] | null = null;
-      if (typeof trivium.searchHybrid === 'function') {
+      if (typeof trivium.searchHybrid === "function") {
         try {
           hits = await trivium.searchHybrid(
-            queryVector, safeQueryText, topK, expandDepth, minScore, hybridAlpha,
-            { index: library }
+            queryVector,
+            safeQueryText,
+            topK,
+            expandDepth,
+            minScore,
+            hybridAlpha,
+            { index: library },
           );
         } catch (_) {
           hits = null;
         }
       }
-      if (hits == null && typeof trivium.search === 'function') {
+      if (hits == null && typeof trivium.search === "function") {
         try {
           hits = await trivium.search(queryVector, topK, { index: library });
         } catch (_) {
-        hits = [];
+          hits = [];
         }
       }
       for (const hit of hits || []) {
         const chunk = await this.metadataStore.getChunkById(hit.id);
-        const payloadText = hit.payload && typeof hit.payload.text === 'string'
-          ? hit.payload.text
-          : '';
+        const payloadText =
+          hit.payload && typeof hit.payload.text === "string" ? hit.payload.text : "";
         results.push({
           library: String(library),
           id: hit.id,
           score: Number(hit.score) || 0,
           payload: hit.payload || {},
           text: chunk?.text ?? payloadText,
-          path: chunk?.path ?? '',
-          sourceFile: chunk ? chunk.path : '',
-          chunkIndex: chunk ? chunk.chunkIndex : undefined
+          path: chunk?.path ?? "",
+          sourceFile: chunk ? chunk.path : "",
+          chunkIndex: chunk ? chunk.chunkIndex : undefined,
         });
       }
     }
@@ -541,10 +618,12 @@ class TDBEngine {
       seenFiles.add(relPath);
       try {
         const abs = path.join(this.config.tdbRootPath, relPath);
-        const full = fs.readFileSync(abs, 'utf-8');
+        const full = fs.readFileSync(abs, "utf-8");
         out.push({ ...hit, text: full, _expanded: true });
       } catch (e) {
-        console.warn(`[TDBEngine] expand failed for "${relPath}": ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(
+          `[TDBEngine] expand failed for "${relPath}": ${e instanceof Error ? e.message : String(e)}`,
+        );
         out.push(hit);
       }
     }
@@ -557,7 +636,7 @@ class TDBEngine {
    * @returns {Promise<string[]>}
    */
   async listLibraries(): Promise<string[]> {
-    if (typeof this.metadataStore.listLibraries === 'function') {
+    if (typeof this.metadataStore.listLibraries === "function") {
       const names = await this.metadataStore.listLibraries();
       return Array.isArray(names) ? names : [];
     }
@@ -569,15 +648,20 @@ class TDBEngine {
    * @returns {Promise<object>}
    */
   async getStats(): Promise<TdbStats> {
-    const all = (typeof this.metadataStore.getAllChunks === 'function')
-      ? await this.metadataStore.getAllChunks()
-      : [];
+    const all =
+      typeof this.metadataStore.getAllChunks === "function"
+        ? await this.metadataStore.getAllChunks()
+        : [];
     let fileCount = 0;
-    if (this.metadataStore.db && typeof this.metadataStore.db.prepare === 'function') {
+    if (this.metadataStore.db && typeof this.metadataStore.db.prepare === "function") {
       try {
-        const row = this.metadataStore.db.prepare('SELECT COUNT(*) AS c FROM files').get() as { c?: number } | undefined;
+        const row = this.metadataStore.db
+          .prepare("SELECT COUNT(*) AS c FROM files")
+          .get() as { c?: number } | undefined;
         fileCount = Number(row && row.c) || 0;
-      } catch (_) { /* fall through */ }
+      } catch (_) {
+        /* fall through */
+      }
     }
     return {
       enabled: this.enabled,
@@ -586,7 +670,7 @@ class TDBEngine {
       chunks: Array.isArray(all) ? all.length : 0,
       libraries: await this.listLibraries(),
       storePath: this.config.tdbStorePath,
-      rootPath: this.config.tdbRootPath
+      rootPath: this.config.tdbRootPath,
     };
   }
 
@@ -598,14 +682,16 @@ class TDBEngine {
   async close() {
     if (this._closed) return;
     this._closed = true;
-    if (this.vectorStore && typeof this.vectorStore.flushPendingSaves === 'function') {
+    if (this.vectorStore && typeof this.vectorStore.flushPendingSaves === "function") {
       try {
         this.vectorStore.flushPendingSaves();
       } catch (e) {
-        console.error(`[TDBEngine] flush pending saves failed: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(
+          `[TDBEngine] flush pending saves failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
-    if (this.metadataStore && typeof this.metadataStore.close === 'function') {
+    if (this.metadataStore && typeof this.metadataStore.close === "function") {
       this.metadataStore.close();
     }
   }

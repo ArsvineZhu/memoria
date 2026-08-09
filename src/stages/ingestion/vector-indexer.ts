@@ -1,15 +1,15 @@
-
 import type {
   EmbeddingVector,
   PipelineContextLike,
   PipelineData,
   VectorStoreContract,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
+import { at } from "../../utils/numerical.js";
 
 // Global tag vector index name (mirror of KnowledgeBaseManager.tagIndex).
-const TAG_INDEX_NAME = 'global_tags';
+const TAG_INDEX_NAME = "global_tags";
 
 /**
  * Writes chunk and tag vectors into the vector store after the
@@ -28,13 +28,18 @@ const TAG_INDEX_NAME = 'global_tags';
 class VectorIndexerStage extends Stage {
   constructor() {
     super();
-    this.name = 'vectorIndexer';
+    this.name = "vectorIndexer";
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<Omit<PipelineData, 'vectorIndexWritten'> & {
-    vectorIndexWritten: number;
-    vectorStoreMissing?: boolean;
-  }> {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<
+    Omit<PipelineData, "vectorIndexWritten"> & {
+      vectorIndexWritten: number;
+      vectorStoreMissing?: boolean;
+    }
+  > {
     const info = input || {};
     const vectorStore = ctx.vectorStore;
 
@@ -42,13 +47,10 @@ class VectorIndexerStage extends Stage {
       return { ...info, vectorIndexWritten: 0, vectorStoreMissing: true };
     }
 
-    const indexName = typeof info.diaryName === 'string' && info.diaryName
-      ? info.diaryName
-      : 'Root';
+    const indexName =
+      typeof info.diaryName === "string" && info.diaryName ? info.diaryName : "Root";
 
-    const chunkEntries = Array.isArray(info.chunkEntries)
-      ? info.chunkEntries
-      : [];
+    const chunkEntries = Array.isArray(info.chunkEntries) ? info.chunkEntries : [];
     const chunkIds = Array.isArray(info.chunkIds) ? info.chunkIds : [];
     const removedChunkIds = Array.isArray(info.removedChunkIds)
       ? info.removedChunkIds
@@ -62,7 +64,9 @@ class VectorIndexerStage extends Stage {
     // 2. Add chunk vectors to the diary index.
     const chunkCount = Math.min(chunkEntries.length, chunkIds.length);
     for (let i = 0; i < chunkCount; i++) {
-      await this._upsertAdd(vectorStore, indexName, chunkIds[i], chunkEntries[i].vector);
+      const chunkId = at(chunkIds, i, "chunk ids");
+      const chunkEntry = at(chunkEntries, i, "chunk entries");
+      await this._upsertAdd(vectorStore, indexName, chunkId, chunkEntry.vector);
     }
 
     // 3. Add tag vectors to the shared global tag index.
@@ -70,13 +74,19 @@ class VectorIndexerStage extends Stage {
     const tagIds = Array.isArray(info.tagIds) ? info.tagIds : [];
     const tagCount = Math.min(tagEntries.length, tagIds.length);
     for (let i = 0; i < tagCount; i++) {
-      const vector = tagEntries[i].vector;
+      const tagEntry = at(tagEntries, i, "tag entries");
+      const vector = tagEntry.vector;
       if (vector == null) continue;
-      await this._upsertAdd(vectorStore, TAG_INDEX_NAME, tagIds[i], vector);
+      await this._upsertAdd(
+        vectorStore,
+        TAG_INDEX_NAME,
+        at(tagIds, i, "tag ids"),
+        vector,
+      );
     }
 
     // 4. Schedule persistence for both touched indices.
-    if (typeof vectorStore.scheduleIndexSave === 'function') {
+    if (typeof vectorStore.scheduleIndexSave === "function") {
       vectorStore.scheduleIndexSave(indexName);
       vectorStore.scheduleIndexSave(TAG_INDEX_NAME);
     }
@@ -105,7 +115,11 @@ class VectorIndexerStage extends Stage {
     }
   }
 
-  async _safeRemove(vectorStore: VectorStoreContract, indexName: string, id: number): Promise<void> {
+  async _safeRemove(
+    vectorStore: VectorStoreContract,
+    indexName: string,
+    id: number,
+  ): Promise<void> {
     try {
       await vectorStore.remove(indexName, id);
     } catch (e) {
@@ -120,4 +134,4 @@ class VectorIndexerStage extends Stage {
   }
 }
 
-export = VectorIndexerStage;
+export default VectorIndexerStage;

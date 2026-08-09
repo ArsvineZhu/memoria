@@ -2,6 +2,7 @@
   "name": "vexus-lite",
   "version": "0.1.0",
   "description": "Lightweight Rust-powered vector index for TagVectorManager",
+  "type": "commonjs",
   "main": "index.js",
   "scripts": {
     "build": "napi build --platform --release",

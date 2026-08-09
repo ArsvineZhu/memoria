@@ -3,7 +3,9 @@ import type {
   VectorLike,
   VectorStoreContract,
   VectorStoreStats,
-} from '../types';
+  VectorIndexEntry,
+} from "../types.js";
+import { at } from "../utils/numerical.js";
 
 /**
  * @abstract
@@ -18,7 +20,7 @@ class VectorStore implements VectorStoreContract {
    * @param {Float32Array} vector
    */
   async add(_indexName: string, _id: number, _vector: VectorLike): Promise<void> {
-    throw new Error('VectorStore.add() must be implemented');
+    throw new Error("VectorStore.add() must be implemented");
   }
 
   /**
@@ -33,10 +35,10 @@ class VectorStore implements VectorStoreContract {
     vectors: readonly VectorLike[] | VectorLike,
   ): Promise<void> {
     if (!Array.isArray(vectors)) {
-      throw new Error('VectorStore.addBatch() must be implemented for flat vectors');
+      throw new Error("VectorStore.addBatch() must be implemented for flat vectors");
     }
     for (let i = 0; i < ids.length; i++) {
-      await this.add(indexName, ids[i], vectors[i]);
+      await this.add(indexName, at(ids, i, "vector ids"), at(vectors, i, "vectors"));
     }
   }
 
@@ -52,7 +54,7 @@ class VectorStore implements VectorStoreContract {
     _queryVector: VectorLike,
     _k: number,
   ): Promise<VectorHit[]> {
-    throw new Error('VectorStore.search() must be implemented');
+    throw new Error("VectorStore.search() must be implemented");
   }
 
   /**
@@ -61,7 +63,14 @@ class VectorStore implements VectorStoreContract {
    * @param {number} id
    */
   async remove(_indexName: string, _id: number): Promise<void> {
-    throw new Error('VectorStore.remove() must be implemented');
+    throw new Error("VectorStore.remove() must be implemented");
+  }
+
+  async replaceIndex(
+    _indexName: string,
+    _entries: readonly VectorIndexEntry[],
+  ): Promise<void> {
+    throw new Error("VectorStore.replaceIndex() must be implemented");
   }
 
   /**
@@ -70,7 +79,7 @@ class VectorStore implements VectorStoreContract {
    * @param {string} path
    */
   async loadIndex(_indexName: string, _path: string): Promise<unknown> {
-    throw new Error('VectorStore.loadIndex() must be implemented');
+    throw new Error("VectorStore.loadIndex() must be implemented");
   }
 
   /**
@@ -79,7 +88,7 @@ class VectorStore implements VectorStoreContract {
    * @param {string} path
    */
   async saveIndex(_indexName: string, _path: string): Promise<void> {
-    throw new Error('VectorStore.saveIndex() must be implemented');
+    throw new Error("VectorStore.saveIndex() must be implemented");
   }
 
   /**
@@ -88,8 +97,8 @@ class VectorStore implements VectorStoreContract {
    * @returns {Promise<{size:number, capacity:number, dimension:number}>}
    */
   async getIndexStats(_indexName: string): Promise<VectorStoreStats> {
-    throw new Error('VectorStore.getIndexStats() must be implemented');
+    throw new Error("VectorStore.getIndexStats() must be implemented");
   }
 }
 
-export = VectorStore;
+export default VectorStore;

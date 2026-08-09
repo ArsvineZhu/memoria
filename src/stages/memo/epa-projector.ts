@@ -1,4 +1,3 @@
-
 import type {
   ChunkCandidate,
   EpaLike,
@@ -11,11 +10,11 @@ import type {
   TagExpansionData,
   TagRow,
   UnknownRecord,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import { EPA } from '../../algorithms/epa';
-import { decodeVectorBlob } from '../../utils/vector-codec';
+import Stage from "../../core/stage.js";
+import { EPA } from "../../algorithms/epa.js";
+import { decodeVectorBlob } from "../../utils/vector-codec.js";
 
 type VectorRow = { vector?: Buffer | Float32Array | null };
 
@@ -48,18 +47,20 @@ type VectorRow = { vector?: Buffer | Float32Array | null };
 class EPAProjectorStage extends Stage {
   constructor() {
     super();
-    this.name = 'epaProjector';
+    this.name = "epaProjector";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'epa' | 'mergedCandidates' | 'tagExpansion'> & {
-    mergedCandidates?: ChunkCandidate[];
-    tagExpansion?: TagExpansionData;
-    epa?: EpaEnvelope;
-    epaSkipped?: boolean;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "epa" | "mergedCandidates" | "tagExpansion"> & {
+      mergedCandidates?: ChunkCandidate[];
+      tagExpansion?: TagExpansionData;
+      epa?: EpaEnvelope;
+      epaSkipped?: boolean;
+    }
+  > {
     const info = input || {};
     const config = ctx.config || {};
 
@@ -68,15 +69,15 @@ class EPAProjectorStage extends Stage {
     }
 
     // 1. Resolve the EPA instance: reuse ctx.epa or build basis from tags.
-    const epa = ctx.epa || await this._buildEpa(config, ctx);
+    const epa = ctx.epa || (await this._buildEpa(config, ctx));
     if (!epa || !epa.initialized) {
       return {
         ...info,
         epa: {
           ready: false,
           queryAnalysis: this._emptyQueryAnalysis(),
-          candidateAnalyses: []
-        }
+          candidateAnalyses: [],
+        },
       };
     }
 
@@ -86,8 +87,12 @@ class EPAProjectorStage extends Stage {
     // 3. Optional per-candidate projection (expensive; opt-in).
     let candidateAnalyses: UnknownRecord[] = [];
     if (config.epaPerCandidateAnalysis && ctx.metadataStore) {
-      candidateAnalyses =
-        await this._candidateAnalyses(epa, info.mergedCandidates, config, ctx);
+      candidateAnalyses = await this._candidateAnalyses(
+        epa,
+        info.mergedCandidates,
+        config,
+        ctx,
+      );
     }
 
     return {
@@ -95,8 +100,8 @@ class EPAProjectorStage extends Stage {
       epa: {
         ready: true,
         queryAnalysis,
-        candidateAnalyses
-      }
+        candidateAnalyses,
+      },
     };
   }
 
@@ -105,21 +110,25 @@ class EPAProjectorStage extends Stage {
    * Mirrors EPAModule's basis construction at query time.
    * @returns {Promise<EPA|null>} null when not enough tag vectors exist.
    */
-  async _buildEpa(config: MemoryConfigOverrides, ctx: PipelineContextLike): Promise<EpaLike | null> {
+  async _buildEpa(
+    config: MemoryConfigOverrides,
+    ctx: PipelineContextLike,
+  ): Promise<EpaLike | null> {
     const metadataStore = ctx.metadataStore;
-    if (!metadataStore || typeof metadataStore.getAllTags !== 'function') {
+    if (!metadataStore || typeof metadataStore.getAllTags !== "function") {
       return null;
     }
     let tags: TagRow[] = [];
     try {
       tags = await metadataStore.getAllTags();
     } catch (e) {
-      console.warn(`[EPAProjector] getAllTags() failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[EPAProjector] getAllTags() failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return null;
     }
     const withVectors = (tags || []).filter(
-      (tag): tag is TagRow & { vector: Buffer | Float32Array } =>
-        tag.vector != null
+      (tag): tag is TagRow & { vector: Buffer | Float32Array } => tag.vector != null,
     );
     if (withVectors.length < 2) return null;
 
@@ -129,16 +138,21 @@ class EPAProjectorStage extends Stage {
     try {
       const basis = EPA.computeBasis(withVectors, dimension, {
         clusterCount: Number(config.epaClusterCount) || 64,
-        maxBasisDim: Number(config.epaMaxBasisDim) || 64
+        maxBasisDim: Number(config.epaMaxBasisDim) || 64,
       });
       return new EPA(basis, { dimension });
     } catch (e) {
-      console.warn(`[EPAProjector] basis compute failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[EPAProjector] basis compute failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return null;
     }
   }
 
-  _resolveDimension(config: MemoryConfigOverrides, tags: readonly VectorRow[]): number | null {
+  _resolveDimension(
+    config: MemoryConfigOverrides,
+    tags: readonly VectorRow[],
+  ): number | null {
     if (config.dimension && Number.isFinite(Number(config.dimension))) {
       return Number(config.dimension);
     }
@@ -153,7 +167,10 @@ class EPAProjectorStage extends Stage {
     return null;
   }
 
-  _queryAnalysis(epa: EpaLike, queryVector: EmbeddingVector | undefined): EpaQueryAnalysis {
+  _queryAnalysis(
+    epa: EpaLike,
+    queryVector: EmbeddingVector | undefined,
+  ): EpaQueryAnalysis {
     if (!queryVector) return this._emptyQueryAnalysis();
     let projection;
     let resonance;
@@ -167,7 +184,7 @@ class EPAProjectorStage extends Stage {
       logicDepth: projection.logicDepth,
       entropy: projection.entropy,
       dominantAxes: projection.dominantAxes || [],
-      resonance
+      resonance,
     };
   }
 
@@ -190,11 +207,7 @@ class EPAProjectorStage extends Stage {
         if (row && row.vector != null) {
           const dimension = this._resolveDimension(config, [row]);
           if (!dimension) continue;
-          vector = decodeVectorBlob(
-            row.vector,
-            dimension,
-            `chunk:${chunkId}`
-          );
+          vector = decodeVectorBlob(row.vector, dimension, `chunk:${chunkId}`);
         }
       } catch (_e) {
         continue;
@@ -210,7 +223,7 @@ class EPAProjectorStage extends Stage {
         chunkId,
         logicDepth: projection.logicDepth,
         entropy: projection.entropy,
-        dominantAxes: projection.dominantAxes || []
+        dominantAxes: projection.dominantAxes || [],
       });
     }
     return results;
@@ -221,9 +234,9 @@ class EPAProjectorStage extends Stage {
       logicDepth: 0,
       entropy: 1,
       dominantAxes: [],
-      resonance: { resonance: 0, bridges: [] }
+      resonance: { resonance: 0, bridges: [] },
     };
   }
 }
 
-export = EPAProjectorStage;
+export default EPAProjectorStage;

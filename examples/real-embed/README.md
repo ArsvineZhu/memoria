@@ -6,13 +6,14 @@
 
 ## 前提
 
-1. 仓库根目录已执行 `npm install`，且 Rust 向量引擎二进制已构建就位（参见根 README 的构建说明）。
+1. 仓库根目录已执行 `corepack pnpm install --frozen-lockfile`，且 Rust 向量引擎二进制已构建就位（参见根 README 的构建说明）。
 2. 本目录放置 `.env` 文件，内容为 `EMBED_API_KEY=sk-xxxx`（或从旧 demo 仓库根目录复制已有配置）。`.env` 已被根 `.gitignore` 排除，勿提交。
 
 ## 运行
 
 ```bash
-node demo-recall.js
+corepack pnpm build:test
+node ../../dist-test/examples/real-embed/demo-recall.js
 ```
 
 ## 输出样式示例

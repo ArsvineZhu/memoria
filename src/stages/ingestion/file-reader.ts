@@ -1,11 +1,10 @@
+import type { PipelineContextLike, PipelineData } from "../../types.js";
 
-import type { PipelineContextLike, PipelineData } from '../../types';
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as crypto from "node:crypto";
 
-import fs = require('fs');
-import path = require('path');
-import crypto = require('crypto');
-
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
 
 /**
  * Reads a file from disk (or accepts caller-supplied content),
@@ -23,11 +22,25 @@ import Stage = require('../../core/stage');
 class FileReaderStage extends Stage {
   constructor() {
     super();
-    this.name = 'fileReader';
+    this.name = "fileReader";
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<
-    Omit<PipelineData, 'path' | 'relPath' | 'diaryName' | 'content' | 'checksum' | 'mtime' | 'size' | 'needsEmbedding' | 'unstable'> & {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<
+    Omit<
+      PipelineData,
+      | "path"
+      | "relPath"
+      | "diaryName"
+      | "content"
+      | "checksum"
+      | "mtime"
+      | "size"
+      | "needsEmbedding"
+      | "unstable"
+    > & {
       path: string;
       relPath: string;
       diaryName: string;
@@ -39,8 +52,8 @@ class FileReaderStage extends Stage {
       unstable: boolean;
     }
   > {
-    if (!input || typeof input.path !== 'string') {
-      throw new TypeError('FileReaderStage requires input.path');
+    if (!input || typeof input.path !== "string") {
+      throw new TypeError("FileReaderStage requires input.path");
     }
 
     const filePath = input.path;
@@ -51,11 +64,15 @@ class FileReaderStage extends Stage {
     let size = input.size;
     let unstable = false;
 
-    if (typeof content !== 'string' || typeof mtime !== 'number' || typeof size !== 'number') {
+    if (
+      typeof content !== "string" ||
+      typeof mtime !== "number" ||
+      typeof size !== "number"
+    ) {
       const statsBefore = await fs.promises.stat(filePath);
       mtime = Math.trunc(statsBefore.mtimeMs);
       size = statsBefore.size;
-      content = await fs.promises.readFile(filePath, 'utf-8');
+      content = await fs.promises.readFile(filePath, "utf-8");
 
       // Truth-snapshot guard: if the file changed while being read, the
       // snapshot is unstable and must not be written as a final state.
@@ -67,33 +84,53 @@ class FileReaderStage extends Stage {
       }
       if (
         statsAfter &&
-        (statsAfter.size !== statsBefore.size || Math.trunc(statsAfter.mtimeMs) !== mtime)
+        (statsAfter.size !== statsBefore.size ||
+          Math.trunc(statsAfter.mtimeMs) !== mtime)
       ) {
         unstable = true;
       }
     }
 
-    const relPathRaw = input.relPath ||
-      (rootPath
-        ? path.relative(rootPath, filePath)
-        : path.basename(filePath));
+    const relPathRaw =
+      input.relPath ||
+      (rootPath ? path.relative(rootPath, filePath) : path.basename(filePath));
     // Relative paths are stored with forward slashes on every platform
     // (mirrors the original knowledge base path convention).
-    const relPath = relPathRaw.split(path.sep).join('/');
-    const parts = relPath.split('/');
-    const diaryName = parts.length > 1 ? parts[0] : 'Root';
+    const relPath = relPathRaw.split(path.sep).join("/");
+    const parts = relPath.split("/");
+    const diaryName =
+      typeof input.documentId === "string"
+        ? input.diaryName || "Logical"
+        : parts.length > 1
+          ? (parts[0] ?? "Root")
+          : "Root";
 
-    const checksum = crypto.createHash('md5').update(content).digest('hex');
+    if (typeof content !== "string") {
+      throw new TypeError("FileReaderStage could not obtain text content");
+    }
+
+    const checksum = crypto.createHash("md5").update(content).digest("hex");
 
     let needsEmbedding = true;
     if (!unstable && ctx.metadataStore) {
       const row = await ctx.metadataStore.getFileByPath(relPath);
-      if (row && row.checksum === checksum && row.size === size && row.mtime === mtime) {
+      const revisionMatches =
+        typeof input.documentId !== "string" ||
+        input.revision === undefined ||
+        row?.revision === input.revision;
+      if (
+        row &&
+        revisionMatches &&
+        row.checksum === checksum &&
+        row.size === size &&
+        row.mtime === mtime
+      ) {
         needsEmbedding = false;
       }
     }
 
     return {
+      ...input,
       path: filePath,
       relPath,
       diaryName,
@@ -102,9 +139,9 @@ class FileReaderStage extends Stage {
       mtime,
       size,
       needsEmbedding,
-      unstable
+      unstable,
     };
   }
 }
 
-export = FileReaderStage;
+export default FileReaderStage;

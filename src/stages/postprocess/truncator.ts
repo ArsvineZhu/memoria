@@ -1,7 +1,11 @@
+import type {
+  ChunkCandidate,
+  PipelineContextLike,
+  PipelineData,
+  TruncationStats,
+} from "../../types.js";
 
-import type { ChunkCandidate, PipelineContextLike, PipelineData, TruncationStats } from '../../types';
-
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
 
 /**
  * Postprocess stage: caps candidate count and content length.
@@ -24,16 +28,18 @@ import Stage = require('../../core/stage');
 class TruncatorStage extends Stage {
   constructor() {
     super();
-    this.name = 'truncator';
+    this.name = "truncator";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'mergedCandidates' | 'truncationStats'> & {
-    mergedCandidates: ChunkCandidate[];
-    truncationStats?: TruncationStats;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "mergedCandidates" | "truncationStats"> & {
+      mergedCandidates: ChunkCandidate[];
+      truncationStats?: TruncationStats;
+    }
+  > {
     const info = input || {};
     const config = ctx.config || {};
     const candidates = Array.isArray(info.mergedCandidates)
@@ -48,13 +54,14 @@ class TruncatorStage extends Stage {
     const maxResults = Number.isFinite(topK) && topK > 0 ? Math.floor(topK) : Infinity;
 
     const maxContentLength = Number(config.maxContentLength);
-    const contentCap = Number.isFinite(maxContentLength) && maxContentLength > 0
-      ? Math.floor(maxContentLength)
-      : Infinity;
+    const contentCap =
+      Number.isFinite(maxContentLength) && maxContentLength > 0
+        ? Math.floor(maxContentLength)
+        : Infinity;
     const addEllipsis = config.truncateEllipsis === true;
 
     let truncated = 0;
-    const sliced = candidates.slice(0, maxResults).map(candidate => {
+    const sliced = candidates.slice(0, maxResults).map((candidate) => {
       const trimmed = this._truncateContent(candidate, contentCap, addEllipsis);
       if (trimmed !== candidate) truncated += 1;
       return trimmed;
@@ -65,8 +72,8 @@ class TruncatorStage extends Stage {
       mergedCandidates: sliced,
       truncationStats: {
         dropped: candidates.length - sliced.length,
-        truncated
-      }
+        truncated,
+      },
     };
   }
 
@@ -75,29 +82,24 @@ class TruncatorStage extends Stage {
     cap: number,
     addEllipsis: boolean,
   ): ChunkCandidate {
-    if (
-      candidate.content === undefined
-      && candidate.text === undefined
-    ) {
+    if (candidate.content === undefined && candidate.text === undefined) {
       return candidate;
     }
     if (cap === Infinity) return candidate;
 
-    const content = String(candidate.content ?? '');
-    const text = String(candidate.text ?? '');
+    const content = String(candidate.content ?? "");
+    const text = String(candidate.text ?? "");
     const contentTruncated = content.length > cap;
     const textTruncated = text.length > cap;
     if (!contentTruncated && !textTruncated) return candidate;
 
-    const suffix = addEllipsis ? '…' : '';
+    const suffix = addEllipsis ? "…" : "";
     return {
       ...candidate,
-      ...(contentTruncated
-        ? { content: content.slice(0, cap) + suffix }
-        : {}),
-      ...(textTruncated ? { text: text.slice(0, cap) + suffix } : {})
+      ...(contentTruncated ? { content: content.slice(0, cap) + suffix } : {}),
+      ...(textTruncated ? { text: text.slice(0, cap) + suffix } : {}),
     };
   }
 }
 
-export = TruncatorStage;
+export default TruncatorStage;

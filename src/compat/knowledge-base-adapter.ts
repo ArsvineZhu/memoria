@@ -1,11 +1,11 @@
-'use strict';
+"use strict";
 
-import path = require('path');
+import * as path from "node:path";
 
-import ResultDeduplicator = require('../algorithms/result-deduplicator');
-import { decodeVectorBlob } from '../utils/vector-codec';
-import { EPA } from '../algorithms/epa';
-import type { EngineStats, MemoryEngine } from '../engine';
+import ResultDeduplicator from "../algorithms/result-deduplicator.js";
+import { decodeVectorBlob } from "../utils/vector-codec.js";
+import { EPA } from "../algorithms/epa.js";
+import type { EngineStats, MemoryEngine } from "../engine.js";
 import type {
   ChunkRow,
   DatabaseLike,
@@ -22,7 +22,7 @@ import type {
   UnknownRecord,
   VectorHit,
   VectorLike,
-} from '../types';
+} from "../types.js";
 
 type FlushInput = FileInput | readonly FileInput[] | string;
 type CompatResult = SearchResult & {
@@ -49,7 +49,11 @@ type CompatChunk = {
 type MutationOperation = () => unknown | Promise<unknown>;
 type EpaCache = { epa: EPA; dimension: number; indexedAt: number | null };
 type IndexLike = { stats(): UnknownRecord };
-type DateIndexEntry = { relativePath: string; date: string | null; diaryDate: Date | null };
+type DateIndexEntry = {
+  relativePath: string;
+  date: string | null;
+  diaryDate: Date | null;
+};
 type ChunkQueryRow = {
   chunk_id: number;
   chunk_index: number;
@@ -122,13 +126,13 @@ class KnowledgeBaseAdapter {
   _resultDeduplicator?: ResultDeduplicator;
   /**
    * @param {object} options
-   * @param {import('../engine').MemoryEngine} options.engine
+   * @param {import('../engine.js').MemoryEngine} options.engine
    */
   constructor({ engine }: { engine?: MemoryEngine } = {}) {
     if (!engine) {
-      throw new TypeError('KnowledgeBaseAdapter requires an engine');
+      throw new TypeError("KnowledgeBaseAdapter requires an engine");
     }
-    this.name = 'knowledgeBaseAdapter';
+    this.name = "knowledgeBaseAdapter";
     this.engine = engine;
 
     // ── Call-site passthroughs ──────────────────────────────────────
@@ -196,8 +200,10 @@ class KnowledgeBaseAdapter {
     operation: MutationOperation,
     _options: UnknownRecord = {},
   ): Promise<unknown> {
-    if (typeof operation !== 'function') {
-      return Promise.reject(new TypeError('runExternalFileMutation requires an operation function'));
+    if (typeof operation !== "function") {
+      return Promise.reject(
+        new TypeError("runExternalFileMutation requires an operation function"),
+      );
     }
     const run = this._mutationTail.then(async () => {
       this._mutationOwner = owner;
@@ -229,7 +235,7 @@ class KnowledgeBaseAdapter {
     if (vectorStore && vectorStore.indices instanceof Map) {
       for (const index of (vectorStore.indices as Map<string, IndexLike>).values()) {
         indices += 1;
-        if (!index || typeof index.stats !== 'function') continue;
+        if (!index || typeof index.stats !== "function") continue;
         try {
           const stats = index.stats();
           vectors += Number(stats && stats.totalVectors) || 0;
@@ -244,7 +250,7 @@ class KnowledgeBaseAdapter {
       estimatedBytes: vectors * dimension * 4,
       vectors,
       indices,
-      dimension
+      dimension,
     };
   }
 
@@ -255,20 +261,20 @@ class KnowledgeBaseAdapter {
   getHealthStatus() {
     const store = this.engine && this.engine.metadataStore;
     if (!store) {
-      return { status: 'unavailable', healthy: false, issues: [] };
+      return { status: "unavailable", healthy: false, issues: [] };
     }
     const issues: string[] = [];
     try {
-      if (store.db && typeof store.db.prepare === 'function') {
-        store.db.prepare('SELECT 1').get();
+      if (store.db && typeof store.db.prepare === "function") {
+        store.db.prepare("SELECT 1").get();
       }
     } catch (e) {
       issues.push(e instanceof Error ? e.message : String(e));
     }
     return {
-      status: issues.length === 0 ? 'healthy' : 'degraded',
+      status: issues.length === 0 ? "healthy" : "degraded",
       healthy: issues.length === 0,
-      issues
+      issues,
     };
   }
 
@@ -289,17 +295,22 @@ class KnowledgeBaseAdapter {
     k?: number,
     tagBoost?: unknown,
   ): Promise<CompatResult[]>;
-  async search(queryVector: VectorLike, k?: number, tagBoost?: unknown): Promise<CompatResult[]>;
+  async search(
+    queryVector: VectorLike,
+    k?: number,
+    tagBoost?: unknown,
+  ): Promise<CompatResult[]>;
   async search(...args: unknown[]): Promise<SearchEnvelope | CompatResult[]> {
     const [arg1, arg2] = args;
-    const isDiaryNameArray = Array.isArray(arg1)
-      && arg1.every((name): name is string => typeof name === 'string');
-    if ((typeof arg1 === 'string' || isDiaryNameArray) && this._isVectorLike(arg2)) {
+    const isDiaryNameArray =
+      Array.isArray(arg1) &&
+      arg1.every((name): name is string => typeof name === "string");
+    if ((typeof arg1 === "string" || isDiaryNameArray) && this._isVectorLike(arg2)) {
       return this._vectorSearch(
         isDiaryNameArray ? arg1 : [arg1 as string],
         arg2,
         Number(args[2]) || 5,
-        args[3] || 0
+        args[3] || 0,
       );
     }
     if (this._isVectorLike(arg1)) {
@@ -308,10 +319,10 @@ class KnowledgeBaseAdapter {
     }
     // Text search falls back to the engine pipeline.
     return this.engine.search(
-      String(arg1 || ''),
-      typeof arg2 === 'object' && arg2 !== null && !Array.isArray(arg2)
-        ? arg2 as UnknownRecord
-        : {}
+      String(arg1 || ""),
+      typeof arg2 === "object" && arg2 !== null && !Array.isArray(arg2)
+        ? (arg2 as UnknownRecord)
+        : {},
     );
   }
 
@@ -321,24 +332,28 @@ class KnowledgeBaseAdapter {
    */
   async _vectorIndexNames(): Promise<string[]> {
     const engine = this.engine;
-    if (engine.vectorStore && engine.vectorStore.indices instanceof Map && engine.vectorStore.indices.size > 0) {
+    if (
+      engine.vectorStore &&
+      engine.vectorStore.indices instanceof Map &&
+      engine.vectorStore.indices.size > 0
+    ) {
       return [...engine.vectorStore.indices.keys()];
     }
     try {
       const names = await engine.metadataStore.getDistinctDiaryNames();
-      return names && names.length ? names : ['Root'];
+      return names && names.length ? names : ["Root"];
     } catch (e) {
-      return ['Root'];
+      return ["Root"];
     }
   }
 
   _isVectorLike(value: unknown): value is VectorLike {
-    return Array.isArray(value)
-      || value instanceof Float32Array
-      || (
-        ArrayBuffer.isView(value)
-        && typeof (value as unknown as ArrayLike<unknown>).length === 'number'
-      );
+    return (
+      Array.isArray(value) ||
+      value instanceof Float32Array ||
+      (ArrayBuffer.isView(value) &&
+        typeof (value as unknown as ArrayLike<unknown>).length === "number")
+    );
   }
 
   /**
@@ -361,17 +376,20 @@ class KnowledgeBaseAdapter {
     const engine = this.engine;
     const vectorStore = engine.vectorStore;
     const store = engine.metadataStore;
-    if (!vectorStore || typeof vectorStore.search !== 'function') return [];
+    if (!vectorStore || typeof vectorStore.search !== "function") return [];
 
-    const query = queryVector instanceof Float32Array
-      ? queryVector
-      : new Float32Array(queryVector);
+    const query =
+      queryVector instanceof Float32Array ? queryVector : new Float32Array(queryVector);
 
     const bestById = new Map<number, { chunkId: number; score: number }>();
     for (const indexName of indexNames) {
       let results: VectorHit[] = [];
       try {
-        results = await vectorStore.search(indexName, query, Math.max(1, Math.round(k)));
+        results = await vectorStore.search(
+          indexName,
+          query,
+          Math.max(1, Math.round(k)),
+        );
       } catch (e) {
         continue;
       }
@@ -394,16 +412,15 @@ class KnowledgeBaseAdapter {
       } catch (e) {
         continue;
       }
-      const row: FileRow | null = chunk && chunk.fileId != null
-        ? await store.getFileByChunkId(chunk.id)
-        : null;
-      const fullPath = row && row.path ? row.path : '';
+      const row: FileRow | null =
+        chunk && chunk.fileId != null ? await store.getFileByChunkId(chunk.id) : null;
+      const fullPath = row && row.path ? row.path : "";
       let tagNames: string[] = [];
       if (row) {
         try {
           const tags = await store.getFileTags(row.id);
           tagNames = Array.isArray(tags)
-            ? tags.map(t => (t && t.name) || String(t))
+            ? tags.map((t) => (t && t.name) || String(t))
             : [];
         } catch (e) {
           tagNames = [];
@@ -411,21 +428,19 @@ class KnowledgeBaseAdapter {
       }
       hydrated.push({
         chunkId,
-        text: chunk ? chunk.content : '',
+        text: chunk ? chunk.content : "",
         score,
-        sourceFile: fullPath ? path.basename(fullPath) : '',
+        sourceFile: fullPath ? path.basename(fullPath) : "",
         fullPath,
         matchedTags: tagNames,
         tagMatchCount: tagNames.length,
         coreTagsMatched: [],
         boostFactor: 0,
-        tagMatchScore: 0
+        tagMatchScore: 0,
       });
     }
 
-    hydrated.sort((a, b) =>
-      (b.score - a.score) || (Number(a.chunkId) - Number(b.chunkId))
-    );
+    hydrated.sort((a, b) => b.score - a.score || Number(a.chunkId) - Number(b.chunkId));
     return hydrated.slice(0, Math.max(1, Math.round(k)));
   }
 
@@ -440,7 +455,7 @@ class KnowledgeBaseAdapter {
    */
   removeDocument(filePath: string): Promise<unknown> {
     this._invalidateCaches();
-    return this.engine.deleteFile(String(filePath || ''));
+    return this.engine.deleteFile(String(filePath || ""));
   }
 
   /**
@@ -468,21 +483,21 @@ class KnowledgeBaseAdapter {
     const deduplicator = this._resultDeduplicator || this._createResultDeduplicator();
     this._resultDeduplicator = deduplicator;
     try {
-      return await deduplicator.deduplicate(
+      return (await deduplicator.deduplicate(
         candidates,
         queryVector,
-        options as Parameters<ResultDeduplicator['deduplicate']>[2]
-      ) as unknown as SearchResult[];
+        options as Parameters<ResultDeduplicator["deduplicate"]>[2],
+      )) as unknown as SearchResult[];
     } catch (error) {
       console.warn(
-        `[KnowledgeBaseAdapter] deduplicateResults failed at stage=${String(options.stage || 'unknown')}; ` +
-        `falling back to exact deduplication: ${error instanceof Error ? error.message : String(error)}`
+        `[KnowledgeBaseAdapter] deduplicateResults failed at stage=${String(options.stage || "unknown")}; ` +
+          `falling back to exact deduplication: ${error instanceof Error ? error.message : String(error)}`,
       );
       try {
         return deduplicator.hardDeduplicate(candidates) as unknown as SearchResult[];
       } catch (fallbackError) {
         console.warn(
-          `[KnowledgeBaseAdapter] Exact deduplication fallback also failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`
+          `[KnowledgeBaseAdapter] Exact deduplication fallback also failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
         );
         return candidates;
       }
@@ -495,12 +510,9 @@ class KnowledgeBaseAdapter {
   _createResultDeduplicator(): ResultDeduplicator {
     const engine = this.engine;
     const store = engine && engine.metadataStore;
-    return new ResultDeduplicator(
-      store?.db,
-      {
-        dimension: Number(engine && engine.config && engine.config.dimension) || 3072
-      }
-    );
+    return new ResultDeduplicator(store?.db, {
+      dimension: Number(engine && engine.config && engine.config.dimension) || 3072,
+    });
   }
 
   /**
@@ -513,7 +525,7 @@ class KnowledgeBaseAdapter {
    */
   async getEPAAnalysis(vector: VectorLike): Promise<EpaAnalysis> {
     const fallback = { logicDepth: 0.5, resonance: 0, entropy: 0.5, dominantAxes: [] };
-    if (!vector || typeof vector.length !== 'number' || vector.length === 0) {
+    if (!vector || typeof vector.length !== "number" || vector.length === 0) {
       return fallback;
     }
 
@@ -524,13 +536,13 @@ class KnowledgeBaseAdapter {
       const projection = epa.project(vector);
       const resonanceInfo = epa.detectCrossDomainResonance(vector);
       const resonance = Number(
-        resonanceInfo && resonanceInfo.resonance != null ? resonanceInfo.resonance : 0
+        resonanceInfo && resonanceInfo.resonance != null ? resonanceInfo.resonance : 0,
       );
       return {
         logicDepth: Number(projection.logicDepth) || 0,
         resonance: Number.isFinite(resonance) ? resonance : 0,
         entropy: Number(projection.entropy) || 1,
-        dominantAxes: projection.dominantAxes || []
+        dominantAxes: projection.dominantAxes || [],
       };
     } catch (e) {
       return fallback;
@@ -547,12 +559,12 @@ class KnowledgeBaseAdapter {
     const engine = this.engine;
     const store = engine && engine.metadataStore;
     const dimension = Number(engine && engine.config && engine.config.dimension) || 0;
-    if (!store || typeof store.getAllTags !== 'function' || dimension <= 0) return null;
+    if (!store || typeof store.getAllTags !== "function" || dimension <= 0) return null;
 
     if (
-      this._epaCache
-      && this._epaCache.dimension === dimension
-      && this._epaCache.indexedAt === engine._lastIndexedAt
+      this._epaCache &&
+      this._epaCache.dimension === dimension &&
+      this._epaCache.indexedAt === engine._lastIndexedAt
     ) {
       return this._epaCache.epa;
     }
@@ -564,7 +576,7 @@ class KnowledgeBaseAdapter {
       return null;
     }
     const withVectors = (tags || []).filter(
-      (tag): tag is TagRow & { vector: Buffer | Float32Array } => tag.vector != null
+      (tag): tag is TagRow & { vector: Buffer | Float32Array } => tag.vector != null,
     );
     if (withVectors.length < 2) return null;
 
@@ -572,7 +584,7 @@ class KnowledgeBaseAdapter {
     try {
       basis = EPA.computeBasis(withVectors, dimension, {
         clusterCount: Math.min(64, withVectors.length),
-        maxBasisDim: Math.min(64, dimension)
+        maxBasisDim: Math.min(64, dimension),
       });
     } catch (e) {
       return null;
@@ -605,9 +617,8 @@ class KnowledgeBaseAdapter {
     _coreBoostFactor = 1.33,
     _options: UnknownRecord = {},
   ): Promise<TagBoostEnvelope> {
-    const source = vector instanceof Float32Array
-      ? vector
-      : new Float32Array(vector || []);
+    const source =
+      vector instanceof Float32Array ? vector : new Float32Array(vector || []);
     return {
       vector: new Float32Array(source),
       info: {
@@ -615,12 +626,12 @@ class KnowledgeBaseAdapter {
         coreTagsMatched: [],
         boostFactor: 0,
         tagBoost: Number(tagBoost) || 0,
-        tagMatchScore: 0
+        tagMatchScore: 0,
       },
       energyField: null,
       energyFieldProvenance: null,
       artifactBundle: null,
-      preparedMemoObservation: null
+      preparedMemoObservation: null,
     };
   }
 
@@ -667,14 +678,18 @@ class KnowledgeBaseAdapter {
    */
   getDiaryDateIndex(diaryName: string): DateIndexEntry[] {
     const db = this.db;
-    if (!db || typeof db.prepare !== 'function' || !diaryName) return [];
+    if (!db || typeof db.prepare !== "function" || !diaryName) return [];
 
-    let rows: Array<{ path: string; updated_at?: number | null; mtime?: number | null }> = [];
+    let rows: Array<{
+      path: string;
+      updated_at?: number | null;
+      mtime?: number | null;
+    }> = [];
     try {
       const statement = db.prepare(
-        'SELECT path, updated_at, mtime FROM files WHERE diary_name = ?'
+        "SELECT path, updated_at, mtime FROM files WHERE diary_name = ?",
       );
-      if (typeof statement.all !== 'function') return [];
+      if (typeof statement.all !== "function") return [];
       rows = statement.all(String(diaryName)) as Array<{
         path: string;
         updated_at?: number | null;
@@ -689,13 +704,15 @@ class KnowledgeBaseAdapter {
         const time = Number(row.updated_at) || Number(row.mtime) || 0;
         const date = time > 0 ? new Date(time * 1000) : null;
         return {
-          relativePath: String(row.path || ''),
+          relativePath: String(row.path || ""),
           date: date ? date.toISOString() : null,
-          diaryDate: date
+          diaryDate: date,
         };
       })
-      .filter(meta => meta.relativePath && meta.date)
-      .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+      .filter((meta) => meta.relativePath && meta.date)
+      .sort(
+        (a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime(),
+      );
   }
 
   /**
@@ -704,7 +721,7 @@ class KnowledgeBaseAdapter {
    * @returns {Promise<Float32Array|null>}
    */
   async getDiaryNameVector(diaryName: string): Promise<Float32Array | null> {
-    return this._embedText(String(diaryName || ''));
+    return this._embedText(String(diaryName || ""));
   }
 
   /**
@@ -713,8 +730,11 @@ class KnowledgeBaseAdapter {
    * @param {string} text
    * @returns {Promise<Float32Array|null>}
    */
-  async getVectorByText(_diaryName: string | null, text: string): Promise<Float32Array | null> {
-    return this._embedText(String(text || ''));
+  async getVectorByText(
+    _diaryName: string | null,
+    text: string,
+  ): Promise<Float32Array | null> {
+    return this._embedText(String(text || ""));
   }
 
   /**
@@ -727,14 +747,12 @@ class KnowledgeBaseAdapter {
   async _embedText(text: string): Promise<Float32Array | null> {
     if (!text.trim()) return null;
     const provider = this.engine && this.engine.embeddingProvider;
-    if (!provider || typeof provider.embedBatch !== 'function') return null;
+    if (!provider || typeof provider.embedBatch !== "function") return null;
     try {
       const vectors = await provider.embedBatch([text]);
       const vector = vectors && vectors[0];
       if (vector == null) return null;
-      return vector instanceof Float32Array
-        ? vector
-        : new Float32Array(vector);
+      return vector instanceof Float32Array ? vector : new Float32Array(vector);
     } catch (e) {
       return null;
     }
@@ -747,11 +765,12 @@ class KnowledgeBaseAdapter {
    */
   async getVectorByChunkId(chunkId: number | string): Promise<Float32Array | null> {
     const db = this.db;
-    if (!db || typeof db.prepare !== 'function') return null;
+    if (!db || typeof db.prepare !== "function") return null;
     const id = Number(chunkId);
     if (!Number.isFinite(id) || id <= 0) return null;
     try {
-      const row = db.prepare('SELECT vector FROM chunks WHERE id = ?').get(id) as { vector?: Buffer | Float32Array | null } | undefined;
+      const row = db.prepare("SELECT vector FROM chunks WHERE id = ?").get(id) as
+        { vector?: Buffer | Float32Array | null } | undefined;
       if (!row || row.vector == null) return null;
       return this._decodeChunkVector(row.vector);
     } catch (e) {
@@ -766,11 +785,12 @@ class KnowledgeBaseAdapter {
    * @private
    */
   _decodeChunkVector(blob: Buffer | Float32Array): Float32Array | null {
-    const dimension = Number(
-      this.engine && this.engine.config && this.engine.config.dimension
-    ) || 0;
+    const dimension =
+      Number(this.engine && this.engine.config && this.engine.config.dimension) || 0;
     if (dimension <= 0) return null;
-    return decodeVectorBlob(blob, dimension, 'chunk', { logPrefix: 'KnowledgeBaseAdapter' });
+    return decodeVectorBlob(blob, dimension, "chunk", {
+      logPrefix: "KnowledgeBaseAdapter",
+    });
   }
 
   /**
@@ -782,7 +802,7 @@ class KnowledgeBaseAdapter {
    */
   async getChunksByFilePaths(filePaths: readonly string[]): Promise<CompatChunk[]> {
     const db = this.db;
-    if (!db || typeof db.prepare !== 'function' || !Array.isArray(filePaths)) {
+    if (!db || typeof db.prepare !== "function" || !Array.isArray(filePaths)) {
       return [];
     }
     const unique = [...new Set(filePaths.filter(Boolean))];
@@ -791,7 +811,7 @@ class KnowledgeBaseAdapter {
     const rows: ChunkQueryRow[] = [];
     for (let i = 0; i < unique.length; i += 500) {
       const batch = unique.slice(i, i + 500);
-      const placeholders = batch.map(() => '?').join(',');
+      const placeholders = batch.map(() => "?").join(",");
       try {
         const statement = db.prepare(`
           SELECT c.id AS chunk_id, c.chunk_index, c.content, c.vector,
@@ -802,28 +822,30 @@ class KnowledgeBaseAdapter {
           WHERE f.path IN (${placeholders})
           ORDER BY c.chunk_index
         `);
-        if (typeof statement.all === 'function') {
-          rows.push(...statement.all(...batch) as ChunkQueryRow[]);
+        if (typeof statement.all === "function") {
+          rows.push(...(statement.all(...batch) as ChunkQueryRow[]));
         }
       } catch (e) {
         continue;
       }
     }
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       chunkId: Number(row.chunk_id),
       chunkIndex: Number(row.chunk_index),
       text: row.content,
       content: row.content,
       fileId: Number(row.file_id),
-      fullPath: String(row.full_path || ''),
-      sourceFile: String(row.full_path || '') ? path.basename(String(row.full_path)) : '',
-      diaryName: String(row.diary_name || ''),
+      fullPath: String(row.full_path || ""),
+      sourceFile: String(row.full_path || "")
+        ? path.basename(String(row.full_path))
+        : "",
+      diaryName: String(row.diary_name || ""),
       updatedAt: row.updated_at != null ? Number(row.updated_at) : null,
       mtime: row.mtime != null ? Number(row.mtime) : null,
-      vector: row.vector != null ? this._decodeChunkVector(row.vector) : null
+      vector: row.vector != null ? this._decodeChunkVector(row.vector) : null,
     }));
   }
 }
 
-export = KnowledgeBaseAdapter;
+export default KnowledgeBaseAdapter;

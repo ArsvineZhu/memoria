@@ -1,12 +1,12 @@
-
 import type {
   EmbeddingVector,
   PipelineContextLike,
   PipelineData,
   ChunkEntry,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
+import { at } from "../../utils/numerical.js";
 
 /**
  * Embeds document chunks via ctx.embeddingProvider.
@@ -16,10 +16,13 @@ import Stage = require('../../core/stage');
 class ChunkEmbedderStage extends Stage {
   constructor() {
     super();
-    this.name = 'chunkEmbedder';
+    this.name = "chunkEmbedder";
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<Omit<PipelineData, 'chunkEntries'> & { chunkEntries: ChunkEntry[] }> {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<Omit<PipelineData, "chunkEntries"> & { chunkEntries: ChunkEntry[] }> {
     const fileInfo = input;
     const chunks: string[] = Array.isArray(fileInfo.chunks) ? fileInfo.chunks : [];
 
@@ -30,15 +33,17 @@ class ChunkEmbedderStage extends Stage {
 
     const chunkEntries: ChunkEntry[] = [];
     for (let i = 0; i < chunks.length; i++) {
-      const vector = vectors[i];
+      const vector = at(vectors, i, "chunk embeddings");
       if (vector == null) {
-        console.warn(`[ChunkEmbedder] ⚠️ Skipping chunk ${i} (embedding failed or null).`);
+        console.warn(
+          `[ChunkEmbedder] ⚠️ Skipping chunk ${i} (embedding failed or null).`,
+        );
         continue;
       }
       chunkEntries.push({
         chunkIndex: i,
-        content: chunks[i],
-        vector
+        content: at(chunks, i, "chunks"),
+        vector,
       });
     }
 
@@ -46,4 +51,4 @@ class ChunkEmbedderStage extends Stage {
   }
 }
 
-export = ChunkEmbedderStage;
+export default ChunkEmbedderStage;

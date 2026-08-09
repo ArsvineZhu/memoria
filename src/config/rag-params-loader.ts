@@ -1,7 +1,7 @@
-'use strict';
+"use strict";
 
-import fs = require('fs');
-import type { MemoryConfigOverrides, UnknownRecord } from '../types';
+import * as fs from "node:fs";
+import type { MemoryConfigOverrides, UnknownRecord } from "../types.js";
 
 interface RagLoaderOptions {
   path?: string;
@@ -10,7 +10,7 @@ interface RagLoaderOptions {
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
@@ -50,10 +50,7 @@ function applyOverrides(base: UnknownRecord, overrides?: UnknownRecord): Unknown
   const merged = { ...base };
   for (const [section, value] of Object.entries(overrides)) {
     if (value === undefined) continue;
-    if (
-      isRecord(value)
-      && isRecord(merged[section])
-    ) {
+    if (isRecord(value) && isRecord(merged[section])) {
       merged[section] = { ...merged[section], ...value };
     } else {
       merged[section] = value;
@@ -70,11 +67,15 @@ function applyOverrides(base: UnknownRecord, overrides?: UnknownRecord): Unknown
  */
 function parseRagParams(json: string): UnknownRecord {
   const parsed = JSON.parse(json);
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new TypeError('rag_params.json root must be a JSON object');
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TypeError("rag_params.json root must be a JSON object");
   }
-  if (isRecord(parsed) && parsed.KnowledgeBaseManager !== undefined && !isRecord(parsed.KnowledgeBaseManager)) {
-    throw new TypeError('rag_params.json KnowledgeBaseManager must be an object');
+  if (
+    isRecord(parsed) &&
+    parsed.KnowledgeBaseManager !== undefined &&
+    !isRecord(parsed.KnowledgeBaseManager)
+  ) {
+    throw new TypeError("rag_params.json KnowledgeBaseManager must be an object");
   }
   return parsed;
 }
@@ -88,17 +89,21 @@ function parseRagParams(json: string): UnknownRecord {
  * @param {object} [options.defaults]         - base object merged under everything
  * @returns {Promise<object>}
  */
-async function loadRagParams({ path: ragPath, overrides, defaults }: RagLoaderOptions = {}): Promise<UnknownRecord> {
+async function loadRagParams({
+  path: ragPath,
+  overrides,
+  defaults,
+}: RagLoaderOptions = {}): Promise<UnknownRecord> {
   let loaded: UnknownRecord = isRecord(defaults)
     ? { ...defaults }
     : { ...RAG_PARAMS_DEFAULTS };
 
   if (ragPath) {
     try {
-      const json = await fs.promises.readFile(ragPath, 'utf-8');
+      const json = await fs.promises.readFile(ragPath, "utf-8");
       loaded = applyOverrides(loaded, parseRagParams(json));
     } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         return applyOverrides(loaded, overrides);
       }
       throw error;
@@ -112,20 +117,20 @@ async function loadRagParams({ path: ragPath, overrides, defaults }: RagLoaderOp
  * @param {object} [options={}]
  * @returns {object}
  */
-function loadRagParamsSync({ path: ragPath, overrides, defaults }: RagLoaderOptions = {}): UnknownRecord {
+function loadRagParamsSync({
+  path: ragPath,
+  overrides,
+  defaults,
+}: RagLoaderOptions = {}): UnknownRecord {
   let loaded: UnknownRecord = isRecord(defaults)
     ? { ...defaults }
     : { ...RAG_PARAMS_DEFAULTS };
 
   if (ragPath && fs.existsSync(ragPath)) {
-    const text = fs.readFileSync(ragPath, 'utf-8');
+    const text = fs.readFileSync(ragPath, "utf-8");
     loaded = applyOverrides(loaded, parseRagParams(text));
   }
   return applyOverrides(loaded, overrides);
 }
 
-export {
-  RAG_PARAMS_DEFAULTS,
-  loadRagParams,
-  loadRagParamsSync
-};
+export { RAG_PARAMS_DEFAULTS, loadRagParams, loadRagParamsSync };

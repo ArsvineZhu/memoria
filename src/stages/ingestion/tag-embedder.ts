@@ -1,12 +1,12 @@
-
 import type {
   EmbeddingVector,
   PipelineContextLike,
   PipelineData,
   TagEntry,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
+import { at } from "../../utils/numerical.js";
 
 /**
  * Embeds document tags via ctx.embeddingProvider.
@@ -16,10 +16,13 @@ import Stage = require('../../core/stage');
 class TagEmbedderStage extends Stage {
   constructor() {
     super();
-    this.name = 'tagEmbedder';
+    this.name = "tagEmbedder";
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<Omit<PipelineData, 'tagEntries'> & { tagEntries: TagEntry[] }> {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<Omit<PipelineData, "tagEntries"> & { tagEntries: TagEntry[] }> {
     const fileInfo = input;
     const tags: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
 
@@ -30,14 +33,16 @@ class TagEmbedderStage extends Stage {
 
     const tagEntries: TagEntry[] = [];
     for (let i = 0; i < tags.length; i++) {
-      const vector = vectors[i];
+      const vector = at(vectors, i, "tag embeddings");
       if (vector == null) {
-        console.warn(`[TagEmbedder] ⚠️ Skipping tag "${tags[i]}" (embedding failed or null).`);
+        console.warn(
+          `[TagEmbedder] ⚠️ Skipping tag "${at(tags, i, "tags")}" (embedding failed or null).`,
+        );
         continue;
       }
       tagEntries.push({
-        name: tags[i],
-        vector
+        name: at(tags, i, "tags"),
+        vector,
       });
     }
 
@@ -45,4 +50,4 @@ class TagEmbedderStage extends Stage {
   }
 }
 
-export = TagEmbedderStage;
+export default TagEmbedderStage;

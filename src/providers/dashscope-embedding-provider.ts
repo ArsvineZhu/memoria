@@ -1,7 +1,8 @@
-'use strict';
+"use strict";
 
-import EmbeddingProvider = require('../interfaces/embedding-provider');
-import type { EmbeddingOptions, EmbeddingVector } from '../types';
+import EmbeddingProvider from "../interfaces/embedding-provider.js";
+import type { EmbeddingOptions, EmbeddingVector } from "../types.js";
+import { at } from "../utils/numerical.js";
 
 interface DashScopeConfig {
   apiUrl?: string;
@@ -68,7 +69,7 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
   maxBatchItems: number;
   concurrency: number;
   maxToken: number;
-  defaultTextType: 'document' | 'query';
+  defaultTextType: "document" | "query";
   timeoutMs: number;
   /**
    * @param {object} config
@@ -84,19 +85,20 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
    */
   constructor(config: DashScopeConfig = {}) {
     super();
-    this.apiUrl = config.apiUrl
-      || 'https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding';
-    this.apiKey = config.apiKey || '';
-    this.model = config.model || 'qwen3.7-text-embedding';
+    this.apiUrl =
+      config.apiUrl ||
+      "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding";
+    this.apiKey = config.apiKey || "";
+    this.model = config.model || "qwen3.7-text-embedding";
     this.dimension = config.dimension || 1024;
     this.maxBatchItems = config.maxBatchItems || 20;
     this.concurrency = config.concurrency || 5;
     this.maxToken = config.maxToken || 64000;
-    this.defaultTextType = config.textType === 'query' ? 'query' : 'document';
+    this.defaultTextType = config.textType === "query" ? "query" : "document";
     this.timeoutMs = config.timeoutMs || 60000;
   }
 
-  getDimension(): number {
+  override getDimension(): number {
     return this.dimension;
   }
 
@@ -111,13 +113,13 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
    * @param {{textType?: string}} [options]
    * @returns {Promise<(Float32Array|null)[]>}
    */
-  async embedBatch(
+  override async embedBatch(
     texts: readonly string[] | null | undefined,
     options: EmbeddingOptions = {},
   ): Promise<(EmbeddingVector | null)[]> {
     if (!texts || texts.length === 0) return [];
 
-    const textType = options.textType === 'query' ? 'query' : this.defaultTextType;
+    const textType = options.textType === "query" ? "query" : this.defaultTextType;
 
     // 1. Split into <= maxBatchItems chunks (DashScope hard limit 20/req).
     const batches: string[][] = [];
@@ -126,14 +128,19 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
     }
 
     // 2. Concurrent request workers.
-    const batchResults: Array<(Float32Array | null)[] | null | undefined> = new Array(batches.length);
+    const batchResults: Array<(Float32Array | null)[] | null | undefined> = new Array(
+      batches.length,
+    );
     let cursor = 0;
 
     const worker = async () => {
       while (true) {
         const batchIndex = cursor++;
         if (batchIndex >= batches.length) break;
-        batchResults[batchIndex] = await this._send(textType, batches[batchIndex]);
+        batchResults[batchIndex] = await this._send(
+          textType,
+          at(batches, batchIndex, "embedding batches"),
+        );
       }
     };
 
@@ -162,7 +169,7 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
     if (failCount > 0) {
       console.warn(
         `[DashScopeEmbedding] Results: ${successCount} succeeded, ` +
-        `${failCount} failed/empty out of ${texts.length} total.`
+          `${failCount} failed/empty out of ${texts.length} total.`,
       );
     }
 
@@ -177,7 +184,7 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
    * @private
    */
   async _send(
-    textType: 'document' | 'query',
+    textType: "document" | "query",
     texts: readonly string[],
   ): Promise<(Float32Array | null)[] | null> {
     const requestBody = {
@@ -185,9 +192,9 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
       input: { texts },
       parameters: {
         dimension: this.dimension,
-        output_type: 'dense',
-        text_type: textType
-      }
+        output_type: "dense",
+        text_type: textType,
+      },
     };
 
     try {
@@ -197,13 +204,13 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
       let response;
       try {
         response = await fetch(this.apiUrl, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify(requestBody),
-          signal: controller.signal
+          signal: controller.signal,
         });
       } finally {
         clearTimeout(timer);
@@ -212,7 +219,7 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
       const bodyText = await response.text();
       if (!response.ok) {
         console.warn(
-          `[DashScopeEmbedding] HTTP ${response.status}: ${bodyText.substring(0, 500)}`
+          `[DashScopeEmbedding] HTTP ${response.status}: ${bodyText.substring(0, 500)}`,
         );
         return null;
       }
@@ -220,15 +227,19 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
       let data: DashScopeResponse;
       try {
         const parsed: unknown = JSON.parse(bodyText);
-        if (parsed === null || typeof parsed !== 'object') {
+        if (parsed === null || typeof parsed !== "object") {
           return null;
         }
         const record = parsed as Record<string, unknown>;
-        const output = record.output && typeof record.output === 'object'
-          ? record.output as Record<string, unknown>
-          : undefined;
+        const output =
+          record.output && typeof record.output === "object"
+            ? (record.output as Record<string, unknown>)
+            : undefined;
         const embeddings = Array.isArray(output?.embeddings)
-          ? output?.embeddings.filter((item): item is DashScopeEmbeddingItem => item !== null && typeof item === 'object')
+          ? output?.embeddings.filter(
+              (item): item is DashScopeEmbeddingItem =>
+                item !== null && typeof item === "object",
+            )
           : undefined;
         data = {
           error: record.error,
@@ -237,7 +248,7 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
         };
       } catch (parseError) {
         console.warn(
-          `[DashScopeEmbedding] Non-JSON response: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+          `[DashScopeEmbedding] Non-JSON response: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
         );
         return null;
       }
@@ -245,51 +256,58 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
       if (data.error || data.code) {
         console.warn(
           `[DashScopeEmbedding] API error: ` +
-          `${JSON.stringify(data.error || data).substring(0, 500)}`
+            `${JSON.stringify(data.error || data).substring(0, 500)}`,
         );
         return null;
       }
 
-      const embeddings = data && data.output && Array.isArray(data.output.embeddings)
-        ? data.output.embeddings
-        : null;
+      const embeddings =
+        data && data.output && Array.isArray(data.output.embeddings)
+          ? data.output.embeddings
+          : null;
       if (!embeddings) {
-        console.warn(
-          '[DashScopeEmbedding] Response missing output.embeddings array'
-        );
+        console.warn("[DashScopeEmbedding] Response missing output.embeddings array");
         return null;
       }
 
       // DashScope returns `text_index` per entry; some deployments use `index`.
-      const indexKey = embeddings[0] && embeddings[0].text_index !== undefined
-        ? 'text_index'
-        : 'index';
+      const indexKey =
+        embeddings[0] && embeddings[0].text_index !== undefined
+          ? "text_index"
+          : "index";
 
       const unordered = embeddings
         .map((item: DashScopeEmbeddingItem, position: number) => ({
           position,
-          index: Number(indexKey === 'text_index'
-            ? (item.text_index != null ? item.text_index : position)
-            : (item.index != null ? item.index : position)),
-          vector: this._asToFloat32Array(item.embedding)
+          index: Number(
+            indexKey === "text_index"
+              ? item.text_index != null
+                ? item.text_index
+                : position
+              : item.index != null
+                ? item.index
+                : position,
+          ),
+          vector: this._asToFloat32Array(item.embedding),
         }))
-        .filter(item => item.vector !== null);
+        .filter((item) => item.vector !== null);
 
       // Sort by the server-reported index, then drop out-of-range results
       // (defensive: some models report global indices). Positions beyond the
       // request window are treated as null so total length stays exact.
       const aligned: Array<Float32Array | null> = new Array(texts.length).fill(null);
       for (const item of unordered) {
-        const target = item.index >= 0 && item.index < texts.length
-          ? item.index
-          : null;
+        const target = item.index >= 0 && item.index < texts.length ? item.index : null;
         if (target !== null) aligned[target] = item.vector;
       }
       return aligned;
     } catch (e) {
-      const reason = e instanceof Error && e.name === 'AbortError'
-        ? `timeout after ${this.timeoutMs}ms`
-        : e instanceof Error ? e.message : String(e);
+      const reason =
+        e instanceof Error && e.name === "AbortError"
+          ? `timeout after ${this.timeoutMs}ms`
+          : e instanceof Error
+            ? e.message
+            : String(e);
       console.warn(`[DashScopeEmbedding] Request failed: ${reason}`);
       return null;
     }
@@ -306,13 +324,12 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
     if (!Array.isArray(embedding) && !(embedding instanceof Float32Array)) {
       return null;
     }
-    const vector = embedding instanceof Float32Array
-      ? embedding
-      : new Float32Array(embedding);
+    const vector =
+      embedding instanceof Float32Array ? embedding : new Float32Array(embedding);
     if (vector.length !== this.dimension) {
       console.warn(
         `[DashScopeEmbedding] Dimension mismatch: model returned ${vector.length}, ` +
-        `expected ${this.dimension}`
+          `expected ${this.dimension}`,
       );
       return null;
     }
@@ -320,4 +337,4 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
   }
 }
 
-export = DashScopeEmbeddingProvider;
+export default DashScopeEmbeddingProvider;

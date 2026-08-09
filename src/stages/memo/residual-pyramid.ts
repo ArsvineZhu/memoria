@@ -1,4 +1,3 @@
-
 import type {
   EmbeddingVector,
   MemoryConfigOverrides,
@@ -6,14 +5,14 @@ import type {
   PipelineContextLike,
   PipelineData,
   TagRow,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import { ResidualPyramid } from '../../algorithms/residual-pyramid';
-import type { ResidualTag } from '../../algorithms/residual-pyramid';
+import Stage from "../../core/stage.js";
+import { ResidualPyramid } from "../../algorithms/residual-pyramid.js";
+import type { ResidualTag } from "../../algorithms/residual-pyramid.js";
 
 // Shared global tag vector index name (mirror of VectorIndexerStage).
-const TAG_INDEX_NAME = 'global_tags';
+const TAG_INDEX_NAME = "global_tags";
 
 /**
  * ResidualPyramidStage — novelty / coverage analysis of the query vector.
@@ -46,13 +45,15 @@ const TAG_INDEX_NAME = 'global_tags';
 class ResidualPyramidStage extends Stage {
   constructor() {
     super();
-    this.name = 'residualPyramid';
+    this.name = "residualPyramid";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'pyramid'> & { pyramid?: PyramidData; pyramidSkipped?: boolean }> {
+  ): Promise<
+    Omit<PipelineData, "pyramid"> & { pyramid?: PyramidData; pyramidSkipped?: boolean }
+  > {
     const info = input || {};
     const config = ctx.config;
 
@@ -63,7 +64,7 @@ class ResidualPyramidStage extends Stage {
 
     const queryVector = info.queryVector;
     const vectorStore = ctx.vectorStore;
-    if (!queryVector || !vectorStore || typeof vectorStore.search !== 'function') {
+    if (!queryVector || !vectorStore || typeof vectorStore.search !== "function") {
       return { ...info, pyramidSkipped: true };
     }
 
@@ -72,10 +73,11 @@ class ResidualPyramidStage extends Stage {
     const algorithm = new ResidualPyramid({
       maxLevels: Math.max(1, Number(config.pyramidMaxLevels) || 3),
       topK: Math.max(1, Number(config.pyramidTopK) || 5),
-      minEnergyRatio: config.pyramidMinEnergyRatio != null
-        ? Number(config.pyramidMinEnergyRatio)
-        : 0.1,
-      dimension
+      minEnergyRatio:
+        config.pyramidMinEnergyRatio != null
+          ? Number(config.pyramidMinEnergyRatio)
+          : 0.1,
+      dimension,
     });
 
     const tagIndexName = config.tagIndexName || TAG_INDEX_NAME;
@@ -86,13 +88,14 @@ class ResidualPyramidStage extends Stage {
           ? queryVector
           : new Float32Array(queryVector),
         {
-          searchFn: async (vec, k) =>
-            vectorStore.search(tagIndexName, vec, k),
-          lookupFn: await this._makeLookupFn(ctx)
-        }
+          searchFn: async (vec, k) => vectorStore.search(tagIndexName, vec, k),
+          lookupFn: await this._makeLookupFn(ctx),
+        },
       );
     } catch (e) {
-      console.warn(`[ResidualPyramid] analyze failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[ResidualPyramid] analyze failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return { ...info, pyramidSkipped: true };
     }
 
@@ -107,12 +110,12 @@ class ResidualPyramidStage extends Stage {
 
     // Preferred: batch id lookup when the store exposes it.
     const getTagsByIds = metadataStore.getTagsByIds;
-    if (typeof getTagsByIds === 'function') {
+    if (typeof getTagsByIds === "function") {
       return async (ids: readonly number[]) => {
         try {
           const rows = await getTagsByIds.call(metadataStore, ids);
           return (rows || []).filter(
-            (row): row is TagRow & { vector: Buffer } => row.vector != null
+            (row): row is TagRow & { vector: Buffer } => row.vector != null,
           );
         } catch (e) {
           return [];
@@ -121,15 +124,15 @@ class ResidualPyramidStage extends Stage {
     }
 
     // Fallback: snapshot the tag pool and resolve ids in memory.
-    if (typeof metadataStore.getAllTags === 'function') {
+    if (typeof metadataStore.getAllTags === "function") {
       return async (ids: readonly number[]) => {
         try {
           const tags = await metadataStore.getAllTags();
-          const byId = new Map((tags || []).map(t => [Number(t.id), t]));
+          const byId = new Map((tags || []).map((t) => [Number(t.id), t]));
           return (ids || [])
-            .map(id => byId.get(Number(id)))
-            .filter(
-              (tag): tag is TagRow & { vector: Buffer } => Boolean(tag && tag.vector != null)
+            .map((id) => byId.get(Number(id)))
+            .filter((tag): tag is TagRow & { vector: Buffer } =>
+              Boolean(tag && tag.vector != null),
             );
         } catch (e) {
           return [];
@@ -154,4 +157,4 @@ class ResidualPyramidStage extends Stage {
   }
 }
 
-export = ResidualPyramidStage;
+export default ResidualPyramidStage;

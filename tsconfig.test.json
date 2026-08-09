@@ -4,15 +4,9 @@
     "rootDir": ".",
     "outDir": "dist-test",
     "declaration": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "noUncheckedIndexedAccess": false
   },
-  "include": [
-    "index.ts",
-    "src/**/*.ts",
-    "tests/**/*.ts",
-    "examples/**/*.ts"
-  ],
-  "exclude": [
-    "tests/types/**/*.d.ts"
-  ]
+  "include": ["src/**/*.ts", "src/**/*.cts", "tests/**/*.ts", "examples/**/*.ts"],
+  "exclude": ["tests/types/**/*.d.ts"]
 }

@@ -14,16 +14,16 @@
 
 **生命周期方法表**：
 
-| 方法 | 参数 | 返回 | 语义 |
-|------|------|------|------|
-| `initialize()` | — | `Promise<void>` | 幂等；加载 rag 参数 + 热调参 + onReady |
-| `flushBatch(files)` | `Array<{path, relPath?, content?, mtime?, size?}>` 或单对象或路径字符串数组 | 逐文件信封数组 | 摄入；`content`/`mtime`/`size` 预置可跳过文件系统读 |
-| `flush(files)` | 同上 | 同上 | flushBatch 别名 |
-| `search(query, options?)` | string 或 `{query, options}` | 完整结果信封 | 混合检索 |
-| `handleDelete(input)` | `{path}` 或字符串 | `{deleted, fileId, removedChunkIds}` | 删除单文件 |
-| `deleteFile(filePath)` | string | 同上 | handleDelete 别名 |
-| `getStats()` | — | 统计信封（见 §9） | 会话统计 |
-| `close()` | — | `Promise<void>` | 落盘 + 关闭，幂等 |
+| 方法                      | 参数                                                                        | 返回                                 | 语义                                                |
+| ------------------------- | --------------------------------------------------------------------------- | ------------------------------------ | --------------------------------------------------- |
+| `initialize()`            | —                                                                           | `Promise<void>`                      | 幂等；加载 rag 参数 + 热调参 + onReady              |
+| `flushBatch(files)`       | `Array<{path, relPath?, content?, mtime?, size?}>` 或单对象或路径字符串数组 | 逐文件信封数组                       | 摄入；`content`/`mtime`/`size` 预置可跳过文件系统读 |
+| `flush(files)`            | 同上                                                                        | 同上                                 | flushBatch 别名                                     |
+| `search(query, options?)` | string 或 `{query, options}`                                                | 完整结果信封                         | 混合检索                                            |
+| `handleDelete(input)`     | `{path}` 或字符串                                                           | `{deleted, fileId, removedChunkIds}` | 删除单文件                                          |
+| `deleteFile(filePath)`    | string                                                                      | 同上                                 | handleDelete 别名                                   |
+| `getStats()`              | —                                                                           | 统计信封（见 §9）                    | 会话统计                                            |
+| `close()`                 | —                                                                           | `Promise<void>`                      | 落盘 + 关闭，幂等                                   |
 
 摄入信封字段：`fileId, chunkIds, tagIds, removedChunkIds, vectorIndexWritten,
 skipped`（未变更文件为 `skipped:true`，不重嵌入）。
@@ -36,16 +36,16 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 `IngestPipeline` 串行执行：
 
-| 顺序 | Stage 类名 | 文件 | 行为要点 |
-|------|-----------|------|----------|
-| 1 | `FileReaderStage` | `stages/ingestion/file-reader.ts` | 读盘（或取预置 content/mtime/size）；md5 校验和；相对路径 `/` 归一化；目录首段为 diaryName；md5+mtime+size 全匹配 → `needsEmbedding:false`；读前后快照守卫（unstable 标记） |
-| 2 | `TagExtractorStage` | `tag-extractor.ts` | 提取文末连续 `Tag:` 行；黑名单 / 超集黑名单 / 长度与日期过滤 / maxTagsPerFile |
-| 3 | `ChunkerStage` | `text-chunker.ts` | 按句子切块（`split(/(?<=[。？！.!?\n])/)`），tiktoken 计数，超长句强制切分，相邻块按 overlapTokens 重叠 |
-| 4 | `ChunkEmbedderStage` | `chunk-embedder.ts` | 块批量嵌入；失败（null）项剔除，块序保持 |
-| 5 | `TagEmbedderStage` | `tag-embedder.ts` | 标签批量嵌入 |
-| 6 | `MetadataWriterStage` | `metadata-writer.ts` | SQLite 写入：file upsert → chunk 行（BLOB 向量）→ tag upsert → file_tags 重建；旧块 id 输出为 `removedChunkIds`；可选 kv_store 检查点 |
-| 7 | `VectorIndexerStage` | `vector-indexer.ts` | 向量写入：日记索引（名 = diaryName）+ `global_tags` 标签索引；先删遗留后 upsert（幂等重嵌）；触发延迟落盘 |
-| 8 | `CooccurrenceBuilderStage` | `co-occurrence-builder.ts` | 默认 no-op；`cooccurrenceRebuild` 开启时重建共现矩阵 |
+| 顺序 | Stage 类名                 | 文件                              | 行为要点                                                                                                                                                                    |
+| ---- | -------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | `FileReaderStage`          | `stages/ingestion/file-reader.ts` | 读盘（或取预置 content/mtime/size）；md5 校验和；相对路径 `/` 归一化；目录首段为 diaryName；md5+mtime+size 全匹配 → `needsEmbedding:false`；读前后快照守卫（unstable 标记） |
+| 2    | `TagExtractorStage`        | `tag-extractor.ts`                | 提取文末连续 `Tag:` 行；黑名单 / 超集黑名单 / 长度与日期过滤 / maxTagsPerFile                                                                                               |
+| 3    | `ChunkerStage`             | `text-chunker.ts`                 | 按句子切块（`split(/(?<=[。？！.!?\n])/)`），tiktoken 计数，超长句强制切分，相邻块按 overlapTokens 重叠                                                                     |
+| 4    | `ChunkEmbedderStage`       | `chunk-embedder.ts`               | 块批量嵌入；失败（null）项剔除，块序保持                                                                                                                                    |
+| 5    | `TagEmbedderStage`         | `tag-embedder.ts`                 | 标签批量嵌入                                                                                                                                                                |
+| 6    | `MetadataWriterStage`      | `metadata-writer.ts`              | SQLite 写入：file upsert → chunk 行（BLOB 向量）→ tag upsert → file_tags 重建；旧块 id 输出为 `removedChunkIds`；可选 kv_store 检查点                                       |
+| 7    | `VectorIndexerStage`       | `vector-indexer.ts`               | 向量写入：日记索引（名 = diaryName）+ `global_tags` 标签索引；先删遗留后 upsert（幂等重嵌）；触发延迟落盘                                                                   |
+| 8    | `CooccurrenceBuilderStage` | `co-occurrence-builder.ts`        | 默认 no-op；`cooccurrenceRebuild` 开启时重建共现矩阵                                                                                                                        |
 
 分块参数：`chunkMaxTokens`（默认 600，别名 `maxTokens`）、`chunkOverlapTokens`
 （默认 96，别名 `overlapTokens`）；超长单句由 `forceSplitLongText` 硬切。
@@ -63,12 +63,12 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 ### 2.3 Candidate（混淆召回：向量 + 稀疏双路）
 
-| Stage 类名 | 文件 | 职责 |
-|-----------|------|------|
-| `QueryEmbedderStage` | `stages/retrieval/query-embedder.ts` | 查询嵌入 + 可选变体（`queryExpansion>1` 且注入 `rephraserFn`）+ epsilon 掩码；输出 `queries: [{text, vector}]` |
-| `VectorSearcherStage` | `stages/retrieval/vector-searcher.ts` | 索引解析优先级：`indexNames > diaryNames > diaryName > searchAllIndices > 'Root'`；逐查询逐索引 KNN（每索引 `perIndexK`），按 chunkId 保留最高分；可选标签索引召回扩展（`tagSearchEnabled`） |
-| `BM25SearcherStage` | `stages/retrieval/bm25-searcher.ts` | 全库 BM25（k1=1.5，b=0.75）；默认分词 = 英文词 + CJK 二元组/单字；IDF 标准公式；仅保留正分项，按 `bm25PoolK` 截断 |
-| `CandidateMergerStage` | `stages/retrieval/candidate-merger.ts` | 双路归一化 + 加权和融合；`minScore` 过滤；可选时效衰减；按 `topK` 截断 |
+| Stage 类名             | 文件                                   | 职责                                                                                                                                                                                         |
+| ---------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `QueryEmbedderStage`   | `stages/retrieval/query-embedder.ts`   | 查询嵌入 + 可选变体（`queryExpansion>1` 且注入 `rephraserFn`）+ epsilon 掩码；输出 `queries: [{text, vector}]`                                                                               |
+| `VectorSearcherStage`  | `stages/retrieval/vector-searcher.ts`  | 索引解析优先级：`indexNames > diaryNames > diaryName > searchAllIndices > 'Root'`；逐查询逐索引 KNN（每索引 `perIndexK`），按 chunkId 保留最高分；可选标签索引召回扩展（`tagSearchEnabled`） |
+| `BM25SearcherStage`    | `stages/retrieval/bm25-searcher.ts`    | 全库 BM25（k1=1.5，b=0.75）；默认分词 = 英文词 + CJK 二元组/单字；IDF 标准公式；仅保留正分项，按 `bm25PoolK` 截断                                                                            |
+| `CandidateMergerStage` | `stages/retrieval/candidate-merger.ts` | 双路归一化 + 加权和融合；`minScore` 过滤；可选时效衰减；按 `topK` 截断                                                                                                                       |
 
 验证视角：`tests/stages/test-retrieval-stages.test.ts`。
 
@@ -80,16 +80,16 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 ### 2.5 Postprocessing（后处理：EPA / 去重 / 格式化）
 
-| Stage 类名 | 文件 | 职责 |
-|-----------|------|------|
-| `EPAProjectorStage` | `stages/memo/epa-projector.ts` | 查询 EPA 投影：`{ready, queryAnalysis: {logicDepth, dominantAxes, resonance}, candidateAnalyses}` |
-| `ResidualPyramidStage` | `stages/memo/residual-pyramid.ts` | 残差金字塔：`{levels, totalExplainedEnergy, finalResidual, features}` |
-| `ResultDeduplicatorStage` | `stages/postprocess/result-deduplicator.ts` | 硬去重 + 语义去重（阈值 0.92） |
-| `ExternalRerankerStage` | `external-reranker.ts` | 调用 `config.reranker || ctx.reranker(query, candidates)` 重排（门：externalRerankEnabled / useLLMRerank） |
-| `TimeDecayStage` | `time-decay.ts` | `decay = 0.5^(ageDays/halfLife)`；`timeDecayUpperBound` 封顶 |
-| `TruncatorStage` | `truncator.ts` | `topK || maxResults` 条数截断 + `maxContentLength` 内容截断 + 可选省略号 |
-| `ExpanderStage` | `expander.ts` | 前 `expandCount` 个候选展开同文件兄弟块，分数 ×`expansionBoost` |
-| `ResultFormatterStage` | `stages/output/result-formatter.ts` | 终格式化：`{id, chunkId, content, path, sourceFile, fileId, diaryName, score, similarity, updatedAt, mtime, tags, matchedTags, memoScore?, source, decay?, rerankScore?}` + `resultCount`；缺失字段从元数据回查 |
+| Stage 类名                | 文件                                        | 职责                                                                                                                                                                                                            |
+| ------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EPAProjectorStage`       | `stages/memo/epa-projector.ts`              | 查询 EPA 投影：`{ready, queryAnalysis: {logicDepth, dominantAxes, resonance}, candidateAnalyses}`                                                                                                               |
+| `ResidualPyramidStage`    | `stages/memo/residual-pyramid.ts`           | 残差金字塔：`{levels, totalExplainedEnergy, finalResidual, features}`                                                                                                                                           |
+| `ResultDeduplicatorStage` | `stages/postprocess/result-deduplicator.ts` | 硬去重 + 语义去重（阈值 0.92）                                                                                                                                                                                  |
+| `ExternalRerankerStage`   | `external-reranker.ts`                      | 调用 `config.reranker                                                                                                                                                                                           |     | ctx.reranker(query, candidates)` 重排（门：externalRerankEnabled / useLLMRerank） |
+| `TimeDecayStage`          | `time-decay.ts`                             | `decay = 0.5^(ageDays/halfLife)`；`timeDecayUpperBound` 封顶                                                                                                                                                    |
+| `TruncatorStage`          | `truncator.ts`                              | `topK                                                                                                                                                                                                           |     | maxResults`条数截断 +`maxContentLength` 内容截断 + 可选省略号                     |
+| `ExpanderStage`           | `expander.ts`                               | 前 `expandCount` 个候选展开同文件兄弟块，分数 ×`expansionBoost`                                                                                                                                                 |
+| `ResultFormatterStage`    | `stages/output/result-formatter.ts`         | 终格式化：`{id, chunkId, content, path, sourceFile, fileId, diaryName, score, similarity, updatedAt, mtime, tags, matchedTags, memoScore?, source, decay?, rerankScore?}` + `resultCount`；缺失字段从元数据回查 |
 
 另有 TagMemo 家族 5 个算子（`TagMemoV9Stage` / `TagMemoV10Stage` /
 `RiverMemoStage` / `TagExpanderStage` / `VectorReshaperStage`），全部配置门
@@ -100,11 +100,11 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 ### 2.6 Storage（存储：SQLite 元数据 + Rust 向量）
 
-| 组件 | 文件 | 要点 |
-|------|------|------|
-| `SqliteMetadataStore` | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async |
-| `VexusVectorStore` | `providers/vexus-vector-store.ts` | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex` 控制标签索引持久化 |
-| `VectorStore` / `MetadataStore` 接口 | `interfaces/` | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；`upsertFile/getFileByPath/insertChunks/upsertTags/setFileTags/getFileIdsByTagId/buildCooccurrenceMatrix/checkpoint/healthCheck` 等 |
+| 组件                                 | 文件                                 | 要点                                                                                                                                                                                                         |
+| ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SqliteMetadataStore`                | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async                                                                                |
+| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex` 控制标签索引持久化                                          |
+| `VectorStore` / `MetadataStore` 接口 | `interfaces/`                        | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；`upsertFile/getFileByPath/insertChunks/upsertTags/setFileTags/getFileIdsByTagId/buildCooccurrenceMatrix/checkpoint/healthCheck` 等 |
 
 验证视角：`tests/providers/test-sqlite-metadata-store.test.ts`、
 `test-vexus-vector-store.test.ts`。
@@ -126,7 +126,7 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
   - 兼容层 legacy 向量路径（`KnowledgeBaseAdapter.search(diary, vec, k)`）：
     **`text`**、**`fullPath`**、`matchedTags`、`tagMatchCount`、
     `coreTagsMatched`、`boostFactor`、`tagMatchScore`。
-  格式化阶段对输入同时接受 `candidate.text` 与 `candidate.content`。
+    格式化阶段对输入同时接受 `candidate.text` 与 `candidate.content`。
 
 验证视角：`tests/engine/test-engine.test.ts`（端到端混合检索）、
 `tests/stages/test-retrieval-stages.test.ts`（融合单测）。
@@ -139,12 +139,12 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
    （NFKC + 空白/换行规整 + 小写）、`path:chunkIndex`；无稳定身份的候选不合并。
    同一身份多个版本选代表：**来源优先级 > 分数 > 信息完整度**
    （`sourcePriority` 默认 `{rag:50, time:45, bm25_body:40, bm25_tag:40,
-   continuity:35, associate:10, unknown:0}`）。
+continuity:35, associate:10, unknown:0}`）。
 2. **语义去重**（可选，默认开）：候选数 ≥ `minSemanticCandidates`（默认 **2**）
    后执行——按与查询向量的余弦相似度排序，逐项与已选集合比较余弦，
    超过 **`semanticThreshold`（默认 0.92）** 判为近重复舍弃；无向量 / 长度
    不符的候选安全保留。阈值可经 `rag_params.json →
-   KnowledgeBaseManager.resultDeduplication.semanticThreshold` 热调
+KnowledgeBaseManager.resultDeduplication.semanticThreshold` 热调
    （engine `_applyRagParamsToConfig`）。`dedupeEnabled=false` 时阶段跳过
    （`dedupeSkipped`）。
 
@@ -157,11 +157,11 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 `EPA` 从标签向量构建正交语义基（`EPA.computeBasis` → `clusterTags` →
 `computeWeightedPCA` → `selectBasisDimension`），对查询 `project()` 输出：
 
-| 量 | 含义 | 计算 |
-|----|------|------|
-| `logicDepth`（逻辑深度） | 查询在语义空间的"专注度"（越高越聚焦少数主轴） | `1 − normalizedEntropy`；归一化熵 = `entropy / log2(K)` |
-| `dominantAxes`（主导轴） | 能量占比 > 0.05 的基轴（含 `label/energy/projection`） | 概率 = 投影² / 总能量，按能量降序 |
-| `resonance`（跨域共振） | 多轴联合激活强度 | `detectCrossDomainResonance`：主轴与次轴强度 `√(e₁·e₂)` > 0.15 建桥，`resonance = Σ bridge.strength` |
+| 量                       | 含义                                                   | 计算                                                                                                 |
+| ------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `logicDepth`（逻辑深度） | 查询在语义空间的"专注度"（越高越聚焦少数主轴）         | `1 − normalizedEntropy`；归一化熵 = `entropy / log2(K)`                                              |
+| `dominantAxes`（主导轴） | 能量占比 > 0.05 的基轴（含 `label/energy/projection`） | 概率 = 投影² / 总能量，按能量降序                                                                    |
+| `resonance`（跨域共振）  | 多轴联合激活强度                                       | `detectCrossDomainResonance`：主轴与次轴强度 `√(e₁·e₂)` > 0.15 建桥，`resonance = Σ bridge.strength` |
 
 配置默认：`epaClusterCount=64`、`epaMaxBasisDim=64`、
 `strictOrthogonalization=true`；可选 Rust `vexusIndex.project` 加速，失败回退
@@ -213,12 +213,12 @@ tagMemoActivation, expansionSignal}`（逐层残差正交投影 + 能量解释�
 
 ## 8. TDB 冷知识库（`src/tdb/`）
 
-| 模块 | 一句话职责 |
-|------|-----------|
-| `TDBEngine` | 冷知识库主引擎：拉取式摄入（`upsertText` / `upsertFile`）、按库混合索引、`search`/`searchWithVector` 检索、`getStats` 与关闭（无 watcher / 队列） |
+| 模块                | 一句话职责                                                                                                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TDBEngine`         | 冷知识库主引擎：拉取式摄入（`upsertText` / `upsertFile`）、按库混合索引、`search`/`searchWithVector` 检索、`getStats` 与关闭（无 watcher / 队列）                           |
 | `TDBSearchPipeline` | TDB 查询链：`tdbQueryNormalizer`（问句/关键词识别）→ queryEmbed（预置 vector 则跳过）→ vectorSearcher → bm25Searcher → candidateMerger → [timeDecay] → `tdbResultFormatter` |
-| `TDBStore` | TDB 元数据：`libraries`（UNIQUE(library, path)）、`chunks`（UNIQUE(library, path, chunk_index)）、`meta`（getMeta/setMeta）、`healthCheck` |
-| `TriviumDBAdapter` | 本地"原生调用面"代理（`insert/delete/search/searchHybrid/link/indexText/flush/stats`）；无远端服务；无向量存储时惰性返回空结果 |
+| `TDBStore`          | TDB 元数据：`libraries`（UNIQUE(library, path)）、`chunks`（UNIQUE(library, path, chunk_index)）、`meta`（getMeta/setMeta）、`healthCheck`                                  |
+| `TriviumDBAdapter`  | 本地"原生调用面"代理（`insert/delete/search/searchHybrid/link/indexText/flush/stats`）；无远端服务；无向量存储时惰性返回空结果                                              |
 
 使用要点：`tdbEnabled: true`（默认 false）。摄入内容用 **sha256 checksum**
 去重（主链为 md5）；每库一个向量索引；嵌入分批 `tdbEmbeddingBatchSize=16`；
@@ -232,7 +232,7 @@ chunkIndex}`。
 ## 9. 统计 / usage
 
 - **会话统计**：`getStats()` 返回 `{files, chunks, tags, diaries,
-  lastIndexed, vectorStats, healthy, initialized}`（详见
+lastIndexed, vectorStats, healthy, initialized}`（详见
   [GUIDE.md](./GUIDE.md) §6）。
 - **Provider 用量**：`OpenAIEmbeddingProvider` / `DashScopeEmbeddingProvider`
   均**不**暴露 token / 请求计数（DashScope 响应中的 `usage` 字段仅内部解析，

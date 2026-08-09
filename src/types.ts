@@ -1,4 +1,4 @@
-import type { VexusIndex } from './native/vexus-lite';
+import type { VexusIndex } from "./native/vexus-lite.js";
 
 /** A vector accepted at the public boundary before it is normalised. */
 export type VectorLike = Float32Array | readonly number[];
@@ -23,7 +23,9 @@ export type ExternalReranker = (
   query: string,
   results: readonly ChunkCandidate[],
 ) => readonly ChunkCandidate[] | Promise<readonly ChunkCandidate[]>;
-export type Tokenizer = (text: string) => readonly string[] | Promise<readonly string[]>;
+export type Tokenizer = (
+  text: string,
+) => readonly string[] | Promise<readonly string[]>;
 
 /** Fully materialised runtime configuration. */
 export interface MemoryConfig {
@@ -189,15 +191,50 @@ export interface MemoryEngineOptions {
   onReady?: (engine: unknown) => void | Promise<void>;
 }
 
+/** Host-neutral provenance attached to a logical memory document. */
+export interface MemoryDocumentSource extends UnknownRecord {
+  type?: string;
+  id?: string;
+}
+
+/** Content-centered ingestion input. It deliberately has no filesystem path. */
+export interface MemoryDocumentInput {
+  id: string;
+  content: string;
+  source?: MemoryDocumentSource;
+  revision?: string | number;
+  metadata?: UnknownRecord;
+  updatedAt?: number;
+}
+
+export interface MemoryDocumentIngestResult extends IngestEnvelope {
+  documentId: string;
+  revision?: string;
+  source?: MemoryDocumentSource;
+  metadata?: UnknownRecord;
+}
+
+export interface MemoryDocumentDeleteResult extends DeleteEnvelope {
+  documentId: string;
+}
+
 export interface FileInput {
   path: string;
   relPath?: string;
   content?: string;
   mtime?: number;
   size?: number;
+  documentId?: string;
+  revision?: string;
+  documentSource?: MemoryDocumentSource;
+  documentMetadata?: UnknownRecord;
+  diaryName?: string;
 }
 
-export interface FileSnapshot extends Required<FileInput> {
+export interface FileSnapshot extends Omit<
+  Required<FileInput>,
+  "documentId" | "revision" | "documentSource" | "documentMetadata" | "diaryName"
+> {
   relPath: string;
   content: string;
   mtime: number;
@@ -238,7 +275,7 @@ export interface VectorResult {
   [key: string]: unknown;
 }
 
-export type IndexedVectorResult = Omit<VectorResult, 'chunkId' | 'indexName'> & {
+export type IndexedVectorResult = Omit<VectorResult, "chunkId" | "indexName"> & {
   indexName: string;
   chunkId: number;
   score: number;
@@ -255,6 +292,10 @@ export interface SearchResult extends VectorResult {
   chunkIndex?: number | null;
   payload?: UnknownRecord;
   tags?: string[];
+  documentId?: string;
+  revision?: string;
+  sourceMetadata?: MemoryDocumentSource;
+  metadata?: UnknownRecord;
 }
 
 export interface ChunkCandidate {
@@ -425,12 +466,17 @@ export interface IngestEnvelope extends FileSnapshot {
   tagIds?: number[];
   removedChunkIds?: number[];
   skipped?: boolean;
+  documentId?: string;
+  revision?: string;
+  documentSource?: MemoryDocumentSource;
+  documentMetadata?: UnknownRecord;
   [key: string]: unknown;
 }
 
 export interface DeleteEnvelope {
   path: string;
   relPath?: string;
+  documentId?: string;
   deleted: boolean;
   fileId?: number | null;
   removedChunkIds: number[];
@@ -448,6 +494,10 @@ export interface PipelineData extends UnknownRecord {
   checksum?: string;
   needsEmbedding?: boolean;
   unstable?: boolean;
+  documentId?: string;
+  revision?: string;
+  documentSource?: MemoryDocumentSource;
+  documentMetadata?: UnknownRecord;
   tags?: string[];
   chunks?: string[];
   chunkEntries?: ChunkEntry[];
@@ -483,8 +533,14 @@ export interface PipelineData extends UnknownRecord {
 }
 
 export interface EmbeddingProviderContract {
-  embedBatch(texts?: readonly string[], options?: EmbeddingOptions): Promise<(EmbeddingVector | null)[]>;
-  embed?(text: string, options?: EmbeddingOptions): EmbeddingVector | Promise<EmbeddingVector | null>;
+  embedBatch(
+    texts?: readonly string[],
+    options?: EmbeddingOptions,
+  ): Promise<(EmbeddingVector | null)[]>;
+  embed?(
+    text: string,
+    options?: EmbeddingOptions,
+  ): EmbeddingVector | Promise<EmbeddingVector | null>;
   getDimension(): number;
 }
 
@@ -500,10 +556,19 @@ export interface VectorStoreStats {
   [key: string]: unknown;
 }
 
+export interface VectorIndexEntry {
+  id: number;
+  vector: VectorLike;
+}
+
 export interface VectorStoreContract {
   dimension?: number;
   add(indexName: string, id: number, vector: VectorLike): Promise<void>;
-  addBatch(indexName: string, ids: readonly number[], vectors: readonly VectorLike[] | VectorLike): Promise<void>;
+  addBatch(
+    indexName: string,
+    ids: readonly number[],
+    vectors: readonly VectorLike[] | VectorLike,
+  ): Promise<void>;
   search(indexName: string, queryVector: VectorLike, k: number): Promise<VectorHit[]>;
   remove(indexName: string, id: number): Promise<void>;
   loadIndex?(indexName: string, filePath: string): Promise<unknown>;
@@ -511,6 +576,18 @@ export interface VectorStoreContract {
   getIndexStats?(indexName: string): Promise<VectorStoreStats>;
   scheduleIndexSave?(indexName: string): void;
   flushPendingSaves?(): void;
+  replaceIndex?(
+    indexName: string,
+    entries: readonly VectorIndexEntry[],
+  ): Promise<void> | void;
+}
+
+export interface ReconciliationReport {
+  authoritative: "metadata";
+  metadataChunks: number;
+  usableVectors: number;
+  skippedVectors: number;
+  rebuiltIndexes: string[];
 }
 
 export interface FileRow {
@@ -522,6 +599,10 @@ export interface FileRow {
   mtime: number;
   size: number;
   updated_at?: number | null;
+  document_id?: string | null;
+  revision?: string | null;
+  source_json?: string | null;
+  metadata_json?: string | null;
 }
 
 export interface ChunkRow {
@@ -556,6 +637,10 @@ export interface FileMetadataInput {
   checksum: string;
   mtime: number;
   size: number;
+  documentId?: string;
+  revision?: string;
+  sourceJson?: string | null;
+  metadataJson?: string | null;
 }
 
 export interface ChunkMetadataInput {
@@ -581,10 +666,14 @@ export interface MetadataStoreContract {
   _closed?: boolean;
   upsertFile(fileMeta: FileMetadataInput): Promise<number | null>;
   getFileByPath(path: string): Promise<FileRow | null>;
+  getFileByDocumentId?(documentId: string): Promise<FileRow | null>;
   getDistinctDiaryNames(): Promise<string[]>;
   getFileByChunkId(chunkId: number): Promise<FileRow | null>;
   deleteFile(fileId: number): Promise<void>;
-  insertChunks(fileId: number, chunks: readonly ChunkMetadataInput[]): Promise<number[]>;
+  insertChunks(
+    fileId: number,
+    chunks: readonly ChunkMetadataInput[],
+  ): Promise<number[]>;
   getChunksByFileId(fileId: number): Promise<ChunkRow[]>;
   getChunkById(id: number): Promise<ChunkRow | null>;
   getAllChunks(): Promise<ChunkRow[]>;
@@ -701,7 +790,10 @@ export interface TdbSearchResult extends SearchResult {
   title?: string;
 }
 
-export interface TdbSearchEnvelope extends Omit<PipelineData, 'results' | 'resultCount'> {
+export interface TdbSearchEnvelope extends Omit<
+  PipelineData,
+  "results" | "resultCount"
+> {
   results: TdbSearchResult[];
   resultCount: number;
   tdbDisabled?: boolean;
@@ -793,8 +885,15 @@ export interface TdbStoreContract {
   getFile(library: string, path: string): Promise<TdbFileRow | null>;
   getFileById(id: number): Promise<TdbFileRow | null>;
   getFileByChunkId(chunkId: number): Promise<TdbFileRow | null>;
-  deleteFile(library: string, path: string): Promise<{ chunkIds: number[]; nodeIds: number[] }>;
-  insertChunks(library: string, path: string, chunks: readonly TdbChunkInput[]): Promise<TdbInsertedChunk[]>;
+  deleteFile(
+    library: string,
+    path: string,
+  ): Promise<{ chunkIds: number[]; nodeIds: number[] }>;
+  insertChunks(
+    library: string,
+    path: string,
+    chunks: readonly TdbChunkInput[],
+  ): Promise<TdbInsertedChunk[]>;
   getChunks(library: string, path: string): Promise<TdbChunkRow[]>;
   getChunkById(id: number): Promise<TdbChunkRow | null>;
   getAllChunks(): Promise<TdbCorpusChunk[]>;
@@ -837,10 +936,22 @@ export interface TriviumSearchHit {
 }
 
 export interface TriviumDBContract {
-  insert?(vector: VectorLike, payload?: UnknownRecord, options?: UnknownRecord): Promise<number | null>;
-  submit?(vector: VectorLike, payload?: UnknownRecord, options?: UnknownRecord): Promise<number | null>;
+  insert?(
+    vector: VectorLike,
+    payload?: UnknownRecord,
+    options?: UnknownRecord,
+  ): Promise<number | null>;
+  submit?(
+    vector: VectorLike,
+    payload?: UnknownRecord,
+    options?: UnknownRecord,
+  ): Promise<number | null>;
   delete?(nodeId: number, options?: UnknownRecord): Promise<void>;
-  search(queryVector: VectorLike, k?: number, options?: UnknownRecord): Promise<TriviumSearchHit[]>;
+  search(
+    queryVector: VectorLike,
+    k?: number,
+    options?: UnknownRecord,
+  ): Promise<TriviumSearchHit[]>;
   searchHybrid?(
     queryVector: VectorLike,
     queryText: string,

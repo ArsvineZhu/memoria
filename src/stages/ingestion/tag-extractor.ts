@@ -1,8 +1,7 @@
+import type { PipelineContextLike, PipelineData } from "../../types.js";
 
-import type { PipelineContextLike, PipelineData } from '../../types';
-
-import Stage = require('../../core/stage');
-import { extractTags } from '../../utils/text-preprocessor';
+import Stage from "../../core/stage.js";
+import { extractTags } from "../../utils/text-preprocessor.js";
 
 /**
  * Extracts tags from document content (Tag: lines at the end of the file).
@@ -12,22 +11,25 @@ import { extractTags } from '../../utils/text-preprocessor';
 class TagExtractorStage extends Stage {
   constructor() {
     super();
-    this.name = 'tagExtractor';
+    this.name = "tagExtractor";
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<Omit<PipelineData, 'tags'> & { tags: string[] }> {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<Omit<PipelineData, "tags"> & { tags: string[] }> {
     const fileInfo = input;
-    if (!fileInfo || typeof fileInfo.content !== 'string') {
+    if (!fileInfo || typeof fileInfo.content !== "string") {
       return { ...(fileInfo || {}), tags: [] };
     }
 
     const config = ctx.config || {};
     const tags = extractTags(fileInfo.content, config, {
-      maxTags: config.maxTagsPerFile || 50
+      maxTags: config.maxTagsPerFile || 50,
     });
 
     return { ...fileInfo, tags };
   }
 }
 
-export = TagExtractorStage;
+export default TagExtractorStage;

@@ -1,7 +1,11 @@
+import type {
+  ChunkCandidate,
+  MetadataStoreContract,
+  PipelineContextLike,
+  PipelineData,
+} from "../../types.js";
 
-import type { ChunkCandidate, MetadataStoreContract, PipelineContextLike, PipelineData } from '../../types';
-
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -26,13 +30,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 class TimeDecayStage extends Stage {
   constructor() {
     super();
-    this.name = 'timeDecay';
+    this.name = "timeDecay";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'mergedCandidates'> & { mergedCandidates: ChunkCandidate[] }> {
+  ): Promise<
+    Omit<PipelineData, "mergedCandidates"> & { mergedCandidates: ChunkCandidate[] }
+  > {
     const info = input || {};
     const config = ctx.config || {};
     const candidates = Array.isArray(info.mergedCandidates)
@@ -52,10 +58,7 @@ class TimeDecayStage extends Stage {
     for (const candidate of candidates) {
       let decay = 1;
       try {
-        const recencySeconds = await this._resolveRecency(
-          candidate,
-          metadataStore
-        );
+        const recencySeconds = await this._resolveRecency(candidate, metadataStore);
         if (recencySeconds !== null && Number.isFinite(recencySeconds)) {
           const ageMs = Math.max(0, nowMs - recencySeconds * 1000);
           let ageDays = ageMs / DAY_MS;
@@ -70,7 +73,7 @@ class TimeDecayStage extends Stage {
       decayed.push({ ...candidate, score: candidate.score * decay, decay });
     }
 
-    decayed.sort((a, b) => (b.score - a.score) || (a.chunkId - b.chunkId));
+    decayed.sort((a, b) => b.score - a.score || a.chunkId - b.chunkId);
 
     return { ...info, mergedCandidates: decayed };
   }
@@ -88,14 +91,12 @@ class TimeDecayStage extends Stage {
       if (Number.isFinite(direct)) return direct;
     }
     if (
-      typeof metadataStore?.getFileByChunkId === 'function'
-      && candidate.chunkId != null
+      typeof metadataStore?.getFileByChunkId === "function" &&
+      candidate.chunkId != null
     ) {
       const file = await metadataStore.getFileByChunkId(candidate.chunkId);
       if (file) {
-        const updatedSeconds = file.updated_at != null
-          ? Number(file.updated_at)
-          : null;
+        const updatedSeconds = file.updated_at != null ? Number(file.updated_at) : null;
         if (updatedSeconds != null && Number.isFinite(updatedSeconds)) {
           return updatedSeconds;
         }
@@ -109,4 +110,4 @@ class TimeDecayStage extends Stage {
   }
 }
 
-export = TimeDecayStage;
+export default TimeDecayStage;

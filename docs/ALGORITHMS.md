@@ -123,13 +123,14 @@ PCA（maxBasisDim 64）建基底。测试：`tests/algorithms/test-epa.test.ts`
 `handshakeFeatures`（方向一致度 / 模式强度 / 新异信号，基于残差方向向量的
 成对余弦，:148–221）。`extractFeatures`（:223）汇聚为
 `coverage = min(1, totalExplainedEnergy)`、`novelty = 0.7·(1−coverage)
-+ 0.3·directionalNovelty`、`tagMemoActivation = coverage·coherence·
-(1−noiseSignal)`。统计语义：层数上限诚实封顶 3 层，`depth` 反映标签
+
+- 0.3·directionalNovelty`、`tagMemoActivation = coverage·coherence·
+  (1−noiseSignal)`。统计语义：层数上限诚实封顶 3 层，`depth` 反映标签
 清晰度。
 Rust 加速可用时（`config.vexusIndex.computeOrthogonalProjection /
-computeHandshakes`）走原生路径，失败回退 JS。测试：
+  computeHandshakes`）走原生路径，失败回退 JS。测试：
 `tests/algorithms/test-residual-pyramid.test.ts`（零能量、分层分解、
-features 空金字塔）。
+  features 空金字塔）。
 
 ## 6. Gram-Schmidt（src/algorithms/gram-schmidt.ts）
 

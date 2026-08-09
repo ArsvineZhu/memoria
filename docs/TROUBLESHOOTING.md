@@ -7,16 +7,16 @@
 
 ## 速查表
 
-| # | 症状 | 根因 | 解法 |
-|---|------|------|------|
-| 1 | 保存向量索引报错，含 `os error 5`（PermissionDenied/fsync 失败） | Rust 侧 fsync 需要**读写句柄**；Windows 只读句柄或被杀毒/只读目录拦截 | 保持文件可写权限；已修：`sync_index_file` 显式 read+write 打开（lib.rs:168–177）；仍有故障给目录/文件放开写权限或换盘目录 |
-| 2 | `Dimension mismatch: expected N, got M`（add 时抛错） | provider 实际维度 ≠ `config.dimension`（索引创建/加载时固化维度，lib.rs:392–398） | 统一 `embeddingProvider.getDimension()` 与 `config.dimension`；换维度必须删除 `storePath`/`dbPath` 重灌（旧库失效，EMBEDDING.md §5） |
-| 3 | `npm test` 里 4 个 integration 测试输出 SKIP | 仓库根 `.env` 无 `EMBED_API_KEY`（real-dashscope.test.ts:40–59 读 `.env`，无 key 则 `{skip: true}`，:90） | live 场景把真实 key 写入根 `.env`（`EMBED_API_KEY=sk-...`，勿提交）；无 key 属预期跳过，不是失败 |
-| 4 | 搜索空结果（历史库 `files.path` 为 `diaryX\a.md`，而引用方查 `diaryX/a.md`，命中 0） | Windows `path.relative` 产出反斜杠相对路径，旧库/外部写入未 posix 化 | 统一正斜杠：当前入库路径已 `relPath.split(path.sep).join('/')`（file-reader.ts:69）；存量库须把 files.path 转 `a/b.md` 形式或重灌 |
-| 5 | `better-sqlite3 is not available...` 或 require 报错 | `npm ci --ignore-scripts` 后原生绑定缺失 / 预编译不匹配 | `npm rebuild better-sqlite3`（或删除 node_modules 重装 `npm install`） |
-| 6 | 重启后索引内容缺失（`getOrCreateIndex` 找不到 .usearch，建了空索引） | 之前进程未 `close()`（定时器未到）或 `storePath` 被清；懒加载只在*文件存在*时读回（vexus-vector-store.ts:56–73） | 检查 `storePath` 下 `index_*.usearch` 是否存在；优雅停机必须 `engine.close()`/`adapter.shutdown()`（flushPendingSaves）；目录被清则只能重灌 |
-| 7 | `Failed to load native binding` / `Unsupported ...` 于 rust-vexus-lite | 本平台无预编译 `.node`（win32-x64-msvc、linux-x64-gnu/musl、linux-arm64-gnu/musl、darwin-arm64 已提供） | 用含 Rust 工具链环境自行构建：`cd rust-vexus-lite && npm run build`（napi build --platform --release）；跨平台分发时携带对应 `.node` 文件 |
-| 8 | 记忆召回演示（`examples/real-embed`）无输出、以 `✖ 未找到 EMBED_API_KEY` 退出 | 演示脚本读本目录 `.env`，缺 key 直接 exit 1 | 按 `README.md`：把 `.env` 放 `examples/real-embed/` 下（`EMBED_API_KEY=sk-...`），执行 `npm run build:test && node dist-test/examples/real-embed/demo-recall.js` |
+| #   | 症状                                                                                 | 根因                                                                                                             | 解法                                                                                                                                                          |
+| --- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 保存向量索引报错，含 `os error 5`（PermissionDenied/fsync 失败）                     | Rust 侧 fsync 需要**读写句柄**；Windows 只读句柄或被杀毒/只读目录拦截                                            | 保持文件可写权限；已修：`sync_index_file` 显式 read+write 打开（lib.rs:168–177）；仍有故障给目录/文件放开写权限或换盘目录                                     |
+| 2   | `Dimension mismatch: expected N, got M`（add 时抛错）                                | provider 实际维度 ≠ `config.dimension`（索引创建/加载时固化维度，lib.rs:392–398）                                | 统一 `embeddingProvider.getDimension()` 与 `config.dimension`；换维度必须删除 `storePath`/`dbPath` 重灌（旧库失效，EMBEDDING.md §5）                          |
+| 3   | `pnpm test` 里 4 个 integration 测试输出 SKIP                                        | 仓库根 `.env` 无 `EMBED_API_KEY`（real-dashscope.test.ts:40–59 读 `.env`，无 key 则 `{skip: true}`，:90）        | live 场景把真实 key 写入根 `.env`（`EMBED_API_KEY=sk-...`，勿提交）；无 key 属预期跳过，不是失败                                                              |
+| 4   | 搜索空结果（历史库 `files.path` 为 `diaryX\a.md`，而引用方查 `diaryX/a.md`，命中 0） | Windows `path.relative` 产出反斜杠相对路径，旧库/外部写入未 posix 化                                             | 统一正斜杠：当前入库路径已 `relPath.split(path.sep).join('/')`（file-reader.ts:69）；存量库须把 files.path 转 `a/b.md` 形式或重灌                             |
+| 5   | `better-sqlite3 is not available...` 或加载报错                                      | `pnpm install --ignore-scripts` 后原生绑定缺失 / 预编译不匹配                                                    | `pnpm rebuild better-sqlite3`（或删除 node_modules 重装 `pnpm install`）                                                                                      |
+| 6   | 重启后索引内容缺失（`getOrCreateIndex` 找不到 .usearch，建了空索引）                 | 之前进程未 `close()`（定时器未到）或 `storePath` 被清；懒加载只在*文件存在*时读回（vexus-vector-store.ts:56–73） | 检查 `storePath` 下 `index_*.usearch` 是否存在；优雅停机必须 `engine.close()`/`adapter.shutdown()`（flushPendingSaves）；目录被清则只能重灌                   |
+| 7   | `Failed to load native binding` / `Unsupported ...` 于 rust-vexus-lite               | 本平台无预编译 `.node`（win32-x64-msvc、linux-x64-gnu/musl、linux-arm64-gnu/musl、darwin-arm64 已提供）          | 用含 Rust 工具链环境自行构建：`cd rust-vexus-lite && pnpm exec napi build --platform --release`；跨平台分发时携带对应 `.node` 文件                            |
+| 8   | 记忆召回演示（`examples/real-embed`）无输出、以 `✖ 未找到 EMBED_API_KEY` 退出        | 演示脚本读本目录 `.env`，缺 key 直接 exit 1                                                                      | 按 `README.md`：把 `.env` 放 `examples/real-embed/` 下（`EMBED_API_KEY=sk-...`），执行 `pnpm build:test && node dist-test/examples/real-embed/demo-recall.js` |
 
 （若某条与你所在环境不符，先看对应源码行号再操作——不要凭记忆改配置。）
 
@@ -29,13 +29,13 @@
 - **根因（历史问题）**：持久化时对临时索引 `sync_all` 需要**写访问权
   句柄**；只读打开会在 Windows 上被拒（`system error 5`）。旧实现踩过
   这个坑；现实现 `sync_index_file` 显式 `.read(true).write(true).open()`
-   再 sync（rust-vexus-lite/src/lib.rs:168–177），并在发布阶段对
-   PermissionDenied/WouldBlock/Interrupted 做 6 档有界重试（:186–213）。
+  再 sync（rust-vexus-lite/src/lib.rs:168–177），并在发布阶段对
+  PermissionDenied/WouldBlock/Interrupted 做 6 档有界重试（:186–213）。
 - **若仍复现**（沙箱/只读卷/杀毒占用）：
-  1) 确认目标目录对当前用户可写，退出所有持有该目录句柄的程序；
-  2) 若在受限 CI/沙箱，参考 `tests/providers/test-vexus-vector-store.test.ts:
-  192–201` 的做法：把原生 save 视为环境依赖，跳过 roundtrip 断言；
-  3) 兜底：改 `storePath` 到可写目录后重灌。
+  1. 确认目标目录对当前用户可写，退出所有持有该目录句柄的程序；
+  2. 若在受限 CI/沙箱，参考 `tests/providers/test-vexus-vector-store.test.ts:
+192–201` 的做法：把原生 save 视为环境依赖，跳过 roundtrip 断言；
+  3. 兜底：改 `storePath` 到可写目录后重灌。
 - **要点**：保存失败**不会**抛到调用面（JS 侧 catch 后 console.error），
   但该次索引的磁盘态仍是旧的——重启后懒加载读到旧文件；因目标文件
   仍在，不会触发"读回失败→建空索引"分支（判断信号：重启后向量数
@@ -54,7 +54,7 @@
   `provider.getDimension()`**（EMBEDDING.md §1/§4）。换维度 = 换库：
   删除 `dbPath` 与 `storePath` 后重新 `flushBatch`，不支持原地迁移。
 
-## 3. `npm test` 中 4 个 integration 测试 SKIP
+## 3. `pnpm test` 中 4 个 integration 测试 SKIP
 
 - **牵涉文件**：`tests/integration/real-dashscope.test.ts`（4 个用例：
   provider 真量嵌入、engine+adapter 真链、持久化懒加载+重开搜索、TDB
@@ -76,7 +76,7 @@
   全对不上 → 命中 0。
 - **修复**：入库统一 posix——`file-reader.ts:69` 已
   `relPath.split(path.sep).join('/')`（测试锚点 `tests/stages/
-  test-ingestion-stages.test.ts:132–144` 验证 Windows 风格入参输出
+test-ingestion-stages.test.ts:132–144` 验证 Windows 风格入参输出
   `diary/ghost.md`）。**存量库**：要么 SQL 批量把 `path` 里的 `\` 转为
   `/` 并重算关联（或直接重灌）；保持新旧路径约定一致。
 - **其他空结果成因**：见 #6（索引未落盘）与 EMBEDDING §6（嵌入失败位
@@ -87,10 +87,10 @@
 - **表现**：`SqliteMetadataStore` 构造抛
   `better-sqlite3 is not available...`（sqlite-metadata-store.ts:75–78）或
   `NODE_MODULE_VERSION` 不匹配。
-- **根因**：`npm ci --ignore-scripts`（或某些包管理器不跑 postinstall）
+- **根因**：`pnpm install --ignore-scripts`（或某些包管理器不跑 postinstall）
   只装了 JS 壳；当前 Node ≥24（package.json engines）。
-- **解法**：`npm rebuild better-sqlite3`（或 `npm install --force
-  better-sqlite3`、删除 node_modules 重装）。注意它与 `rust-vexus-lite`
+- **解法**：`pnpm rebuild better-sqlite3`（或 `pnpm install --force
+better-sqlite3`、删除 node_modules 重装）。注意它与 `rust-vexus-lite`
   是两套独立原生依赖——后者缺平台二进制见第 7 条，不被本命令覆盖。
 
 ## 6. 索引懒加载异常 / 找不到 `.usearch`
@@ -100,21 +100,20 @@
   `Failed to load persisted index ... creating fresh one instead` 并
   **静默新建空索引**——之后搜索自然 0 结果。
 - **查因**：1) 未 `close()` 就退出，`scheduleIndexSave` 定时器没到，
-  最后写入未落盘（log 里没有保存失败也能发生）；2) `storePath` 被清空；
-  3) 换了维度（旧文件维度不符）→ 检查 `storePath` 下 `index_*.usearch`
+  最后写入未落盘（log 里没有保存失败也能发生）；2) `storePath` 被清空；3) 换了维度（旧文件维度不符）→ 检查 `storePath` 下 `index_*.usearch`
   是否存在及其保存时间。
 - **处理**：存在但内容旧 → 重新 `close()`/`shutdown()` 触发 flush；
   不存在 → 无可恢复，只能重灌（或手动 `saveIndex` 先保存一次）。
 
 ## 7. Rust 预编译二进制缺平台
 
-- **症状**：`require('../../rust-vexus-lite')` 抛 `Failed to load native
-  binding` 或 `Unsupported OS/architecture`（`rust-vexus-lite/index.js:299–310` 的 switch
+- **症状**：native loader 抛 `Failed to load native
+binding` 或 `Unsupported OS/architecture`（`rust-vexus-lite/index.js:299–310` 的 switch
   兜底）。
 - **现状**：仓库内置 win32-x64-msvc、linux-x64-gnu/musl、linux-arm64-
   gnu/musl、darwin-arm64 的 `.node`（根目录文件名即平台标记）。若跨平台
-  分发少了当前平台/arch，**自行构建**：`cd rust-vexus-lite && npm run
-  build`（需 Node ≥24 + Rust stable + 对应 target），产物放回包内
+  分发少了当前平台/arch，**自行构建**：`cd rust-vexus-lite && pnpm exec napi build
+--platform --release`（需 Node ≥24 + Rust stable + 对应 target），产物放回包内
   `vexus-lite.<platform>-<arch>.node` 即可离线 require。
 
 ## 8. 记忆召回演示无输出 / 无 key 前缀提示
@@ -131,7 +130,7 @@
 ## 附：通用排查顺序
 
 1. 日志关键字：`os error` / `Dimension mismatch` / `Failed to load
-   persisted index` / `Failed to save temporary index` / `not available`；
+persisted index` / `Failed to save temporary index` / `not available`；
 2. 文件检查：`storePath` 下 `index_*.usearch` 与 `memory.sqlite` 存在性与
    时间戳（PERSISTENCE.md §7 布局）；
 3. 停机验证：先 `engine.close()`（= `adapter.shutdown()`）再查盘；未 flush

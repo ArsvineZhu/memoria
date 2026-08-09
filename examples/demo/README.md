@@ -12,25 +12,27 @@
 ## 运行
 
 ```bash
-node main.js
-# 或 npm start
+corepack pnpm build:test
+node ../../dist-test/examples/demo/main.js
+# 或在本目录编译产物后执行 node main.js
 ```
 
-零网络、零 API Key，一键运行、结果可复现 —— 运行前提：仓库根已完成 `npm install` 且 `rust-vexus-lite` 预编译二进制就位（随仓库分发）。
+零网络、零 API Key，一键运行、结果可复现 —— 运行前提：仓库根已完成
+`corepack pnpm install --frozen-lockfile` 且 `rust-vexus-lite` 预编译二进制就位（随仓库分发）。
 
 ## 文件说明
 
-| 文件 | 作用 |
-|------|------|
-| `main.js` | 章节式演示主脚本，`require('../..')` 引用仓库根的 memoria 入口 |
-| `fake-embedding.js` | 离线确定性伪嵌入（128 维），与 `EmbeddingProvider` 接口兼容 |
-| `demo-data/` | 运行期自动生成的演示数据（日记、SQLite、向量索引），已被 `.gitignore` 排除，无需提交 |
+| 文件                | 作用                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `main.ts`           | TypeScript ESM 章节式演示主脚本，导入仓库根的 memoria 入口                           |
+| `fake-embedding.ts` | 离线确定性伪嵌入（128 维），与 `EmbeddingProvider` 接口兼容                          |
+| `demo-data/`        | 运行期自动生成的演示数据（日记、SQLite、向量索引），已被 `.gitignore` 排除，无需提交 |
 
 ## 目录结构
 
 ```text
 examples/demo/
-|- main.js            # 演示主流程（6 章节）
-|- fake-embedding.js  # 离线确定性嵌入 Provider
+|- main.ts            # 演示主流程（6 章节）
+|- fake-embedding.ts  # 离线确定性嵌入 Provider
 `- demo-data/         # 自动生成：notes/ 演示日记 + indices/ + memory.sqlite
 ```

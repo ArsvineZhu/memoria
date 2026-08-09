@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * Residual Pyramid - Pure algorithm.
@@ -7,9 +7,15 @@
  * Optional Rust acceleration via config.vexusIndex.
  */
 
-import { orthogonalProjection, dotProduct, magnitude } from './gram-schmidt';
-import type { VexusIndex } from '../native/vexus-lite';
-import type { PyramidFeatures, Vector, VectorHit } from '../types';
+import { orthogonalProjection, dotProduct, magnitude } from "./gram-schmidt.js";
+import type { VexusIndex } from "../native/vexus-lite.js";
+import type { PyramidFeatures, Vector, VectorHit } from "../types.js";
+import {
+  at,
+  assertDimension,
+  assertFiniteVector,
+  assertVectorDimension,
+} from "../utils/numerical.js";
 
 interface ResidualConfig {
   maxLevels: number;
@@ -70,7 +76,7 @@ export interface PyramidResult {
 }
 
 export interface PyramidFeatureInput {
-  levels: ReadonlyArray<Pick<PyramidLevel, 'handshakeFeatures'>>;
+  levels: ReadonlyArray<Pick<PyramidLevel, "handshakeFeatures">>;
   totalExplainedEnergy: number;
 }
 
@@ -91,7 +97,7 @@ class ResidualPyramid {
       minEnergyRatio: config.minEnergyRatio || 0.1,
       dimension: config.dimension || 3072,
       vexusIndex: config.vexusIndex || null,
-      ...config
+      ...config,
     };
   }
 
@@ -114,6 +120,9 @@ class ResidualPyramid {
     },
   ): Promise<PyramidResult> {
     const dim = this.config.dimension;
+    assertDimension(dim, "ResidualPyramid dimension");
+    assertVectorDimension(queryVector, dim, "ResidualPyramid query vector");
+    assertFiniteVector(queryVector, "ResidualPyramid query vector");
     const pyramid: PyramidResult = {
       levels: [] as PyramidLevel[],
       totalExplainedEnergy: 0,
@@ -125,10 +134,11 @@ class ResidualPyramid {
         coherence: 0,
         tagMemoActivation: 0,
         expansionSignal: 1,
-      }
+      },
     };
 
-    const currentVector: Vector = queryVector instanceof Float32Array ? queryVector : new Float32Array(queryVector);
+    const currentVector: Vector =
+      queryVector instanceof Float32Array ? queryVector : new Float32Array(queryVector);
     const originalMagnitude = magnitude(currentVector);
     const originalEnergy = originalMagnitude * originalMagnitude;
 
@@ -149,20 +159,20 @@ class ResidualPyramid {
       if (!tagResults || tagResults.length === 0) break;
 
       // 2. Look up tag vectors
-      const tagIds = tagResults.map(r => Number(r.id));
+      const tagIds = tagResults.map((r) => Number(r.id));
       const rawTags = await lookupFn(tagIds);
       if (!rawTags || rawTags.length === 0) break;
 
       // 3. Orthogonal projection
-      const tagVectors = rawTags.map(t => this._extractFloat32(t.vector));
-      const { projection, residual, basisCoefficients } = this._computeOrthogonalProjection(
-        currentResidual, tagVectors
-      );
+      const tagVectors = rawTags.map((t) => this._extractFloat32(t.vector));
+      const { projection, residual, basisCoefficients } =
+        this._computeOrthogonalProjection(currentResidual, tagVectors);
 
       // 4. Energy calculations
       const residualEnergy = magnitude(residual) ** 2;
       const currentEnergy = magnitude(currentResidual) ** 2;
-      const energyExplainedByLevel = Math.max(0, currentEnergy - residualEnergy) / originalEnergy;
+      const energyExplainedByLevel =
+        Math.max(0, currentEnergy - residualEnergy) / originalEnergy;
 
       // 5. Handshake analysis
       const handshakes = this._computeHandshakes(currentResidual, tagVectors);
@@ -170,26 +180,26 @@ class ResidualPyramid {
       pyramid.levels.push({
         level,
         tags: rawTags.map((t, i) => {
-          const res = tagResults.find(r => Number(r.id) === t.id);
+          const res = tagResults.find((r) => Number(r.id) === t.id);
           return {
             id: t.id,
             name: t.name,
             similarity: res ? res.score : 0,
             contribution: basisCoefficients[i] || 0,
-            handshakeMagnitude: handshakes.magnitudes[i]
+            handshakeMagnitude: at(handshakes.magnitudes, i, "handshake magnitudes"),
           };
         }),
         projectionMagnitude: magnitude(projection),
         residualMagnitude: magnitude(residual),
         residualEnergyRatio: residualEnergy / originalEnergy,
         energyExplained: energyExplainedByLevel,
-        handshakeFeatures: this._analyzeHandshakes(handshakes, dim)
+        handshakeFeatures: this._analyzeHandshakes(handshakes, dim),
       });
 
       pyramid.totalExplainedEnergy += energyExplainedByLevel;
       currentResidual = residual;
 
-      if ((residualEnergy / originalEnergy) < this.config.minEnergyRatio) break;
+      if (residualEnergy / originalEnergy < this.config.minEnergyRatio) break;
     }
 
     pyramid.finalResidual = currentResidual;
@@ -213,17 +223,27 @@ class ResidualPyramid {
     const n = tagVectors.length;
 
     // Rust acceleration
-    if (this.config.vexusIndex && typeof this.config.vexusIndex.computeOrthogonalProjection === 'function') {
+    if (
+      this.config.vexusIndex &&
+      typeof this.config.vexusIndex.computeOrthogonalProjection === "function"
+    ) {
       try {
         const flattenedTags = new Float32Array(n * dim);
         for (let i = 0; i < n; i++) {
-          flattenedTags.set(this._extractFloat32(tagVectors[i]), i * dim);
+          flattenedTags.set(
+            this._extractFloat32(at(tagVectors, i, "tagVectors")),
+            i * dim,
+          );
         }
-        const result = this.config.vexusIndex.computeOrthogonalProjection(vector, flattenedTags, n);
+        const result = this.config.vexusIndex.computeOrthogonalProjection(
+          vector,
+          flattenedTags,
+          n,
+        );
         return {
-          projection: new Float32Array(result.projection.map(x => x)),
-          residual: new Float32Array(result.residual.map(x => x)),
-          basisCoefficients: new Float32Array(result.basisCoefficients.map(x => x))
+          projection: new Float32Array(result.projection.map((x) => x)),
+          residual: new Float32Array(result.residual.map((x) => x)),
+          basisCoefficients: new Float32Array(result.basisCoefficients.map((x) => x)),
         };
       } catch (e) {
         // Fall through to JS
@@ -239,18 +259,32 @@ class ResidualPyramid {
     const n = tagVectors.length;
 
     // Rust acceleration
-    if (this.config.vexusIndex && typeof this.config.vexusIndex.computeHandshakes === 'function') {
+    if (
+      this.config.vexusIndex &&
+      typeof this.config.vexusIndex.computeHandshakes === "function"
+    ) {
       try {
         const flattenedTags = new Float32Array(n * dim);
         for (let i = 0; i < n; i++) {
-          flattenedTags.set(this._extractFloat32(tagVectors[i]), i * dim);
+          flattenedTags.set(
+            this._extractFloat32(at(tagVectors, i, "tagVectors")),
+            i * dim,
+          );
         }
-        const result = this.config.vexusIndex.computeHandshakes(query, flattenedTags, n);
+        const result = this.config.vexusIndex.computeHandshakes(
+          query,
+          flattenedTags,
+          n,
+        );
         const directions: Vector[] = [];
         for (let i = 0; i < n; i++) {
-          directions.push(new Float32Array(result.directions.slice(i * dim, (i + 1) * dim).map(x => x)));
+          directions.push(
+            new Float32Array(
+              result.directions.slice(i * dim, (i + 1) * dim).map((x) => x),
+            ),
+          );
         }
-        return { magnitudes: result.magnitudes.map(x => x), directions };
+        return { magnitudes: result.magnitudes.map((x) => x), directions };
       } catch (e) {
         // Fall through to JS
       }
@@ -260,33 +294,43 @@ class ResidualPyramid {
     const magnitudes: number[] = [];
     const directions: Vector[] = [];
     for (let i = 0; i < n; i++) {
-      const tagVec = this._extractFloat32(tagVectors[i]);
+      const tagVec = this._extractFloat32(at(tagVectors, i, "tagVectors"));
       const delta = new Float32Array(dim);
       let magSq = 0;
       for (let d = 0; d < dim; d++) {
-        delta[d] = query[d] - tagVec[d];
-        magSq += delta[d] * delta[d];
+        delta[d] = at(query, d, "query") - at(tagVec, d, "tag vector");
+        const value = at(delta, d, "delta");
+        magSq += value * value;
       }
       const mag = Math.sqrt(magSq);
       magnitudes.push(mag);
       const dir = new Float32Array(dim);
       if (mag > 1e-9) {
-        for (let d = 0; d < dim; d++) dir[d] = delta[d] / mag;
+        for (let d = 0; d < dim; d++) dir[d] = at(delta, d, "delta") / mag;
       }
       directions.push(dir);
     }
     return { magnitudes, directions };
   }
 
-  _analyzeHandshakes(handshakes: HandshakeResult, dim: number): HandshakeFeatures | null {
+  _analyzeHandshakes(
+    handshakes: HandshakeResult,
+    dim: number,
+  ): HandshakeFeatures | null {
     const n = handshakes.magnitudes.length;
     if (n === 0) return null;
 
     const avgDirection = new Float32Array(dim);
     for (let i = 0; i < n; i++) {
-      for (let d = 0; d < dim; d++) avgDirection[d] += handshakes.directions[i][d];
+      const direction = at(handshakes.directions, i, "handshake directions");
+      for (let d = 0; d < dim; d++) {
+        avgDirection[d] =
+          at(avgDirection, d, "average direction") +
+          at(direction, d, "handshake direction");
+      }
     }
-    for (let d = 0; d < dim; d++) avgDirection[d] /= n;
+    for (let d = 0; d < dim; d++)
+      avgDirection[d] = at(avgDirection, d, "average direction") / n;
 
     const directionCoherence = magnitude(avgDirection);
 
@@ -295,7 +339,12 @@ class ResidualPyramid {
     const limit = Math.min(n, 5);
     for (let i = 0; i < limit; i++) {
       for (let j = i + 1; j < limit; j++) {
-        pairwiseSimSum += Math.abs(dotProduct(handshakes.directions[i], handshakes.directions[j]));
+        pairwiseSimSum += Math.abs(
+          dotProduct(
+            at(handshakes.directions, i, "handshake directions"),
+            at(handshakes.directions, j, "handshake directions"),
+          ),
+        );
         pairCount++;
       }
     }
@@ -305,16 +354,23 @@ class ResidualPyramid {
       directionCoherence,
       patternStrength: avgPairwiseSim,
       noveltySignal: directionCoherence,
-      noiseSignal: (1 - directionCoherence) * (1 - avgPairwiseSim)
+      noiseSignal: (1 - directionCoherence) * (1 - avgPairwiseSim),
     };
   }
 
   extractFeatures(pyramid: PyramidFeatureInput): PyramidFeatures {
     if (pyramid.levels.length === 0) {
-      return { depth: 0, coverage: 0, novelty: 1, coherence: 0, tagMemoActivation: 0, expansionSignal: 1 };
+      return {
+        depth: 0,
+        coverage: 0,
+        novelty: 1,
+        coherence: 0,
+        tagMemoActivation: 0,
+        expansionSignal: 1,
+      };
     }
 
-    const level0 = pyramid.levels[0];
+    const level0 = at(pyramid.levels, 0, "pyramid levels");
     const handshake = level0.handshakeFeatures;
 
     const coverage = Math.min(1.0, pyramid.totalExplainedEnergy);
@@ -322,7 +378,7 @@ class ResidualPyramid {
 
     const residualRatio = 1 - coverage;
     const directionalNovelty = handshake ? handshake.noveltySignal : 0;
-    const novelty = (residualRatio * 0.7) + (directionalNovelty * 0.3);
+    const novelty = residualRatio * 0.7 + directionalNovelty * 0.3;
 
     return {
       depth: pyramid.levels.length,
@@ -330,12 +386,28 @@ class ResidualPyramid {
       novelty,
       coherence,
       tagMemoActivation: coverage * coherence * (1 - (handshake?.noiseSignal || 0)),
-      expansionSignal: novelty
+      expansionSignal: novelty,
     };
   }
 
   _extractFloat32(vectorData: Buffer | Vector | ArrayBufferView): Vector {
-    if (vectorData instanceof Float32Array) return vectorData;
+    if (vectorData instanceof Float32Array) {
+      assertVectorDimension(
+        vectorData,
+        this.config.dimension,
+        "ResidualPyramid tag vector",
+      );
+      assertFiniteVector(vectorData, "ResidualPyramid tag vector");
+      return vectorData;
+    }
+    if (
+      vectorData.byteLength !==
+      this.config.dimension * Float32Array.BYTES_PER_ELEMENT
+    ) {
+      throw new RangeError(
+        "ResidualPyramid tag vector buffer has an unexpected byte length.",
+      );
+    }
     const result = new Float32Array(this.config.dimension);
     const bytes = new Uint8Array(
       vectorData.buffer,
@@ -343,6 +415,7 @@ class ResidualPyramid {
       Math.min(vectorData.byteLength, result.byteLength),
     );
     new Uint8Array(result.buffer).set(bytes);
+    assertFiniteVector(result, "ResidualPyramid tag vector");
     return result;
   }
 
@@ -351,7 +424,14 @@ class ResidualPyramid {
       levels: [],
       totalExplainedEnergy: 0,
       finalResidual: new Float32Array(dim),
-      features: { depth: 0, coverage: 0, novelty: 1, coherence: 0, tagMemoActivation: 0, expansionSignal: 1 }
+      features: {
+        depth: 0,
+        coverage: 0,
+        novelty: 1,
+        coherence: 0,
+        tagMemoActivation: 0,
+        expansionSignal: 1,
+      },
     };
   }
 }

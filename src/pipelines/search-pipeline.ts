@@ -1,33 +1,34 @@
-'use strict';
+"use strict";
 
-import Pipeline = require('../core/pipeline');
-import Stage = require('../core/stage');
+import Pipeline from "../core/pipeline.js";
+import Stage from "../core/stage.js";
+import { at } from "../utils/numerical.js";
 
-import QueryEmbedderStage = require('../stages/retrieval/query-embedder');
-import VectorSearcherStage = require('../stages/retrieval/vector-searcher');
-import BM25SearcherStage = require('../stages/retrieval/bm25-searcher');
-import CandidateMergerStage = require('../stages/retrieval/candidate-merger');
+import QueryEmbedderStage from "../stages/retrieval/query-embedder.js";
+import VectorSearcherStage from "../stages/retrieval/vector-searcher.js";
+import BM25SearcherStage from "../stages/retrieval/bm25-searcher.js";
+import CandidateMergerStage from "../stages/retrieval/candidate-merger.js";
 
-import EPAProjectorStage = require('../stages/memo/epa-projector');
-import ResidualPyramidStage = require('../stages/memo/residual-pyramid');
-import TagExpanderStage = require('../stages/memo/tag-expander');
-import VectorReshaperStage = require('../stages/memo/vector-reshaper');
-import TagMemoV9Stage = require('../stages/memo/tagmemo-v9');
-import TagMemoV10Stage = require('../stages/memo/tagmemo-v10');
-import RiverMemoStage = require('../stages/memo/rivermemo');
+import EPAProjectorStage from "../stages/memo/epa-projector.js";
+import ResidualPyramidStage from "../stages/memo/residual-pyramid.js";
+import TagExpanderStage from "../stages/memo/tag-expander.js";
+import VectorReshaperStage from "../stages/memo/vector-reshaper.js";
+import TagMemoV9Stage from "../stages/memo/tagmemo-v9.js";
+import TagMemoV10Stage from "../stages/memo/tagmemo-v10.js";
+import RiverMemoStage from "../stages/memo/rivermemo.js";
 
-import ResultDeduplicatorStage = require('../stages/postprocess/result-deduplicator');
-import ExternalRerankerStage = require('../stages/postprocess/external-reranker');
-import TimeDecayStage = require('../stages/postprocess/time-decay');
-import TruncatorStage = require('../stages/postprocess/truncator');
-import ExpanderStage = require('../stages/postprocess/expander');
+import ResultDeduplicatorStage from "../stages/postprocess/result-deduplicator.js";
+import ExternalRerankerStage from "../stages/postprocess/external-reranker.js";
+import TimeDecayStage from "../stages/postprocess/time-decay.js";
+import TruncatorStage from "../stages/postprocess/truncator.js";
+import ExpanderStage from "../stages/postprocess/expander.js";
 
-import ResultFormatterStage = require('../stages/output/result-formatter');
+import ResultFormatterStage from "../stages/output/result-formatter.js";
 import type {
   MemoryConfigOverrides,
   PipelineContextLike,
   PipelineData,
-} from '../types';
+} from "../types.js";
 
 interface PipelineOptions {
   stages?: Stage[];
@@ -43,7 +44,7 @@ interface PipelineOptions {
 const DEFAULT_SEARCH_GATES = {
   epaProjectionEnabled: true,
   residualPyramidEnabled: true,
-  dedupeEnabled: true
+  dedupeEnabled: true,
 };
 
 /**
@@ -61,14 +62,18 @@ const DEFAULT_SEARCH_GATES = {
 class QueryVectorBridgeStage extends Stage {
   constructor() {
     super();
-    this.name = 'queryVectorBridge';
+    this.name = "queryVectorBridge";
   }
 
-  async process(input: PipelineData, _ctx: PipelineContextLike): Promise<PipelineData> {
+  override async process(
+    input: PipelineData,
+    _ctx: PipelineContextLike,
+  ): Promise<PipelineData> {
     const info = input || {};
     const queries = Array.isArray(info.queries) ? info.queries : [];
-    const primaryVector = info.queryVector
-      || (queries.length > 0 ? queries[0].vector : undefined);
+    const primaryVector =
+      info.queryVector ||
+      (queries.length > 0 ? at(queries, 0, "queries").vector : undefined);
     if (primaryVector == null) return info;
     return { ...info, queryVector: primaryVector };
   }
@@ -142,7 +147,7 @@ class SearchPipeline extends Pipeline {
    *                               Non-explicit values fall back to
    *                               DEFAULT_SEARCH_GATES.
    * @param {object} [options={}]
-   * @param {import('../core/stage').Stage[]} [options.stages] - explicit chain override
+   * @param {import('../core/stage.js').Stage[]} [options.stages] - explicit chain override
    */
   constructor(config: MemoryConfigOverrides = {}, options: PipelineOptions = {}) {
     const effectiveConfig = { ...DEFAULT_SEARCH_GATES, ...config };
@@ -150,14 +155,14 @@ class SearchPipeline extends Pipeline {
       ? options.stages
       : SearchPipeline.defaultStages(effectiveConfig);
     super(stages);
-    this.name = 'searchPipeline';
+    this.name = "searchPipeline";
     this.config = effectiveConfig;
   }
 
   /**
    * Build the default search chain honoring the config gates.
    * @param {object} config - effective gate config
-   * @returns {import('../core/stage').Stage[]}
+   * @returns {import('../core/stage.js').Stage[]}
    */
   static defaultStages(config: MemoryConfigOverrides): Stage[] {
     const stages = [
@@ -165,11 +170,12 @@ class SearchPipeline extends Pipeline {
       new QueryVectorBridgeStage(),
       new VectorSearcherStage(),
       new BM25SearcherStage(),
-      new CandidateMergerStage()
+      new CandidateMergerStage(),
     ];
 
     if (config.epaProjectionEnabled !== false) stages.push(new EPAProjectorStage());
-    if (config.residualPyramidEnabled !== false) stages.push(new ResidualPyramidStage());
+    if (config.residualPyramidEnabled !== false)
+      stages.push(new ResidualPyramidStage());
     if (config.tagMemoV9Enabled === true) stages.push(new TagMemoV9Stage());
     if (config.tagMemoV10Enabled === true) stages.push(new TagMemoV10Stage());
     if (config.riverMemoEnabled === true) stages.push(new RiverMemoStage());
@@ -179,10 +185,8 @@ class SearchPipeline extends Pipeline {
 
     stages.push(new ResultDeduplicatorStage());
 
-    if (
-      config.externalRerankEnabled === true
-      || config.useLLMRerank === true
-    ) stages.push(new ExternalRerankerStage());
+    if (config.externalRerankEnabled === true || config.useLLMRerank === true)
+      stages.push(new ExternalRerankerStage());
     if (config.timeDecayEnabled === true) stages.push(new TimeDecayStage());
     if (config.truncateEnabled === true) stages.push(new TruncatorStage());
     if (config.expansionEnabled === true) stages.push(new ExpanderStage());
@@ -200,15 +204,18 @@ class SearchPipeline extends Pipeline {
    * (diaryNames, topK, …) so downstream stages pick it up as-is.
    *
    * @param {{ query: string, options?: object }} input
-   * @param {import('../core/context').PipelineContext} ctx
+   * @param {import('../core/context.js').PipelineContext} ctx
    * @returns {Promise<object>} result envelope
    */
-  async run(
+  override async run(
     input: PipelineData,
     ctx: Partial<PipelineContextLike> = {},
   ): Promise<PipelineData> {
     const runConfig = mergeConfig(this.config, ctx && ctx.config);
-    const runCtx: PipelineContextLike = { ...ctx, config: runConfig as import('../types').MemoryConfig };
+    const runCtx: PipelineContextLike = {
+      ...ctx,
+      config: runConfig as import("../types.js").MemoryConfig,
+    };
 
     const payload = { ...(input || {}) };
     const options = (input && input.options) || {};
@@ -218,4 +225,4 @@ class SearchPipeline extends Pipeline {
   }
 }
 
-export = SearchPipeline;
+export default SearchPipeline;

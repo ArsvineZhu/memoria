@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-test/
+rust-vexus-lite/node_modules/
+rust-vexus-lite/target/
+rust-vexus-lite/AGENTS.md
+rust-vexus-lite/index.js
+rust-vexus-lite/index.d.ts
+rust-vexus-lite/test.ts
+VectorStoreTDB/
+examples/demo/demo-data/
+tests/fixtures/**
+*.sqlite
+*.usearch
+*.log

@@ -1,4 +1,3 @@
-
 import type {
   ChunkCandidate,
   MemoryConfigOverrides,
@@ -7,13 +6,13 @@ import type {
   RiverGraph,
   RiverStateStore,
   RiverMemoData,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import { computeRiverObservability } from '../../algorithms/topology/river-observability';
+import Stage from "../../core/stage.js";
+import { computeRiverObservability } from "../../algorithms/topology/river-observability.js";
 
-const RIVER_STATE_KEY = 'river_state';
-const RIVER_SCHEMA = 'tagmemo-rivermemo-state-v1';
+const RIVER_STATE_KEY = "river_state";
+const RIVER_SCHEMA = "tagmemo-rivermemo-state-v1";
 
 interface RiverFlow {
   sourceId: number;
@@ -54,17 +53,19 @@ interface RiverState {
 class RiverMemoStage extends Stage {
   constructor() {
     super();
-    this.name = 'riverMemo';
+    this.name = "riverMemo";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'riverMemo' | 'mergedCandidates'> & {
-    riverMemo?: RiverMemoData;
-    mergedCandidates?: ChunkCandidate[];
-    riverSkipped?: boolean;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "riverMemo" | "mergedCandidates"> & {
+      riverMemo?: RiverMemoData;
+      mergedCandidates?: ChunkCandidate[];
+      riverSkipped?: boolean;
+    }
+  > {
     const info = input || {};
     const config = ctx.config;
 
@@ -72,12 +73,16 @@ class RiverMemoStage extends Stage {
       return { ...info, riverSkipped: true };
     }
 
-    const riverGraph: RiverGraph = info.tagMemo && info.tagMemo.riverGraph
-      ? info.tagMemo.riverGraph
-      : { nodes: [], edges: [], diagnostics: {} };
+    const riverGraph: RiverGraph =
+      info.tagMemo && info.tagMemo.riverGraph
+        ? info.tagMemo.riverGraph
+        : { nodes: [], edges: [], diagnostics: {} };
     const store = ctx.riverStateStore;
-    if (!store || typeof store.getKv !== 'function'
-      || typeof store.setKv !== 'function') {
+    if (
+      !store ||
+      typeof store.getKv !== "function" ||
+      typeof store.setKv !== "function"
+    ) {
       return { ...info, riverSkipped: true };
     }
 
@@ -90,8 +95,10 @@ class RiverMemoStage extends Stage {
     for (const [key, flowRow] of flows.entries()) {
       const targetId = Number(flowRow && flowRow.targetId);
       if (Number.isFinite(targetId)) {
-        nodeTotals.set(targetId, (nodeTotals.get(targetId) || 0)
-          + (Number(flowRow.flow) || 0));
+        nodeTotals.set(
+          targetId,
+          (nodeTotals.get(targetId) || 0) + (Number(flowRow.flow) || 0),
+        );
       }
     }
 
@@ -113,7 +120,7 @@ class RiverMemoStage extends Stage {
         flow: 0,
         conductance: Math.max(0, Number(edge && edge.conductance) || 0),
         firstTick: tick,
-        lastTick: tick
+        lastTick: tick,
       };
       previous.flow += increment;
       previous.lastTick = tick;
@@ -126,23 +133,18 @@ class RiverMemoStage extends Stage {
     const observability = computeRiverObservability({
       nodes: riverGraph.nodes,
       edges: riverGraph.edges,
-      diagnostics: riverGraph.diagnostics || {}
+      diagnostics: riverGraph.diagnostics || {},
     });
-    const regime = String(observability.regime || 'collapsed');
+    const regime = String(observability.regime || "collapsed");
 
-    const reranked = this._rerank(
-      info.mergedCandidates,
-      regime,
-      nodeTotals,
-      config
-    );
+    const reranked = this._rerank(info.mergedCandidates, regime, nodeTotals, config);
 
     const persisted = {
       schema: RIVER_SCHEMA,
       tick,
       flows: Object.fromEntries(
-        [...flows.entries()].sort((left, right) => left[0].localeCompare(right[0]))
-      )
+        [...flows.entries()].sort((left, right) => left[0].localeCompare(right[0])),
+      ),
     };
     await store.setKv(RIVER_STATE_KEY, JSON.stringify(persisted));
 
@@ -155,14 +157,14 @@ class RiverMemoStage extends Stage {
         omega: observability.omega,
         flows: persisted.flows,
         nodeTotals: Object.fromEntries(
-          [...nodeTotals.entries()].sort((left, right) => left[0] - right[0])
+          [...nodeTotals.entries()].sort((left, right) => left[0] - right[0]),
         ),
         tickFlowMass,
         activeEdges,
         observability,
-        rerankedCount: reranked.length
+        rerankedCount: reranked.length,
       },
-      mergedCandidates: reranked
+      mergedCandidates: reranked,
     };
   }
 
@@ -175,27 +177,30 @@ class RiverMemoStage extends Stage {
     }
     if (!raw) return { tick: 0, flows: new Map() };
     try {
-      const parsed: Record<string, unknown> = typeof raw === 'string'
-        ? JSON.parse(raw) as Record<string, unknown>
-        : raw;
-      const rawFlows = parsed.flows && typeof parsed.flows === 'object'
-        ? parsed.flows as Record<string, unknown>
-        : {};
+      const parsed: Record<string, unknown> =
+        typeof raw === "string" ? (JSON.parse(raw) as Record<string, unknown>) : raw;
+      const rawFlows =
+        parsed.flows && typeof parsed.flows === "object"
+          ? (parsed.flows as Record<string, unknown>)
+          : {};
       const flows = new Map(
-        Object.entries(rawFlows)
-          .map(([key, value]): [string, RiverFlow] => {
-            const row = value && typeof value === 'object'
-              ? value as Record<string, unknown>
+        Object.entries(rawFlows).map(([key, value]): [string, RiverFlow] => {
+          const row =
+            value && typeof value === "object"
+              ? (value as Record<string, unknown>)
               : {};
-            return [key, {
+          return [
+            key,
+            {
               sourceId: Number(row.sourceId) || 0,
               targetId: Number(row.targetId) || 0,
               flow: Number(row.flow) || 0,
               conductance: Number(row.conductance) || 0,
               firstTick: Number(row.firstTick) || 0,
-              lastTick: Number(row.lastTick) || 0
-            }];
-          })
+              lastTick: Number(row.lastTick) || 0,
+            },
+          ];
+        }),
       );
       return { tick: Number(parsed.tick) || 0, flows };
     } catch (e) {
@@ -212,7 +217,7 @@ class RiverMemoStage extends Stage {
     const source = Array.isArray(candidates) ? candidates : [];
     if (source.length === 0) return source;
 
-    const collapsed = regime === 'collapsed';
+    const collapsed = regime === "collapsed";
     const cap = Math.max(0, Number(config.riverTopologyCap) || 0.08);
     const results: ChunkCandidate[] = [];
     for (const candidate of source) {
@@ -224,18 +229,22 @@ class RiverMemoStage extends Stage {
         flowHit = Math.max(flowHit, Number(nodeTotals.get(id)) || 0);
       }
       const score = collapsed
-        ? (Number(candidate.score) || 0)
-        : Math.max(0, Math.min(1,
-          (Number(candidate.score) || 0)
-          + Math.min(cap, cap * Math.min(1, flowHit))
-        ));
+        ? Number(candidate.score) || 0
+        : Math.max(
+            0,
+            Math.min(
+              1,
+              (Number(candidate.score) || 0) +
+                Math.min(cap, cap * Math.min(1, flowHit)),
+            ),
+          );
       results.push({ ...candidate, score, flowHit, riverRegime: regime });
     }
-    results.sort((left, right) =>
-      (right.score - left.score) || (left.chunkId - right.chunkId)
+    results.sort(
+      (left, right) => right.score - left.score || left.chunkId - right.chunkId,
     );
     return results;
   }
 }
 
-export = RiverMemoStage;
+export default RiverMemoStage;

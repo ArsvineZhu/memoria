@@ -1,4 +1,3 @@
-
 import type {
   EmbeddingVector,
   IndexedVectorResult,
@@ -9,12 +8,12 @@ import type {
   VectorHit,
   VectorResult,
   VectorStoreContract,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
 
 // Shared global tag vector index name (mirror of VectorIndexerStage).
-const TAG_INDEX_NAME = 'global_tags';
+const TAG_INDEX_NAME = "global_tags";
 
 /**
  * Searches per-diary vector indices with each query vector and merges the
@@ -45,17 +44,22 @@ const TAG_INDEX_NAME = 'global_tags';
 class VectorSearcherStage extends Stage {
   constructor() {
     super();
-    this.name = 'vectorSearcher';
+    this.name = "vectorSearcher";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'vectorResults' | 'vectorStoreMissing'> & { vectorResults: IndexedVectorResult[]; vectorStoreMissing?: boolean }> {
+  ): Promise<
+    Omit<PipelineData, "vectorResults" | "vectorStoreMissing"> & {
+      vectorResults: IndexedVectorResult[];
+      vectorStoreMissing?: boolean;
+    }
+  > {
     const info = input || {};
     const vectorStore = ctx.vectorStore;
 
-    if (!vectorStore || typeof vectorStore.search !== 'function') {
+    if (!vectorStore || typeof vectorStore.search !== "function") {
       return { ...info, vectorResults: [], vectorStoreMissing: true };
     }
 
@@ -63,13 +67,10 @@ class VectorSearcherStage extends Stage {
     const queries: QueryVector[] = Array.isArray(info.queries) ? info.queries : [];
     const indexNames = await this._resolveIndexNames(info, config, ctx);
 
-    const finalK = Math.max(
-      1,
-      Math.round(Number(info.topK ?? config.topK ?? 5))
-    );
+    const finalK = Math.max(1, Math.round(Number(info.topK ?? config.topK ?? 5)));
     const perIndexK = Math.max(
       1,
-      Math.round(config.perIndexK != null ? config.perIndexK : finalK)
+      Math.round(config.perIndexK != null ? config.perIndexK : finalK),
     );
 
     // chunkId -> best { indexName, chunkId, score }
@@ -87,7 +88,7 @@ class VectorSearcherStage extends Stage {
           results = await vectorStore.search(indexName, vector, perIndexK);
         } catch (e) {
           console.warn(
-            `[VectorSearcher] search failed for index "${indexName}": ${e instanceof Error ? e.message : String(e)}`
+            `[VectorSearcher] search failed for index "${indexName}": ${e instanceof Error ? e.message : String(e)}`,
           );
           continue;
         }
@@ -106,7 +107,7 @@ class VectorSearcherStage extends Stage {
     }
 
     const vectorResults = [...bestById.values()]
-      .sort((a, b) => (b.score - a.score) || ((a.chunkId ?? 0) - (b.chunkId ?? 0)))
+      .sort((a, b) => b.score - a.score || (a.chunkId ?? 0) - (b.chunkId ?? 0))
       .slice(0, finalK);
 
     return { ...info, vectorResults };
@@ -125,27 +126,30 @@ class VectorSearcherStage extends Stage {
     if (Array.isArray(info.diaryNames) && info.diaryNames.length > 0) {
       return [...new Set(info.diaryNames.map(String).filter(Boolean))];
     }
-    if (typeof info.diaryName === 'string' && info.diaryName) {
+    if (typeof info.diaryName === "string" && info.diaryName) {
       return [info.diaryName];
     }
     if (config.searchAllIndices) {
       const metadataStore = ctx.metadataStore;
-      if (metadataStore && typeof metadataStore.getDistinctDiaryNames === 'function') {
+      if (metadataStore && typeof metadataStore.getDistinctDiaryNames === "function") {
         try {
           const names = await metadataStore.getDistinctDiaryNames();
           if (names.length > 0) return names;
         } catch (e) {
           console.warn(
-            `[VectorSearcher] getDistinctDiaryNames failed: ${e instanceof Error ? e.message : String(e)}`
+            `[VectorSearcher] getDistinctDiaryNames failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         }
       }
     }
-    return ['Root'];
+    return ["Root"];
   }
 
-  async _indexIsEmpty(vectorStore: VectorStoreContract, indexName: string): Promise<boolean> {
-    if (typeof vectorStore.getIndexStats !== 'function') return false;
+  async _indexIsEmpty(
+    vectorStore: VectorStoreContract,
+    indexName: string,
+  ): Promise<boolean> {
+    if (typeof vectorStore.getIndexStats !== "function") return false;
     try {
       const stats = await vectorStore.getIndexStats(indexName);
       return !!stats && Number(stats.size) === 0;
@@ -192,9 +196,9 @@ class VectorSearcherStage extends Stage {
     const metadataStore = ctx.metadataStore;
     const tagIndexName = config.tagIndexName || TAG_INDEX_NAME;
     if (
-      !metadataStore
-      || typeof metadataStore.getFileIdsByTagId !== 'function'
-      || typeof metadataStore.getChunksByFileId !== 'function'
+      !metadataStore ||
+      typeof metadataStore.getFileIdsByTagId !== "function" ||
+      typeof metadataStore.getChunksByFileId !== "function"
     ) {
       return [];
     }
@@ -206,7 +210,7 @@ class VectorSearcherStage extends Stage {
       hits = await ctx.vectorStore.search(tagIndexName, queryVector, tagK);
     } catch (e) {
       console.warn(
-        `[VectorSearcher] tag index search failed for "${tagIndexName}": ${e instanceof Error ? e.message : String(e)}`
+        `[VectorSearcher] tag index search failed for "${tagIndexName}": ${e instanceof Error ? e.message : String(e)}`,
       );
       return [];
     }
@@ -222,7 +226,7 @@ class VectorSearcherStage extends Stage {
         fileIds = await metadataStore.getFileIdsByTagId(tagId);
       } catch (e) {
         console.warn(
-          `[VectorSearcher] getFileIdsByTagId(${tagId}) failed: ${e instanceof Error ? e.message : String(e)}`
+          `[VectorSearcher] getFileIdsByTagId(${tagId}) failed: ${e instanceof Error ? e.message : String(e)}`,
         );
         continue;
       }
@@ -238,7 +242,7 @@ class VectorSearcherStage extends Stage {
           expanded.push({
             indexName: tagIndexName,
             chunkId: Number(chunk.id),
-            score
+            score,
           });
         }
       }
@@ -247,4 +251,4 @@ class VectorSearcherStage extends Stage {
   }
 }
 
-export = VectorSearcherStage;
+export default VectorSearcherStage;

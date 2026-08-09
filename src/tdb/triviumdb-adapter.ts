@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 import type {
   EmbeddingVector,
@@ -9,7 +9,8 @@ import type {
   UnknownRecord,
   VectorLike,
   VectorStoreContract,
-} from '../types';
+} from "../types.js";
+import { at } from "../utils/numerical.js";
 
 /**
  * TriviumDBAdapter — local adapter for the "TriviumDB" vector-store call
@@ -31,21 +32,24 @@ import type {
 const TOKEN_LIKE = /[\p{Script=Han}a-z0-9_]/u;
 
 function tokenize(text: string): string[] {
-  const raw = String(text || '').toLowerCase();
+  const raw = String(text || "").toLowerCase();
   const words = raw.match(/[a-z0-9_][a-z0-9_.:/@#-]*/g) || [];
   const cjkTokens = [];
-  for (const run of (raw.match(/[\u4e00-\u9fff]+/g) || [])) {
+  for (const run of raw.match(/[\u4e00-\u9fff]+/g) || []) {
     const chars = [...run];
     if (chars.length === 1) {
-      cjkTokens.push(chars[0]);
+      cjkTokens.push(at(chars, 0, "CJK characters"));
       continue;
     }
     for (let i = 0; i < chars.length; i++) {
-      if (i + 1 < chars.length) cjkTokens.push(chars[i] + chars[i + 1]);
-      cjkTokens.push(chars[i]);
+      if (i + 1 < chars.length)
+        cjkTokens.push(
+          at(chars, i, "CJK characters") + at(chars, i + 1, "CJK characters"),
+        );
+      cjkTokens.push(at(chars, i, "CJK characters"));
     }
   }
-  return [...words, ...cjkTokens].filter(t => TOKEN_LIKE.test(t));
+  return [...words, ...cjkTokens].filter((t) => TOKEN_LIKE.test(t));
 }
 
 class TriviumDBAdapter {
@@ -63,22 +67,24 @@ class TriviumDBAdapter {
    * @param {number} [options.dimension]       - vector dimension
    * @param {number} [options.idSeq]           - first allocatable node id (default 1)
    */
-  constructor(options: {
-    vectorStore?: VectorStoreContract;
-    metadataStore?: TdbStoreContract | MetadataStoreContract;
-    indexName?: string;
-    dimension?: number;
-    idSeq?: number;
-  } = {}) {
+  constructor(
+    options: {
+      vectorStore?: VectorStoreContract;
+      metadataStore?: TdbStoreContract | MetadataStoreContract;
+      indexName?: string;
+      dimension?: number;
+      idSeq?: number;
+    } = {},
+  ) {
     this.vectorStore = options.vectorStore || null;
     this.metadataStore = options.metadataStore || null;
-    this.indexName = options.indexName || 'default';
+    this.indexName = options.indexName || "default";
     this.dimension = options.dimension || 0;
     this._nextId = Math.max(1, Math.round(Number(options.idSeq) || 1));
   }
 
   _resolveIndex(options: UnknownRecord = {}): string {
-    return typeof options.index === 'string' && options.index
+    return typeof options.index === "string" && options.index
       ? options.index
       : this.indexName;
   }
@@ -98,7 +104,7 @@ class TriviumDBAdapter {
     _payload: UnknownRecord = {},
     options: UnknownRecord = {},
   ): Promise<number | null> {
-    if (!vector || !this.vectorStore || typeof this.vectorStore.add !== 'function') {
+    if (!vector || !this.vectorStore || typeof this.vectorStore.add !== "function") {
       return null;
     }
     const id = this._nextId++;
@@ -108,7 +114,9 @@ class TriviumDBAdapter {
       await this.vectorStore.add(indexName, id, vec);
       return id;
     } catch (e) {
-      console.warn(`[TriviumDBAdapter] insert failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[TriviumDBAdapter] insert failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return null;
     }
   }
@@ -117,18 +125,24 @@ class TriviumDBAdapter {
    * Alias of {@link insert} (submit is the higher-level name used by the
    * wrappers).
    */
-  submit(vector: VectorLike, payload: UnknownRecord = {}, options: UnknownRecord = {}): Promise<number | null> {
+  submit(
+    vector: VectorLike,
+    payload: UnknownRecord = {},
+    options: UnknownRecord = {},
+  ): Promise<number | null> {
     return this.insert(vector, payload, options);
   }
 
   // ── Delete ──────────────────────────────────────────────────────
 
   async delete(nodeId: number, options: UnknownRecord = {}): Promise<void> {
-    if (!this.vectorStore || typeof this.vectorStore.remove !== 'function') return;
+    if (!this.vectorStore || typeof this.vectorStore.remove !== "function") return;
     try {
       await this.vectorStore.remove(this._resolveIndex(options), Number(nodeId));
     } catch (e) {
-      console.warn(`[TriviumDBAdapter] delete failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[TriviumDBAdapter] delete failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -144,20 +158,31 @@ class TriviumDBAdapter {
     k = 10,
     options: UnknownRecord = {},
   ): Promise<TriviumSearchHit[]> {
-    if (!this.vectorStore || typeof this.vectorStore.search !== 'function' || !queryVector) {
+    if (
+      !this.vectorStore ||
+      typeof this.vectorStore.search !== "function" ||
+      !queryVector
+    ) {
       return [];
     }
     try {
-      const vec = queryVector instanceof Float32Array
-        ? queryVector
-        : new Float32Array(queryVector);
-      const hits = await this.vectorStore.search(this._resolveIndex(options), vec, Math.max(1, Math.round(k) || 10));
-      return (hits || []).map(h => ({
+      const vec =
+        queryVector instanceof Float32Array
+          ? queryVector
+          : new Float32Array(queryVector);
+      const hits = await this.vectorStore.search(
+        this._resolveIndex(options),
+        vec,
+        Math.max(1, Math.round(k) || 10),
+      );
+      return (hits || []).map((h) => ({
         id: Number(h.id),
-        score: Number(h.score) || 0
+        score: Number(h.score) || 0,
       }));
     } catch (e) {
-      console.warn(`[TriviumDBAdapter] search failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[TriviumDBAdapter] search failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return [];
     }
   }
@@ -187,14 +212,18 @@ class TriviumDBAdapter {
     // {@link expandDepth} is a compat no-op — the flat index has no graph
     // edges to expand, mirroring the original's optional depth argument.
     const vectorHits = await this.search(queryVector, k, options);
-    const vecMax = vectorHits.length > 0 ? Math.max(...vectorHits.map(h => h.score)) : 0;
+    const vecMax =
+      vectorHits.length > 0 ? Math.max(...vectorHits.map((h) => h.score)) : 0;
 
     const keywordHits = await this._keywordHits(queryText, options);
-    const bm25Max = keywordHits.length > 0 ? Math.max(...keywordHits.map(h => h.score)) : 0;
+    const bm25Max =
+      keywordHits.length > 0 ? Math.max(...keywordHits.map((h) => h.score)) : 0;
 
     const weights: { vector: number; bm25: number } = {
-      vector: Number.isFinite(Number(alpha)) ? Math.max(0, Math.min(1, Number(alpha))) : 0.7,
-      bm25: 0
+      vector: Number.isFinite(Number(alpha))
+        ? Math.max(0, Math.min(1, Number(alpha)))
+        : 0.7,
+      bm25: 0,
     };
     weights.bm25 = 1 - weights.vector;
 
@@ -210,19 +239,21 @@ class TriviumDBAdapter {
 
     const merged: TriviumSearchHit[] = [];
     for (const item of byId.values()) {
-      const score = (
-        weights.vector * (vecMax > 0 ? item.vector / vecMax : 0)
-        + weights.bm25 * (bm25Max > 0 ? item.bm25 / bm25Max : 0)
-      );
+      const score =
+        weights.vector * (vecMax > 0 ? item.vector / vecMax : 0) +
+        weights.bm25 * (bm25Max > 0 ? item.bm25 / bm25Max : 0);
       if (score < Number(minScore) || 0) continue;
       merged.push({ id: item.id, score });
     }
-    merged.sort((a, b) => (b.score - a.score) || (a.id - b.id));
+    merged.sort((a, b) => b.score - a.score || a.id - b.id);
     return merged.slice(0, Math.max(1, Math.round(Number(k)) || 10));
   }
 
-  async _keywordHits(queryText: string, options: UnknownRecord): Promise<TriviumSearchHit[]> {
-    if (!this.metadataStore || typeof this.metadataStore.getAllChunks !== 'function') {
+  async _keywordHits(
+    queryText: string,
+    options: UnknownRecord,
+  ): Promise<TriviumSearchHit[]> {
+    if (!this.metadataStore || typeof this.metadataStore.getAllChunks !== "function") {
       return [];
     }
     const queryTokens = tokenize(queryText);
@@ -247,7 +278,8 @@ class TriviumDBAdapter {
     }
     const N = docs.length;
     const idf = new Map<string, number>();
-    for (const [t, df] of docFreq) idf.set(t, Math.log((N - df + 0.5) / (df + 0.5) + 1));
+    for (const [t, df] of docFreq)
+      idf.set(t, Math.log((N - df + 0.5) / (df + 0.5) + 1));
     const avgLen = docs.reduce((sum, d) => sum + d.tokens.length, 0) / Math.max(1, N);
 
     const k1 = 1.5;
@@ -265,7 +297,7 @@ class TriviumDBAdapter {
       }
       if (total > 0) scored.push({ id: doc.id, score: total });
     }
-    scored.sort((a, b) => (b.score - a.score) || (a.id - b.id));
+    scored.sort((a, b) => b.score - a.score || a.id - b.id);
     return scored;
   }
 
@@ -298,7 +330,7 @@ class TriviumDBAdapter {
    */
   async stats(options: UnknownRecord = {}): Promise<UnknownRecord> {
     const indexName = this._resolveIndex(options);
-    if (!this.vectorStore || typeof this.vectorStore.getIndexStats !== 'function') {
+    if (!this.vectorStore || typeof this.vectorStore.getIndexStats !== "function") {
       return { index: indexName, size: 0, capacity: 0, dimension: this.dimension };
     }
     try {
@@ -307,7 +339,7 @@ class TriviumDBAdapter {
         index: indexName,
         size: Number(stats && stats.size) || 0,
         capacity: Number(stats && stats.capacity) || 0,
-        dimension: Number(stats && stats.dimension) || this.dimension
+        dimension: Number(stats && stats.dimension) || this.dimension,
       };
     } catch (_) {
       return { index: indexName, size: 0, capacity: 0, dimension: this.dimension };
@@ -315,4 +347,4 @@ class TriviumDBAdapter {
   }
 }
 
-export = TriviumDBAdapter;
+export default TriviumDBAdapter;

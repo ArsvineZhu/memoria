@@ -1,7 +1,6 @@
+import type { PipelineContextLike, PipelineData } from "../../types.js";
 
-import type { PipelineContextLike, PipelineData } from '../../types';
-
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
 
 /**
  * Tag co-occurrence bridge stage.
@@ -21,13 +20,18 @@ import Stage = require('../../core/stage');
 class CooccurrenceBuilderStage extends Stage {
   constructor() {
     super();
-    this.name = 'cooccurrenceBuilder';
+    this.name = "cooccurrenceBuilder";
   }
 
-  async process(input: PipelineData, ctx: PipelineContextLike): Promise<Omit<PipelineData, 'cooccurrenceMatrix'> & {
-    cooccurrenceMatrix?: Map<number, Map<number, number>>;
-    cooccurrenceSkipped?: boolean;
-  }> {
+  override async process(
+    input: PipelineData,
+    ctx: PipelineContextLike,
+  ): Promise<
+    Omit<PipelineData, "cooccurrenceMatrix"> & {
+      cooccurrenceMatrix?: Map<number, Map<number, number>>;
+      cooccurrenceSkipped?: boolean;
+    }
+  > {
     const info = input || {};
     const config = ctx.config || {};
 
@@ -40,4 +44,4 @@ class CooccurrenceBuilderStage extends Stage {
   }
 }
 
-export = CooccurrenceBuilderStage;
+export default CooccurrenceBuilderStage;

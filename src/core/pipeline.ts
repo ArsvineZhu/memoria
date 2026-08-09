@@ -1,15 +1,18 @@
-import type { PipelineContextLike, PipelineData } from '../types';
-import Stage = require('./stage');
+import type { PipelineContextLike, PipelineData } from "../types.js";
+import Stage from "./stage.js";
 
 /**
  * A pipeline composes stages sequentially.
  * Each stage's output feeds into the next stage's input.
  */
-class Pipeline {
+class Pipeline<
+  Input extends PipelineData = PipelineData,
+  Output extends PipelineData = PipelineData,
+> {
   readonly stages: Stage<PipelineData, PipelineData>[];
   name?: string;
   /**
-   * @param {import('./stage').Stage[]} stages
+   * @param {import('./stage.js').Stage[]} stages
    */
   constructor(stages: Stage<PipelineData, PipelineData>[] = []) {
     this.stages = stages;
@@ -18,37 +21,40 @@ class Pipeline {
   /**
    * Run all stages in sequence.
    * @param {unknown} initialInput
-   * @param {import('./context').PipelineContext} ctx
+   * @param {import('./context.js').PipelineContext} ctx
    * @returns {Promise<unknown>}
    */
-  async run(initialInput: PipelineData, ctx: PipelineContextLike): Promise<PipelineData> {
-    let data = initialInput;
+  async run(initialInput: Input, ctx: PipelineContextLike): Promise<Output> {
+    let data: PipelineData = initialInput;
     for (const stage of this.stages) {
       data = await stage.process(data, ctx);
     }
-    return data;
+    return data as unknown as Output;
   }
 
   /**
    * Return a new Pipeline with an additional stage (immutable).
-   * @param {import('./stage').Stage} stage
+   * @param {import('./stage.js').Stage} stage
    * @returns {Pipeline}
    */
-  pipe(stage: Stage<PipelineData, PipelineData>): Pipeline {
-    return new Pipeline([...this.stages, stage]);
+  pipe(stage: Stage<PipelineData, PipelineData>): Pipeline<Input, Output> {
+    return new Pipeline<Input, Output>([...this.stages, stage]);
   }
 
   /**
    * Return a new Pipeline with a stage replaced by name.
    * @param {string} stageName
-   * @param {import('./stage').Stage} newStage
+   * @param {import('./stage.js').Stage} newStage
    * @returns {Pipeline}
    */
-  replace(stageName: string, newStage: Stage<PipelineData, PipelineData>): Pipeline {
-    return new Pipeline(
-      this.stages.map(s => (s.name === stageName ? newStage : s))
+  replace(
+    stageName: string,
+    newStage: Stage<PipelineData, PipelineData>,
+  ): Pipeline<Input, Output> {
+    return new Pipeline<Input, Output>(
+      this.stages.map((s) => (s.name === stageName ? newStage : s)),
     );
   }
 }
 
-export = Pipeline;
+export default Pipeline;

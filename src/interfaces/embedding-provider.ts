@@ -2,7 +2,7 @@ import type {
   EmbeddingOptions,
   EmbeddingProviderContract,
   EmbeddingVector,
-} from '../types';
+} from "../types.js";
 
 /**
  * @abstract
@@ -19,7 +19,7 @@ class EmbeddingProvider implements EmbeddingProviderContract {
     _texts: readonly string[],
     _options?: EmbeddingOptions,
   ): Promise<(EmbeddingVector | null)[]> {
-    throw new Error('EmbeddingProvider.embedBatch() must be implemented');
+    throw new Error("EmbeddingProvider.embedBatch() must be implemented");
   }
 
   /**
@@ -27,7 +27,10 @@ class EmbeddingProvider implements EmbeddingProviderContract {
    * @param {string} text
    * @returns {Promise<Float32Array|null>}
    */
-  async embed(text: string, options?: EmbeddingOptions): Promise<EmbeddingVector | null> {
+  async embed(
+    text: string,
+    options?: EmbeddingOptions,
+  ): Promise<EmbeddingVector | null> {
     const results = await this.embedBatch([text], options);
     return results[0] || null;
   }
@@ -37,8 +40,8 @@ class EmbeddingProvider implements EmbeddingProviderContract {
    * @returns {number}
    */
   getDimension(): number {
-    throw new Error('EmbeddingProvider.getDimension() must be implemented');
+    throw new Error("EmbeddingProvider.getDimension() must be implemented");
   }
 }
 
-export = EmbeddingProvider;
+export default EmbeddingProvider;

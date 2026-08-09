@@ -1,4 +1,5 @@
-import type { UnknownRecord } from '../../types';
+import type { UnknownRecord } from "../../types.js";
+import { at } from "../../utils/numerical.js";
 
 type OperatorDiagnostics = Record<string, number>;
 
@@ -20,8 +21,15 @@ export interface FieldOperator {
   nodeIndexOf(id: unknown): number | undefined;
   nodeIdAt(index: number): number;
   operatorSig: string;
-  apply(input: Float64Array, output?: Float64Array, diagnostics?: OperatorDiagnostics): Float64Array;
-  forEachEdge(sourceId: number, callback: (targetId: number, weight: number, meta: UnknownRecord) => void): void;
+  apply(
+    input: Float64Array,
+    output?: Float64Array,
+    diagnostics?: OperatorDiagnostics,
+  ): Float64Array;
+  forEachEdge(
+    sourceId: number,
+    callback: (targetId: number, weight: number, meta: UnknownRecord) => void,
+  ): void;
 }
 
 export interface DualOperator {
@@ -142,21 +150,23 @@ function buildRowOperator(
       const targetIndex = indexById.get(Number(targetId));
       if (targetIndex === undefined) continue;
       let weight = Number(rawWeight) || 0;
-      if (typeof options.weight === 'function') weight = options.weight(weight);
+      if (typeof options.weight === "function") weight = options.weight(weight);
       if (!Number.isFinite(weight) || weight <= 0) continue;
       rowEntries.push({ targetIndex, targetId: Number(targetId), weight });
       rowSum += weight;
     }
     rowEntries.sort((a, b) => a.targetIndex - b.targetIndex);
+    const sourceIndex = indexById.get(sourceId);
+    if (sourceIndex === undefined) continue;
     rows.push({
       sourceId,
-      sourceIndex: indexById.get(sourceId)!,
+      sourceIndex,
       edges: rowEntries,
-      rowSum
+      rowSum,
     });
   }
 
-  const operatorSig = `rows:${nodeCount}:${rows.length}:${sortedIds.join(',')}`;
+  const operatorSig = `rows:${nodeCount}:${rows.length}:${sortedIds.join(",")}`;
 
   const apply = (
     input: Float64Array,
@@ -177,11 +187,12 @@ function buildRowOperator(
         if (edge.weight <= 0) continue;
         visitedEdges += 1;
         const mass = sourceMass * edge.weight * inverseRowSum;
-        output[edge.targetIndex] += mass;
+        output[edge.targetIndex] =
+          at(output, edge.targetIndex, "operator output") + mass;
         propagatedMass += mass;
       }
     }
-    if (diagnostics && typeof diagnostics === 'object') {
+    if (diagnostics && typeof diagnostics === "object") {
       diagnostics.visitedEdges = visitedEdges;
       diagnostics.propagatedMass = propagatedMass;
     }
@@ -191,16 +202,16 @@ function buildRowOperator(
   return {
     nodeCount,
     nodeIndexOf: (id) => indexById.get(Number(id)),
-    nodeIdAt: (index) => sortedIds[index],
+    nodeIdAt: (index) => at(sortedIds, index, "sorted ids"),
     operatorSig,
     apply: apply,
     forEachEdge(sourceId, callback) {
-      const row = rows.find(r => r.sourceId === Number(sourceId));
+      const row = rows.find((r) => r.sourceId === Number(sourceId));
       if (!row) return;
       for (const edge of row.edges) {
         callback(edge.targetId, edge.weight, {});
       }
-    }
+    },
   };
 }
 
@@ -218,38 +229,45 @@ function rowSumIsZero(row: OperatorRow): boolean {
  */
 function normalizeSource(
   operator: FieldOperator,
-  sourceField: SolverOptions['sourceField'],
+  sourceField: SolverOptions["sourceField"],
 ): Float64Array {
   const source = new Float64Array(operator.nodeCount);
   if (sourceField instanceof Map) {
     for (const [rawId, rawMass] of sourceField.entries()) {
       const index = operator.nodeIndexOf(rawId);
       const mass = Math.max(0, Number(rawMass) || 0);
-      if (index !== undefined && mass > 0) source[index] += mass;
+      if (index !== undefined && mass > 0) {
+        source[index] = at(source, index, "source field") + mass;
+      }
     }
   } else if (Array.isArray(sourceField)) {
     for (const entry of sourceField as readonly (readonly unknown[])[]) {
       if (!Array.isArray(entry) || entry.length < 2) continue;
       const index = operator.nodeIndexOf(entry[0]);
       const mass = Math.max(0, Number(entry[1]) || 0);
-      if (index !== undefined && mass > 0) source[index] += mass;
+      if (index !== undefined && mass > 0) {
+        source[index] = at(source, index, "source field") + mass;
+      }
     }
-  } else if (sourceField && typeof sourceField.length === 'number') {
+  } else if (sourceField && typeof sourceField.length === "number") {
     if (sourceField.length !== operator.nodeCount) {
       throw new RangeError(`Source field length must be ${operator.nodeCount}`);
     }
+    const values = sourceField as ArrayLike<number>;
     for (let index = 0; index < source.length; index++) {
-      source[index] = Math.max(0, Number(sourceField[index]) || 0);
+      source[index] = Math.max(0, Number(at(values, index, "source field")) || 0);
     }
   }
 
   const mass = vectorMass(source);
   if (mass <= 0) {
-    const error = new Error('V10 source field contains no positive mass');
-    Object.assign(error, { code: 'TAGMEMO_V10_EMPTY_SOURCE' });
+    const error = new Error("V10 source field contains no positive mass");
+    Object.assign(error, { code: "TAGMEMO_V10_EMPTY_SOURCE" });
     throw error;
   }
-  for (let index = 0; index < source.length; index++) source[index] /= mass;
+  for (let index = 0; index < source.length; index++) {
+    source[index] = at(source, index, "source field") / mass;
+  }
   return source;
 }
 
@@ -322,7 +340,7 @@ function effectiveSupport(
   operator: FieldOperator,
   options: SupportOptions = {},
 ): SupportDomain {
-  const method = String(options.method || 'mass_ratio').toLowerCase();
+  const method = String(options.method || "mass_ratio").toLowerCase();
   const massRatio = clamp(options.massRatio ?? 0.9, 0.01, 1);
   const positive: Array<{ id: number; index: number; mass: number }> = [];
   let totalMass = 0;
@@ -335,14 +353,12 @@ function effectiveSupport(
     positive.push({
       id: operator.nodeIdAt(index),
       index,
-      mass
+      mass,
     });
     totalMass += mass;
     squareMass += mass * mass;
   }
-  positive.sort((left, right) =>
-    (right.mass - left.mass) || (left.id - right.id)
-  );
+  positive.sort((left, right) => right.mass - left.mass || left.id - right.id);
 
   if (totalMass <= 0) {
     return Object.freeze({
@@ -354,7 +370,7 @@ function effectiveSupport(
       retainedMassRatio: 0,
       tailMass: 0,
       shannonEffectiveSize: 0,
-      participationRatio: 0
+      participationRatio: 0,
     });
   }
 
@@ -363,20 +379,20 @@ function effectiveSupport(
     entropy -= probability * Math.log(probability);
   }
   const shannonEffectiveSize = Math.exp(entropy);
-  const participationRatio = squareMass > 0
-    ? (totalMass * totalMass) / squareMass
-    : 0;
+  const participationRatio = squareMass > 0 ? (totalMass * totalMass) / squareMass : 0;
 
   let targetCount = positive.length;
-  if (method === 'shannon') {
+  if (method === "shannon") {
     targetCount = Math.max(1, Math.ceil(shannonEffectiveSize));
-  } else if (method === 'participation_ratio') {
+  } else if (method === "participation_ratio") {
     targetCount = Math.max(1, Math.ceil(participationRatio));
-  } else if (method === 'spectral_gap' && positive.length > 1) {
+  } else if (method === "spectral_gap" && positive.length > 1) {
     let largestGap = -Infinity;
     let largestGapIndex = 0;
     for (let index = 0; index + 1 < positive.length; index++) {
-      const gap = positive[index].mass - positive[index + 1].mass;
+      const gap =
+        at(positive, index, "positive field").mass -
+        at(positive, index + 1, "positive field").mass;
       if (gap > largestGap) {
         largestGap = gap;
         largestGapIndex = index;
@@ -387,7 +403,7 @@ function effectiveSupport(
 
   const retained: Array<{ id: number; index: number; mass: number }> = [];
   let retainedMass = 0;
-  if (method === 'mass_ratio' || method === 'tail_budget') {
+  if (method === "mass_ratio" || method === "tail_budget") {
     for (const item of positive) {
       retained.push(item);
       retainedMass += item.mass;
@@ -400,19 +416,23 @@ function effectiveSupport(
 
   return Object.freeze({
     method,
-    ids: Object.freeze(retained.map(item => item.id)),
-    entries: Object.freeze(retained.map(item => Object.freeze({
-      id: item.id,
-      mass: item.mass,
-      normalizedMass: item.mass / totalMass
-    }))),
+    ids: Object.freeze(retained.map((item) => item.id)),
+    entries: Object.freeze(
+      retained.map((item) =>
+        Object.freeze({
+          id: item.id,
+          mass: item.mass,
+          normalizedMass: item.mass / totalMass,
+        }),
+      ),
+    ),
     size: retained.length,
     totalMass,
     retainedMass,
     retainedMassRatio: retainedMass / totalMass,
     tailMass: Math.max(0, totalMass - retainedMass),
     shannonEffectiveSize,
-    participationRatio
+    participationRatio,
   });
 }
 
@@ -425,7 +445,7 @@ function fieldToEntries(
     const mass = Math.max(0, Number(vector[index]) || 0);
     if (mass > 0) entries.push(Object.freeze([operator.nodeIdAt(index), mass]));
   }
-  entries.sort((left, right) => (right[1] - left[1]) || (left[0] - right[0]));
+  entries.sort((left, right) => right[1] - left[1] || left[0] - right[0]);
   return Object.freeze(entries);
 }
 
@@ -448,15 +468,14 @@ function fieldToEntries(
 function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResult> {
   const operator = options.operator || options.localOperator;
   const localOperator = options.localOperator || operator;
-  const transferOperator = options.transferOperator
-    || options.operator
-    || localOperator;
+  const transferOperator =
+    options.transferOperator || options.operator || localOperator;
   const dualOperator = options.dualOperator || null;
   if (!localOperator || !transferOperator) {
-    throw new TypeError('solveDualScaledFields requires conditioned operators');
+    throw new TypeError("solveDualScaledFields requires conditioned operators");
   }
   if (localOperator.nodeCount !== transferOperator.nodeCount) {
-    throw new RangeError('Local and transfer operators must share the same node space');
+    throw new RangeError("Local and transfer operators must share the same node space");
   }
 
   const source = normalizeSource(localOperator, options.sourceField);
@@ -466,10 +485,12 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
   const alphaTransfer = clamp(transferConfig.alpha ?? 0.55, 0, 0.999999);
   const maxIterations = Math.max(
     1,
-    Math.floor(Math.max(
-      Number(localConfig.maxIterations) || 80,
-      Number(transferConfig.maxIterations) || 80
-    ))
+    Math.floor(
+      Math.max(
+        Number(localConfig.maxIterations) || 80,
+        Number(transferConfig.maxIterations) || 80,
+      ),
+    ),
   );
   const localTolerance = Math.max(1e-15, Number(localConfig.tolerance) || 1e-9);
   const transferTolerance = Math.max(1e-15, Number(transferConfig.tolerance) || 1e-9);
@@ -500,10 +521,10 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
     const transferApplyDiagnostics: OperatorDiagnostics = {};
 
     if (
-      dualOperator
-      && typeof dualOperator.applyDual === 'function'
-      && !localConverged
-      && !transferConverged
+      dualOperator &&
+      typeof dualOperator.applyDual === "function" &&
+      !localConverged &&
+      !transferConverged
     ) {
       dualOperator.applyDual(
         local,
@@ -511,7 +532,7 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
         propagatedLocal,
         propagatedTransfer,
         localApplyDiagnostics,
-        transferApplyDiagnostics
+        transferApplyDiagnostics,
       );
     } else {
       if (!localConverged) {
@@ -524,8 +545,9 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
 
     if (!localConverged) {
       for (let index = 0; index < source.length; index++) {
-        nextLocal[index] = (1 - alphaLocal) * source[index]
-          + alphaLocal * propagatedLocal[index];
+        nextLocal[index] =
+          (1 - alphaLocal) * at(source, index, "source field") +
+          alphaLocal * at(propagatedLocal, index, "propagated local field");
       }
       localResidual = l1Distance(nextLocal, local);
       localConverged = localResidual <= localTolerance;
@@ -536,8 +558,9 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
 
     if (!transferConverged) {
       for (let index = 0; index < source.length; index++) {
-        nextTransfer[index] = (1 - alphaTransfer) * source[index]
-          + alphaTransfer * propagatedTransfer[index];
+        nextTransfer[index] =
+          (1 - alphaTransfer) * at(source, index, "source field") +
+          alphaTransfer * at(propagatedTransfer, index, "propagated transfer field");
       }
       transferResidual = l1Distance(nextTransfer, transfer);
       transferConverged = transferResidual <= transferTolerance;
@@ -547,21 +570,25 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
     }
 
     for (const key of Object.keys(localApplyDiagnostics)) {
-      aggregateDiagnostics.local[key] = (aggregateDiagnostics.local[key] || 0)
-        + (Number(localApplyDiagnostics[key]) || 0);
+      aggregateDiagnostics.local[key] =
+        (aggregateDiagnostics.local[key] || 0) +
+        (Number(localApplyDiagnostics[key]) || 0);
     }
     for (const key of Object.keys(transferApplyDiagnostics)) {
-      aggregateDiagnostics.transfer[key] = (aggregateDiagnostics.transfer[key] || 0)
-        + (Number(transferApplyDiagnostics[key]) || 0);
+      aggregateDiagnostics.transfer[key] =
+        (aggregateDiagnostics.transfer[key] || 0) +
+        (Number(transferApplyDiagnostics[key]) || 0);
     }
 
-    iterationTrace.push(Object.freeze({
-      iteration,
-      localResidual,
-      transferResidual,
-      localMass: vectorMass(nextLocal),
-      transferMass: vectorMass(nextTransfer)
-    }));
+    iterationTrace.push(
+      Object.freeze({
+        iteration,
+        localResidual,
+        transferResidual,
+        localMass: vectorMass(nextLocal),
+        transferMass: vectorMass(nextTransfer),
+      }),
+    );
 
     [local, nextLocal] = [nextLocal, local];
     [transfer, nextTransfer] = [nextTransfer, transfer];
@@ -569,23 +596,21 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
   }
 
   const localSupportOptions = {
-    method: options.localSupport?.method
-      || options.support?.method
-      || 'mass_ratio',
-    massRatio: options.localSupport?.massRatio
-      ?? options.support?.localMassRatio
-      ?? 0.8
+    method: options.localSupport?.method || options.support?.method || "mass_ratio",
+    massRatio:
+      options.localSupport?.massRatio ?? options.support?.localMassRatio ?? 0.8,
   };
   const transferSupportOptions = {
-    method: options.transferSupport?.method
-      || options.support?.method
-      || 'mass_ratio',
-    massRatio: options.transferSupport?.massRatio
-      ?? options.support?.transferMassRatio
-      ?? 0.9
+    method: options.transferSupport?.method || options.support?.method || "mass_ratio",
+    massRatio:
+      options.transferSupport?.massRatio ?? options.support?.transferMassRatio ?? 0.9,
   };
   const localDomain = effectiveSupport(local, localOperator, localSupportOptions);
-  const transferDomain = effectiveSupport(transfer, transferOperator, transferSupportOptions);
+  const transferDomain = effectiveSupport(
+    transfer,
+    transferOperator,
+    transferSupportOptions,
+  );
 
   const sourceMass = vectorMass(source);
   const localMass = vectorMass(local);
@@ -606,11 +631,11 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
     transferOperatorSig: transferOperator.operatorSig || null,
     operatorShared: localOperator === transferOperator,
     packedDualApply: Boolean(
-      dualOperator && typeof dualOperator.applyDual === 'function'
+      dualOperator && typeof dualOperator.applyDual === "function",
     ),
     localApply: { ...aggregateDiagnostics.local },
     transferApply: { ...aggregateDiagnostics.transfer },
-    iterationTrace: Object.freeze(iterationTrace)
+    iterationTrace: Object.freeze(iterationTrace),
   };
 
   return Object.freeze({
@@ -621,7 +646,7 @@ function solveDualScaledFields(options: SolverOptions): Readonly<ScaledFieldResu
     transferField: Object.freeze(fieldToEntries(transfer, transferOperator)),
     localDomain,
     transferDomain,
-    diagnostics
+    diagnostics,
   });
 }
 
@@ -632,5 +657,5 @@ export {
   effectiveSupport,
   fieldToEntries,
   buildRowOperator,
-  solveDualScaledFields
+  solveDualScaledFields,
 };

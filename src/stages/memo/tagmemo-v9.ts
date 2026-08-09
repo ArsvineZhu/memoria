@@ -1,4 +1,3 @@
-
 import type {
   ChunkCandidate,
   MemoryConfigOverrides,
@@ -6,11 +5,14 @@ import type {
   PipelineData,
   RiverGraph,
   TagMemoData,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import { propagate } from '../../algorithms/wave-propagation';
-import type { WavePropagationResult, WaveSourceInput } from '../../algorithms/wave-propagation';
+import Stage from "../../core/stage.js";
+import { propagate } from "../../algorithms/wave-propagation.js";
+import type {
+  WavePropagationResult,
+  WaveSourceInput,
+} from "../../algorithms/wave-propagation.js";
 
 /**
  * TagMemoV9Stage — TagMemo v9 spike propagation over the tag graph.
@@ -38,13 +40,15 @@ import type { WavePropagationResult, WaveSourceInput } from '../../algorithms/wa
 class TagMemoV9Stage extends Stage {
   constructor() {
     super();
-    this.name = 'tagMemoV9';
+    this.name = "tagMemoV9";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'tagMemo'> & { tagMemo?: TagMemoData; tagMemoSkipped?: boolean }> {
+  ): Promise<
+    Omit<PipelineData, "tagMemo"> & { tagMemo?: TagMemoData; tagMemoSkipped?: boolean }
+  > {
     const info = input || {};
     const config = ctx.config;
 
@@ -52,17 +56,13 @@ class TagMemoV9Stage extends Stage {
       return { ...info, tagMemoSkipped: true };
     }
 
-    const tagGraph = ctx.tagGraph instanceof Map
-      ? ctx.tagGraph
-      : new Map();
+    const tagGraph = ctx.tagGraph instanceof Map ? ctx.tagGraph : new Map();
 
     const seeds = this._pyramidSeeds(info);
     const fallbackSeeds = seeds.length === 0;
     let resolvedSeeds = seeds;
     if (seeds.length === 0) {
-      resolvedSeeds = await this._candidateTagSeeds(
-        info.mergedCandidates, ctx
-      );
+      resolvedSeeds = await this._candidateTagSeeds(info.mergedCandidates, ctx);
     }
     if (resolvedSeeds.length === 0 || tagGraph.size === 0) {
       return { ...info, tagMemoSkipped: true };
@@ -71,7 +71,7 @@ class TagMemoV9Stage extends Stage {
     const observed = propagate({
       sources: resolvedSeeds,
       graph: tagGraph,
-      config: this._propagateConfig(config)
+      config: this._propagateConfig(config),
     });
 
     const nameById = await this._nameIndex(ctx);
@@ -84,28 +84,30 @@ class TagMemoV9Stage extends Stage {
         id: Number(id),
         name: nameById.get(Number(id)) || null,
         energy,
-        sourceType: observed.fieldProvenance.get(Number(id))?.sourceType || 'unknown'
+        sourceType: observed.fieldProvenance.get(Number(id))?.sourceType || "unknown",
       }))
       .sort((left, right) => {
-        const leftDirect = left.sourceType === 'seed' || left.sourceType === 'core' ? 1 : 0;
-        const rightDirect = right.sourceType === 'seed' || right.sourceType === 'core' ? 1 : 0;
-        return (rightDirect - leftDirect)
-          || (right.energy - left.energy)
-          || (left.id - right.id);
+        const leftDirect =
+          left.sourceType === "seed" || left.sourceType === "core" ? 1 : 0;
+        const rightDirect =
+          right.sourceType === "seed" || right.sourceType === "core" ? 1 : 0;
+        return (
+          rightDirect - leftDirect || right.energy - left.energy || left.id - right.id
+        );
       });
 
     return {
       ...info,
       tagMemo: {
-        version: 'v9',
+        version: "v9",
         activations: observed.activations,
         ranked,
         iterations: observed.iterations,
         riverGraph: observed.riverGraph as RiverGraph,
         fieldProvenance: observed.fieldProvenance,
         diagnostics: observed.diagnostics,
-        seedFallback: fallbackSeeds
-      }
+        seedFallback: fallbackSeeds,
+      },
     };
   }
 
@@ -119,7 +121,7 @@ class TagMemoV9Stage extends Stage {
         id,
         energy: Math.max(0, Number(tag.contribution) || 0) || 1,
         isCore: tag.isCore === true,
-        name: tag.name || null
+        name: tag.name || null,
       });
     }
     return seeds.sort((left, right) => left.id - right.id);
@@ -144,7 +146,7 @@ class TagMemoV9Stage extends Stage {
         }
         resolved.set(name, null);
         let tag = null;
-        if (metadataStore && typeof metadataStore.getTagByName === 'function') {
+        if (metadataStore && typeof metadataStore.getTagByName === "function") {
           try {
             tag = await metadataStore.getTagByName(name);
           } catch (e) {
@@ -172,7 +174,7 @@ class TagMemoV9Stage extends Stage {
       if (Number.isFinite(id) && tag && tag.name) names.set(id, tag.name);
     }
     const metadataStore = ctx.metadataStore;
-    if (!metadataStore || typeof metadataStore.getAllTags !== 'function') {
+    if (!metadataStore || typeof metadataStore.getAllTags !== "function") {
       return names;
     }
     let rows;
@@ -191,17 +193,17 @@ class TagMemoV9Stage extends Stage {
   _propagateConfig(config: MemoryConfigOverrides): Record<string, unknown> {
     const passthrough: Record<string, unknown> = {};
     for (const key of [
-      'maxSafeHops',
-      'tensionThreshold',
-      'firingThreshold',
-      'baseDecay',
-      'wormholeDecay',
-      'baseMomentum',
-      'maxNeighborsPerNode',
-      'v91ReturnFlowFactor',
-      'v91FirGamma',
-      'pruneAbove',
-      'maxPropagationStates'
+      "maxSafeHops",
+      "tensionThreshold",
+      "firingThreshold",
+      "baseDecay",
+      "wormholeDecay",
+      "baseMomentum",
+      "maxNeighborsPerNode",
+      "v91ReturnFlowFactor",
+      "v91FirGamma",
+      "pruneAbove",
+      "maxPropagationStates",
     ]) {
       if (config[key] !== undefined) passthrough[key] = config[key];
     }
@@ -209,4 +211,4 @@ class TagMemoV9Stage extends Stage {
   }
 }
 
-export = TagMemoV9Stage;
+export default TagMemoV9Stage;

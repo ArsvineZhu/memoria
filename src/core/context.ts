@@ -4,35 +4,35 @@ import type {
   MetadataStoreContract,
   PipelineContextOptions,
   VectorStoreContract,
-} from '../types';
-import type { VexusIndex } from '../native/vexus-lite';
+} from "../types.js";
+import type { VexusIndex } from "../native/vexus-lite.js";
 
 /**
  * Dependency injection container shared across all stages in a pipeline.
  */
 class PipelineContext {
-  readonly config: PipelineContextOptions['config'];
+  readonly config: PipelineContextOptions["config"];
   readonly embeddingProvider?: EmbeddingProviderContract | null;
   readonly vectorStore?: VectorStoreContract | null;
   readonly metadataStore?: MetadataStoreContract | null;
   readonly vexusIndex?: VexusIndex;
-  epa?: PipelineContextOptions['epa'];
-  readonly riverStateStore?: PipelineContextOptions['riverStateStore'];
+  epa?: PipelineContextOptions["epa"];
+  readonly riverStateStore?: PipelineContextOptions["riverStateStore"];
   readonly tagGraph?: Map<number, Map<number, number>>;
   checkpointState?: { fileCount: number; diaries: Set<string> };
-  reranker?: import('../types').ExternalReranker;
+  reranker?: import("../types.js").ExternalReranker;
   /**
    * @param {object} opts
    * @param {object} opts.config - RAG parameters
-   * @param {import('../interfaces/embedding-provider')} [opts.embeddingProvider]
-   * @param {import('../interfaces/vector-store')} [opts.vectorStore]
-   * @param {import('../interfaces/metadata-store')} [opts.metadataStore]
-* @param {import('../interfaces/metadata-store')} [opts.metadataStore]
-* @param {object} [opts.vexusIndex] - Raw Rust N-API handle for algorithm layer
-    * @param {import('../algorithms/epa').EPA} [opts.epa] - Pre-built EPA basis for the memo pipeline
-* @param {object} [opts.riverStateStore] - KV store for persistent RiverMemo state
-* @param {Map} [opts.tagGraph] - tag co-occurrence graph for TagMemo stages
-    */
+   * @param {import('../interfaces/embedding-provider.js')} [opts.embeddingProvider]
+   * @param {import('../interfaces/vector-store.js')} [opts.vectorStore]
+   * @param {import('../interfaces/metadata-store.js')} [opts.metadataStore]
+   * @param {import('../interfaces/metadata-store.js')} [opts.metadataStore]
+   * @param {object} [opts.vexusIndex] - Raw Rust N-API handle for algorithm layer
+   * @param {import('../algorithms/epa.js').EPA} [opts.epa] - Pre-built EPA basis for the memo pipeline
+   * @param {object} [opts.riverStateStore] - KV store for persistent RiverMemo state
+   * @param {Map} [opts.tagGraph] - tag co-occurrence graph for TagMemo stages
+   */
   constructor({
     config,
     embeddingProvider,
@@ -54,4 +54,4 @@ class PipelineContext {
   }
 }
 
-export = PipelineContext;
+export default PipelineContext;

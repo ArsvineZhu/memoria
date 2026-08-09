@@ -1,14 +1,14 @@
-
 import type {
   ChunkCandidate,
   MetadataStoreContract,
   PipelineContextLike,
   PipelineData,
   SearchResult,
-} from '../../types';
+  UnknownRecord,
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import path = require('path');
+import Stage from "../../core/stage.js";
+import * as path from "node:path";
 
 type OutputCandidate = ChunkCandidate & {
   id?: number | null;
@@ -28,6 +28,18 @@ type OutputCandidate = ChunkCandidate & {
   tagMatchScore?: number;
   rerankScore?: number;
 };
+
+function parseRecord(value: string | null | undefined): UnknownRecord | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as UnknownRecord)
+      : undefined;
+  } catch (_error) {
+    return undefined;
+  }
+}
 
 /**
  * Output stage: assembles the final search result array.
@@ -53,16 +65,18 @@ type OutputCandidate = ChunkCandidate & {
 class ResultFormatterStage extends Stage {
   constructor() {
     super();
-    this.name = 'resultFormatter';
+    this.name = "resultFormatter";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'results' | 'resultCount'> & {
-    results: SearchResult[];
-    resultCount: number;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "results" | "resultCount"> & {
+      results: SearchResult[];
+      resultCount: number;
+    }
+  > {
     const info = input || {};
     const candidates = Array.isArray(info.mergedCandidates)
       ? info.mergedCandidates
@@ -73,9 +87,7 @@ class ResultFormatterStage extends Stage {
     for (const candidate of candidates) {
       results.push(await this._formatCandidate(candidate, ctx, store));
     }
-    results.sort(
-      (a, b) => (b.score - a.score) || (Number(a.id) - Number(b.id))
-    );
+    results.sort((a, b) => b.score - a.score || Number(a.id) - Number(b.id));
 
     return { ...info, results, resultCount: results.length };
   }
@@ -93,14 +105,19 @@ class ResultFormatterStage extends Stage {
 
     let chunk = null;
     let file = null;
-    if (id !== null && Number.isFinite(id) && store && typeof store.getChunkById === 'function') {
+    if (
+      id !== null &&
+      Number.isFinite(id) &&
+      store &&
+      typeof store.getChunkById === "function"
+    ) {
       try {
         chunk = await store.getChunkById(id);
       } catch (error) {
         chunk = null;
       }
     }
-    if (chunk && store && typeof store.getFileByChunkId === 'function') {
+    if (chunk && store && typeof store.getFileByChunkId === "function") {
       try {
         file = await store.getFileByChunkId(chunk.id);
       } catch (error) {
@@ -108,15 +125,22 @@ class ResultFormatterStage extends Stage {
       }
     }
 
-    const content = outputCandidate?.content ?? outputCandidate?.text ?? chunk?.content ?? '';
-    const fullPath = file?.path ?? outputCandidate?.path ?? outputCandidate?.fullPath ?? '';
+    const content =
+      outputCandidate?.content ?? outputCandidate?.text ?? chunk?.content ?? "";
+    const fullPath =
+      file?.path ?? outputCandidate?.path ?? outputCandidate?.fullPath ?? "";
 
     let tags = outputCandidate?.tags;
-    if (!Array.isArray(tags) && file && store && typeof store.getFileTags === 'function') {
+    if (
+      !Array.isArray(tags) &&
+      file &&
+      store &&
+      typeof store.getFileTags === "function"
+    ) {
       try {
         const tagRows = await store.getFileTags(file.id);
         tags = Array.isArray(tagRows)
-          ? tagRows.map(t => (t && t.name) || String(t))
+          ? tagRows.map((t) => (t && t.name) || String(t))
           : [];
       } catch (error) {
         tags = [];
@@ -135,17 +159,27 @@ class ResultFormatterStage extends Stage {
       chunkId: Number.isFinite(chunkId) ? chunkId : id,
       content,
       path: fullPath,
-      sourceFile: fullPath ? path.basename(fullPath) : outputCandidate?.sourceFile || '',
+      sourceFile: fullPath
+        ? path.basename(fullPath)
+        : outputCandidate?.sourceFile || "",
       fileId: file?.id ?? outputCandidate?.fileId ?? null,
-      diaryName: file?.diary_name ?? outputCandidate?.diaryName ?? '',
+      diaryName: file?.diary_name ?? outputCandidate?.diaryName ?? "",
       score,
       similarity: Number.isFinite(Number(outputCandidate?.similarity))
         ? Number(outputCandidate.similarity)
         : score,
-      updatedAt: file?.updated_at ?? outputCandidate?.updatedAt ?? outputCandidate?.updated_at ?? null,
+      updatedAt:
+        file?.updated_at ??
+        outputCandidate?.updatedAt ??
+        outputCandidate?.updated_at ??
+        null,
       mtime: file?.mtime ?? outputCandidate?.mtime ?? null,
       tags,
       matchedTags: outputCandidate?.matchedTags ?? tags,
+      documentId: file?.document_id ?? undefined,
+      revision: file?.revision ?? undefined,
+      sourceMetadata: parseRecord(file?.source_json),
+      metadata: parseRecord(file?.metadata_json),
       memoScore: Number.isFinite(Number(outputCandidate?.memoScore))
         ? Number(outputCandidate.memoScore)
         : Number.isFinite(Number(outputCandidate?.tagMatchScore))
@@ -157,9 +191,9 @@ class ResultFormatterStage extends Stage {
         : undefined,
       rerankScore: Number.isFinite(Number(outputCandidate?.rerankScore))
         ? Number(outputCandidate.rerankScore)
-        : undefined
+        : undefined,
     };
   }
 }
 
-export = ResultFormatterStage;
+export default ResultFormatterStage;

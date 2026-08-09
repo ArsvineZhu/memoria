@@ -1,7 +1,6 @@
+import type { ChunkCandidate, PipelineContextLike, PipelineData } from "../../types.js";
 
-import type { ChunkCandidate, PipelineContextLike, PipelineData } from '../../types';
-
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
 
 /**
  * Postprocess stage: optional LLM/external reranking of merged candidates.
@@ -23,17 +22,19 @@ import Stage = require('../../core/stage');
 class ExternalRerankerStage extends Stage {
   constructor() {
     super();
-    this.name = 'externalReranker';
+    this.name = "externalReranker";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'mergedCandidates'> & {
-    mergedCandidates: ChunkCandidate[];
-    reranked?: boolean;
-    rerankSkipped?: boolean;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "mergedCandidates"> & {
+      mergedCandidates: ChunkCandidate[];
+      reranked?: boolean;
+      rerankSkipped?: boolean;
+    }
+  > {
     const info = input || {};
     const config = ctx.config || {};
     const candidates = Array.isArray(info.mergedCandidates)
@@ -41,20 +42,20 @@ class ExternalRerankerStage extends Stage {
       : [];
 
     const enabled =
-      config.externalRerankEnabled === true ||
-      config.useLLMRerank === true;
+      config.externalRerankEnabled === true || config.useLLMRerank === true;
 
     const reranker = config.reranker || ctx.reranker;
 
-    if (!enabled || typeof reranker !== 'function') {
+    if (!enabled || typeof reranker !== "function") {
       return { ...info, mergedCandidates: candidates, rerankSkipped: true };
     }
 
-    const query = info.query != null
-      ? info.query
-      : (Array.isArray(info.queries) && info.queries[0]
-        ? info.queries[0].text
-        : '');
+    const query =
+      info.query != null
+        ? info.query
+        : Array.isArray(info.queries) && info.queries[0]
+          ? info.queries[0].text
+          : "";
 
     let reranked;
     try {
@@ -90,9 +91,9 @@ class ExternalRerankerStage extends Stage {
     return {
       ...info,
       mergedCandidates: [...withRerank, ...withoutRerank],
-      reranked: true
+      reranked: true,
     };
   }
 }
 
-export = ExternalRerankerStage;
+export default ExternalRerankerStage;

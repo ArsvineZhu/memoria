@@ -1,9 +1,13 @@
-'use strict';
+"use strict";
 
-import Pipeline = require('../core/pipeline');
-import FileDeleterStage = require('../stages/ingestion/file-deleter');
-import Stage = require('../core/stage');
-import type { DeleteEnvelope, MemoryConfigOverrides, PipelineContextLike } from '../types';
+import Pipeline from "../core/pipeline.js";
+import FileDeleterStage from "../stages/ingestion/file-deleter.js";
+import Stage from "../core/stage.js";
+import type {
+  DeleteEnvelope,
+  MemoryConfigOverrides,
+  PipelineContextLike,
+} from "../types.js";
 
 interface PipelineOptions {
   stages?: Stage[];
@@ -30,21 +34,21 @@ class DeletePipeline extends Pipeline {
   /**
    * @param {object} [config={}] - pipeline-level config (forwarded to ctx.config)
    * @param {object} [options={}]
-   * @param {import('../core/stage').Stage[]} [options.stages] - explicit chain override
+   * @param {import('../core/stage.js').Stage[]} [options.stages] - explicit chain override
    */
   constructor(config: MemoryConfigOverrides = {}, options: PipelineOptions = {}) {
     const stages = Array.isArray(options.stages)
       ? options.stages
       : DeletePipeline.defaultStages(config);
     super(stages);
-    this.name = 'deletePipeline';
+    this.name = "deletePipeline";
     this.config = config || {};
   }
 
   /**
    * Default deletion chain: a single FileDeleterStage.
    * @param {object} config - unused today; kept for future gates
-   * @returns {import('../core/stage').Stage[]}
+   * @returns {import('../core/stage.js').Stage[]}
    */
   static defaultStages(_config: MemoryConfigOverrides): Stage[] {
     return [new FileDeleterStage()];
@@ -53,7 +57,7 @@ class DeletePipeline extends Pipeline {
   /**
    * Convenience: delete one file by path.
    * @param {string} filePath - stored relative path (or absolute with rootPath)
-   * @param {import('../core/context').PipelineContext} ctx
+   * @param {import('../core/context.js').PipelineContext} ctx
    * @returns {Promise<object>} stage result envelope
    */
   deleteFile(filePath: string, ctx: PipelineContextLike): Promise<DeleteEnvelope> {
@@ -61,4 +65,4 @@ class DeletePipeline extends Pipeline {
   }
 }
 
-export = DeletePipeline;
+export default DeletePipeline;

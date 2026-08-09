@@ -1,4 +1,3 @@
-
 import type {
   ChunkCandidate,
   EmbeddingVector,
@@ -7,13 +6,14 @@ import type {
   PipelineContextLike,
   PipelineData,
   TagRow,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
-import { decodeVectorBlob } from '../../utils/vector-codec';
+import Stage from "../../core/stage.js";
+import { decodeVectorBlob } from "../../utils/vector-codec.js";
+import { at } from "../../utils/numerical.js";
 
 // Shared global tag vector index name (mirror of VectorIndexerStage).
-const TAG_INDEX_NAME = 'global_tags';
+const TAG_INDEX_NAME = "global_tags";
 
 /**
  * TagExpanderStage — semantic tag-driven candidate expansion.
@@ -45,17 +45,19 @@ const TAG_INDEX_NAME = 'global_tags';
 class TagExpanderStage extends Stage {
   constructor() {
     super();
-    this.name = 'tagExpander';
+    this.name = "tagExpander";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'mergedCandidates' | 'tagExpansion'> & {
-    mergedCandidates: ChunkCandidate[];
-    tagExpansion?: TagExpansionData;
-    tagExpansionSkipped?: boolean;
-  }> {
+  ): Promise<
+    Omit<PipelineData, "mergedCandidates" | "tagExpansion"> & {
+      mergedCandidates: ChunkCandidate[];
+      tagExpansion?: TagExpansionData;
+      tagExpansionSkipped?: boolean;
+    }
+  > {
     const info = input || {};
     const config = ctx.config;
     const mergedCandidates = Array.isArray(info.mergedCandidates)
@@ -68,33 +70,37 @@ class TagExpanderStage extends Stage {
     const metadataStore = ctx.metadataStore;
     const vectorStore = ctx.vectorStore;
     if (
-      mergedCandidates.length === 0
-      || !metadataStore
-      || !vectorStore
-      || typeof vectorStore.search !== 'function'
+      mergedCandidates.length === 0 ||
+      !metadataStore ||
+      !vectorStore ||
+      typeof vectorStore.search !== "function"
     ) {
       return {
         ...info,
         mergedCandidates,
-        tagExpansion: { added: [], boosted: [] }
+        tagExpansion: { added: [], boosted: [] },
       };
     }
 
     // 1. Collect the tag set behind the candidate chunks.
     const candidateTags = await this._collectCandidateTags(
-      mergedCandidates, metadataStore
+      mergedCandidates,
+      metadataStore,
     );
-    const candidateTagIds = new Set(candidateTags.map(t => Number(t.id)));
+    const candidateTagIds = new Set(candidateTags.map((t) => Number(t.id)));
 
     // 2. Semantic query vector: mean of the candidate tag vectors,
     //    falling back to the raw query vector when tags lack vectors.
-    const expansionVector =
-      await this._expansionVector(candidateTags, info.queryVector, metadataStore);
+    const expansionVector = await this._expansionVector(
+      candidateTags,
+      info.queryVector,
+      metadataStore,
+    );
     if (!expansionVector) {
       return {
         ...info,
         mergedCandidates,
-        tagExpansion: { added: [], boosted: [] }
+        tagExpansion: { added: [], boosted: [] },
       };
     }
 
@@ -106,23 +112,19 @@ class TagExpanderStage extends Stage {
       hits = await vectorStore.search(tagIndexName, expansionVector, topK);
     } catch (e) {
       console.warn(
-        `[TagExpander] tag index search failed for "${tagIndexName}": ${e instanceof Error ? e.message : String(e)}`
+        `[TagExpander] tag index search failed for "${tagIndexName}": ${e instanceof Error ? e.message : String(e)}`,
       );
       return {
         ...info,
         mergedCandidates,
-        tagExpansion: { added: [], boosted: [] }
+        tagExpansion: { added: [], boosted: [] },
       };
     }
 
     const rawBoost = Number(config.tagExpansionBoost);
-    const expansionBoost = Number.isFinite(rawBoost) && rawBoost > 0
-      ? rawBoost
-      : 0.5;
-    const maxHitScore = (hits || []).reduce(
-      (max, h) => Math.max(max, Number(h.score) || 0),
-      0
-    ) || 1;
+    const expansionBoost = Number.isFinite(rawBoost) && rawBoost > 0 ? rawBoost : 0.5;
+    const maxHitScore =
+      (hits || []).reduce((max, h) => Math.max(max, Number(h.score) || 0), 0) || 1;
 
     // 4. Expand: chunks of files carrying a similar tag join the pool
     //    with a decayed score; pool members re-reached via expansion
@@ -143,7 +145,9 @@ class TagExpanderStage extends Stage {
       try {
         fileIds = await metadataStore.getFileIdsByTagId(tagId);
       } catch (e) {
-        console.warn(`[TagExpander] getFileIdsByTagId(${tagId}) failed: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(
+          `[TagExpander] getFileIdsByTagId(${tagId}) failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
         continue;
       }
       for (const fileId of fileIds || []) {
@@ -164,7 +168,7 @@ class TagExpanderStage extends Stage {
           const entry = {
             chunkId,
             score: expansionBoost * normalized,
-            source: 'tag-expansion'
+            source: "tag-expansion",
           };
           pool.set(chunkId, entry);
           added.push(chunkId);
@@ -173,21 +177,21 @@ class TagExpanderStage extends Stage {
     }
 
     const expandedPool = [...pool.values()].sort(
-      (a, b) => (b.score - a.score) || (a.chunkId - b.chunkId)
+      (a, b) => b.score - a.score || a.chunkId - b.chunkId,
     );
 
     return {
       ...info,
       mergedCandidates: expandedPool,
-      tagExpansion: { added, boosted }
+      tagExpansion: { added, boosted },
     };
   }
 
   async _collectCandidateTags(
     candidates: readonly ChunkCandidate[],
-    metadataStore: NonNullable<PipelineContextLike['metadataStore']>,
+    metadataStore: NonNullable<PipelineContextLike["metadataStore"]>,
   ): Promise<Array<{ id: number; name?: string }>> {
-    if (typeof metadataStore.getFileByChunkId !== 'function') return [];
+    if (typeof metadataStore.getFileByChunkId !== "function") return [];
     const seen = new Map<number, { id: number; name?: string }>();
     for (const candidate of candidates) {
       const chunkId = Number(candidate && candidate.chunkId);
@@ -199,7 +203,7 @@ class TagExpanderStage extends Stage {
         continue;
       }
       if (!file) continue;
-      if (typeof metadataStore.getFileTags !== 'function') continue;
+      if (typeof metadataStore.getFileTags !== "function") continue;
       let tags = [];
       try {
         tags = await metadataStore.getFileTags(file.id);
@@ -218,12 +222,12 @@ class TagExpanderStage extends Stage {
   async _expansionVector(
     candidateTags: readonly { id: number; name?: string }[],
     queryVector: EmbeddingVector | undefined,
-    metadataStore: NonNullable<PipelineContextLike['metadataStore']>,
+    metadataStore: NonNullable<PipelineContextLike["metadataStore"]>,
   ): Promise<EmbeddingVector | null> {
     if (candidateTags.length === 0) {
       return queryVector || null;
     }
-    if (typeof metadataStore.getAllTags !== 'function') {
+    if (typeof metadataStore.getAllTags !== "function") {
       return queryVector || null;
     }
     let tagPool: TagRow[] = [];
@@ -232,12 +236,12 @@ class TagExpanderStage extends Stage {
     } catch (e) {
       return queryVector || null;
     }
-    const byId = new Map((tagPool || []).map(t => [Number(t.id), t]));
+    const byId = new Map((tagPool || []).map((t) => [Number(t.id), t]));
 
     const dimension = this._resolveDimension(
       metadataStore.dimension,
       queryVector,
-      tagPool
+      tagPool,
     );
     const components: Float32Array[] = [];
     for (const tag of candidateTags) {
@@ -250,9 +254,12 @@ class TagExpanderStage extends Stage {
 
     const mean = new Float32Array(dimension);
     for (const vector of components) {
-      for (let d = 0; d < dimension; d++) mean[d] += vector[d];
+      for (let d = 0; d < dimension; d++) {
+        mean[d] = at(mean, d, "tag mean") + at(vector, d, "tag vector");
+      }
     }
-    for (let d = 0; d < dimension; d++) mean[d] /= components.length;
+    for (let d = 0; d < dimension; d++)
+      mean[d] = at(mean, d, "tag mean") / components.length;
     return mean;
   }
 
@@ -275,4 +282,4 @@ class TagExpanderStage extends Stage {
   }
 }
 
-export = TagExpanderStage;
+export default TagExpanderStage;

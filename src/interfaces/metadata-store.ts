@@ -8,7 +8,7 @@ import type {
   MetadataStoreContract,
   TagMetadataInput,
   TagRow,
-} from '../types';
+} from "../types.js";
 
 /**
  * @abstract
@@ -24,7 +24,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<number>} file ID
    */
   async upsertFile(_fileMeta: FileMetadataInput): Promise<number | null> {
-    throw new Error('MetadataStore.upsertFile() must be implemented');
+    throw new Error("MetadataStore.upsertFile() must be implemented");
   }
 
   /**
@@ -33,7 +33,11 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<object|null>}
    */
   async getFileByPath(_path: string): Promise<FileRow | null> {
-    throw new Error('MetadataStore.getFileByPath() must be implemented');
+    throw new Error("MetadataStore.getFileByPath() must be implemented");
+  }
+
+  async getFileByDocumentId(_documentId: string): Promise<FileRow | null> {
+    throw new Error("MetadataStore.getFileByDocumentId() must be implemented");
   }
 
   /**
@@ -41,7 +45,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<string[]>}
    */
   async getDistinctDiaryNames(): Promise<string[]> {
-    throw new Error('MetadataStore.getDistinctDiaryNames() must be implemented');
+    throw new Error("MetadataStore.getDistinctDiaryNames() must be implemented");
   }
 
   /**
@@ -50,7 +54,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<object|null>} file row (incl. mtime / updated_at)
    */
   async getFileByChunkId(_chunkId: number): Promise<FileRow | null> {
-    throw new Error('MetadataStore.getFileByChunkId() must be implemented');
+    throw new Error("MetadataStore.getFileByChunkId() must be implemented");
   }
 
   /**
@@ -58,7 +62,7 @@ class MetadataStore implements MetadataStoreContract {
    * @param {number} fileId
    */
   async deleteFile(_fileId: number): Promise<void> {
-    throw new Error('MetadataStore.deleteFile() must be implemented');
+    throw new Error("MetadataStore.deleteFile() must be implemented");
   }
 
   // ── Chunk CRUD ──
@@ -73,7 +77,7 @@ class MetadataStore implements MetadataStoreContract {
     _fileId: number,
     _chunks: readonly ChunkMetadataInput[],
   ): Promise<number[]> {
-    throw new Error('MetadataStore.insertChunks() must be implemented');
+    throw new Error("MetadataStore.insertChunks() must be implemented");
   }
 
   /**
@@ -82,7 +86,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<Array<{id:number, chunkIndex:number, content:string, vector:Buffer|null}>>}
    */
   async getChunksByFileId(_fileId: number): Promise<ChunkRow[]> {
-    throw new Error('MetadataStore.getChunksByFileId() must be implemented');
+    throw new Error("MetadataStore.getChunksByFileId() must be implemented");
   }
 
   /**
@@ -91,7 +95,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<object|null>}
    */
   async getChunkById(_id: number): Promise<ChunkRow | null> {
-    throw new Error('MetadataStore.getChunkById() must be implemented');
+    throw new Error("MetadataStore.getChunkById() must be implemented");
   }
 
   /**
@@ -99,7 +103,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<Array<{id:number, fileId:number, chunkIndex:number, content:string}>>}
    */
   async getAllChunks(): Promise<ChunkRow[]> {
-    throw new Error('MetadataStore.getAllChunks() must be implemented');
+    throw new Error("MetadataStore.getAllChunks() must be implemented");
   }
 
   // ── Tag CRUD ──
@@ -110,7 +114,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<number[]>} tag IDs
    */
   async upsertTags(_tags: readonly TagMetadataInput[]): Promise<number[]> {
-    throw new Error('MetadataStore.upsertTags() must be implemented');
+    throw new Error("MetadataStore.upsertTags() must be implemented");
   }
 
   /**
@@ -119,7 +123,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<object|null>}
    */
   async getTagByName(_name: string): Promise<TagRow | null> {
-    throw new Error('MetadataStore.getTagByName() must be implemented');
+    throw new Error("MetadataStore.getTagByName() must be implemented");
   }
 
   /**
@@ -127,7 +131,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<Array<{id:number, name:string, vector:Buffer|null}>>}
    */
   async getAllTags(): Promise<TagRow[]> {
-    throw new Error('MetadataStore.getAllTags() must be implemented');
+    throw new Error("MetadataStore.getAllTags() must be implemented");
   }
 
   /**
@@ -136,7 +140,7 @@ class MetadataStore implements MetadataStoreContract {
    * @param {number[]} tagIds
    */
   async setFileTags(_fileId: number, _tagIds: readonly number[]): Promise<void> {
-    throw new Error('MetadataStore.setFileTags() must be implemented');
+    throw new Error("MetadataStore.setFileTags() must be implemented");
   }
 
   /**
@@ -145,7 +149,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<Array<{id:number, name:string}>>}
    */
   async getFileTags(_fileId: number): Promise<FileTagRow[]> {
-    throw new Error('MetadataStore.getFileTags() must be implemented');
+    throw new Error("MetadataStore.getFileTags() must be implemented");
   }
 
   /**
@@ -154,7 +158,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<number[]>}
    */
   async getFileIdsByTagId(_tagId: number): Promise<number[]> {
-    throw new Error('MetadataStore.getFileIdsByTagId() must be implemented');
+    throw new Error("MetadataStore.getFileIdsByTagId() must be implemented");
   }
 
   // ── Co-occurrence ──
@@ -164,7 +168,7 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<Map<number, Map<number, number>>>}
    */
   async buildCooccurrenceMatrix(): Promise<Map<number, Map<number, number>>> {
-    throw new Error('MetadataStore.buildCooccurrenceMatrix() must be implemented');
+    throw new Error("MetadataStore.buildCooccurrenceMatrix() must be implemented");
   }
 
   // ── Health ──
@@ -173,7 +177,7 @@ class MetadataStore implements MetadataStoreContract {
    * Checkpoint the database (WAL flush).
    */
   async checkpoint(): Promise<void> {
-    throw new Error('MetadataStore.checkpoint() must be implemented');
+    throw new Error("MetadataStore.checkpoint() must be implemented");
   }
 
   /**
@@ -181,8 +185,8 @@ class MetadataStore implements MetadataStoreContract {
    * @returns {Promise<{healthy:boolean, issues:string[]}>}
    */
   async healthCheck(): Promise<HealthStatus> {
-    throw new Error('MetadataStore.healthCheck() must be implemented');
+    throw new Error("MetadataStore.healthCheck() must be implemented");
   }
 }
 
-export = MetadataStore;
+export default MetadataStore;

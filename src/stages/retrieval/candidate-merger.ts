@@ -1,4 +1,3 @@
-
 import type {
   ChunkCandidate,
   MemoryConfigOverrides,
@@ -6,9 +5,9 @@ import type {
   PipelineContextLike,
   PipelineData,
   VectorResult,
-} from '../../types';
+} from "../../types.js";
 
-import Stage = require('../../core/stage');
+import Stage from "../../core/stage.js";
 
 // Recency decay: score *= 0.5 ^ (age / halfLife), with halfLife in days.
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -42,19 +41,25 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 class CandidateMergerStage extends Stage {
   constructor() {
     super();
-    this.name = 'candidateMerger';
+    this.name = "candidateMerger";
   }
 
-  async process(
+  override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<Omit<PipelineData, 'mergedCandidates'> & { mergedCandidates: ChunkCandidate[] }> {
+  ): Promise<
+    Omit<PipelineData, "mergedCandidates"> & { mergedCandidates: ChunkCandidate[] }
+  > {
     const info = input || {};
     const config = ctx.config || {};
     const weights = this._resolveWeights(config);
 
-    const vectorResults: VectorResult[] = Array.isArray(info.vectorResults) ? info.vectorResults : [];
-    const bm25Results: ChunkCandidate[] = Array.isArray(info.bm25Results) ? info.bm25Results : [];
+    const vectorResults: VectorResult[] = Array.isArray(info.vectorResults)
+      ? info.vectorResults
+      : [];
+    const bm25Results: ChunkCandidate[] = Array.isArray(info.bm25Results)
+      ? info.bm25Results
+      : [];
 
     // 1. Dedupe each source by chunk id, keeping the best score.
     const vecById = new Map<number, number>();
@@ -89,26 +94,29 @@ class CandidateMergerStage extends Stage {
       const bm25Score = bm25ById.get(chunkId) || 0;
       const normalizedVector = vecMax > 0 ? vectorScore / vecMax : 0;
       const normalizedBm25 = bm25Max > 0 ? bm25Score / bm25Max : 0;
-      const score = (
-        weights.vectorWeight * normalizedVector
-        + weights.bm25Weight * normalizedBm25
-      );
-      const source = vectorScore > 0 && bm25Score > 0
-        ? 'hybrid'
-        : (vectorScore > 0 ? 'vector' : 'bm25');
+      const score =
+        weights.vectorWeight * normalizedVector + weights.bm25Weight * normalizedBm25;
+      const source =
+        vectorScore > 0 && bm25Score > 0
+          ? "hybrid"
+          : vectorScore > 0
+            ? "vector"
+            : "bm25";
       merged.push({
         chunkId,
         score,
         source,
         vectorScore,
-        bm25Score
+        bm25Score,
       });
     }
 
     // 3. minScore threshold.
     const minScore = Number(config.minScore) || 0;
     if (minScore > 0) {
-      merged = merged.filter((candidate: ChunkCandidate) => candidate.score >= minScore);
+      merged = merged.filter(
+        (candidate: ChunkCandidate) => candidate.score >= minScore,
+      );
     }
 
     // 4. Optional recency decay via file updated_at / mtime.
@@ -118,31 +126,28 @@ class CandidateMergerStage extends Stage {
         merged,
         halfLifeDays,
         config,
-        ctx.metadataStore
+        ctx.metadataStore,
       );
     }
 
     // 5. Sort desc and cap to topK.
-    merged.sort((a, b) => (b.score - a.score) || (a.chunkId - b.chunkId));
-    const topK = Math.max(
-      1,
-      Math.round(Number(info.topK ?? config.topK ?? 5))
-    );
+    merged.sort((a, b) => b.score - a.score || a.chunkId - b.chunkId);
+    const topK = Math.max(1, Math.round(Number(info.topK ?? config.topK ?? 5)));
     merged = merged.slice(0, topK);
 
     return { ...info, mergedCandidates: merged };
   }
 
-  _resolveWeights(config: MemoryConfigOverrides): { vectorWeight: number; bm25Weight: number } {
+  _resolveWeights(config: MemoryConfigOverrides): {
+    vectorWeight: number;
+    bm25Weight: number;
+  } {
     let vectorWeight;
-    if (
-      config.vectorWeight != null
-      && Number.isFinite(Number(config.vectorWeight))
-    ) {
+    if (config.vectorWeight != null && Number.isFinite(Number(config.vectorWeight))) {
       vectorWeight = Number(config.vectorWeight);
     } else if (
-      config.hybridAlpha != null
-      && Number.isFinite(Number(config.hybridAlpha))
+      config.hybridAlpha != null &&
+      Number.isFinite(Number(config.hybridAlpha))
     ) {
       vectorWeight = Number(config.hybridAlpha);
     } else {
@@ -150,14 +155,11 @@ class CandidateMergerStage extends Stage {
     }
 
     let bm25Weight;
-    if (
-      config.bm25Weight != null
-      && Number.isFinite(Number(config.bm25Weight))
-    ) {
+    if (config.bm25Weight != null && Number.isFinite(Number(config.bm25Weight))) {
       bm25Weight = Number(config.bm25Weight);
     } else if (
-      config.hybridBeta != null
-      && Number.isFinite(Number(config.hybridBeta))
+      config.hybridBeta != null &&
+      Number.isFinite(Number(config.hybridBeta))
     ) {
       bm25Weight = Number(config.hybridBeta);
     } else {
@@ -167,7 +169,7 @@ class CandidateMergerStage extends Stage {
     const total = Math.max(1e-9, vectorWeight + bm25Weight);
     return {
       vectorWeight: vectorWeight / total,
-      bm25Weight: bm25Weight / total
+      bm25Weight: bm25Weight / total,
     };
   }
 
@@ -178,7 +180,7 @@ class CandidateMergerStage extends Stage {
     metadataStore: MetadataStoreContract,
   ): Promise<ChunkCandidate[]> {
     const nowMs = Number(config.timeDecayNow) || Date.now();
-    if (typeof metadataStore.getFileByChunkId !== 'function') {
+    if (typeof metadataStore.getFileByChunkId !== "function") {
       return candidates;
     }
 
@@ -188,12 +190,12 @@ class CandidateMergerStage extends Stage {
       try {
         const file = await metadataStore.getFileByChunkId(candidate.chunkId);
         if (file) {
-          const updatedSeconds = file.updated_at != null
-            ? Number(file.updated_at)
-            : null;
-          const recencySeconds = updatedSeconds != null && Number.isFinite(updatedSeconds)
-            ? updatedSeconds
-            : Number(file.mtime) || null;
+          const updatedSeconds =
+            file.updated_at != null ? Number(file.updated_at) : null;
+          const recencySeconds =
+            updatedSeconds != null && Number.isFinite(updatedSeconds)
+              ? updatedSeconds
+              : Number(file.mtime) || null;
           if (recencySeconds != null && Number.isFinite(recencySeconds)) {
             const ageMs = Math.max(0, nowMs - recencySeconds * 1000);
             decay = Math.pow(0.5, ageMs / (halfLifeDays * DAY_MS));
@@ -205,11 +207,11 @@ class CandidateMergerStage extends Stage {
       decayed.push({
         ...candidate,
         score: candidate.score * decay,
-        decay
+        decay,
       });
     }
     return decayed;
   }
 }
 
-export = CandidateMergerStage;
+export default CandidateMergerStage;

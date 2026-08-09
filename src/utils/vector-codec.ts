@@ -1,9 +1,9 @@
-import type { VectorLike } from '../types';
+import type { VectorLike } from "../types.js";
 
 type VectorBlob = Buffer | Float32Array | Uint8Array;
 
 interface DecodeOptions {
-    logPrefix?: string;
+  logPrefix?: string;
 }
 
 /**
@@ -18,36 +18,38 @@ interface DecodeOptions {
  * @returns {Float32Array|null}
  */
 function decodeVectorBlob(
-    blob: VectorBlob | null | undefined,
-    dimension: number,
-    label = 'vector',
-    options: DecodeOptions = {},
+  blob: VectorBlob | null | undefined,
+  dimension: number,
+  label = "vector",
+  options: DecodeOptions = {},
 ): Float32Array | null {
-    const dim = Number(dimension);
-    if (!Number.isSafeInteger(dim) || dim <= 0) {
-        return null;
-    }
+  const dim = Number(dimension);
+  if (!Number.isSafeInteger(dim) || dim <= 0) {
+    return null;
+  }
 
-    if (blob instanceof Float32Array) {
-        return blob.length === dim ? blob : null;
-    }
-    if (!blob || typeof blob.length !== 'number') {
-        return null;
-    }
+  if (blob instanceof Float32Array) {
+    return blob.length === dim ? blob : null;
+  }
+  if (!blob || typeof blob.length !== "number") {
+    return null;
+  }
 
-    const expectedBytes = dim * Float32Array.BYTES_PER_ELEMENT;
-    if (blob.length !== expectedBytes) {
-        const logPrefix = options.logPrefix || 'KnowledgeBase';
-        console.warn(`[${logPrefix}] ⚠️ Invalid ${label} blob length: expected ${expectedBytes}, got ${blob.length}`);
-        return null;
-    }
+  const expectedBytes = dim * Float32Array.BYTES_PER_ELEMENT;
+  if (blob.length !== expectedBytes) {
+    const logPrefix = options.logPrefix || "KnowledgeBase";
+    console.warn(
+      `[${logPrefix}] ⚠️ Invalid ${label} blob length: expected ${expectedBytes}, got ${blob.length}`,
+    );
+    return null;
+  }
 
-    if (blob.byteOffset % Float32Array.BYTES_PER_ELEMENT === 0) {
-        return new Float32Array(blob.buffer, blob.byteOffset, dim);
-    }
+  if (blob.byteOffset % Float32Array.BYTES_PER_ELEMENT === 0) {
+    return new Float32Array(blob.buffer, blob.byteOffset, dim);
+  }
 
-    const copied = Buffer.from(blob);
-    return new Float32Array(copied.buffer, copied.byteOffset, dim);
+  const copied = Buffer.from(blob);
+  return new Float32Array(copied.buffer, copied.byteOffset, dim);
 }
 
 /**
@@ -57,17 +59,13 @@ function decodeVectorBlob(
  * @returns {Buffer}
  */
 function encodeVectorBlob(vector: VectorLike): Buffer {
-    const floatVector = vector instanceof Float32Array
-        ? vector
-        : new Float32Array(vector);
-    return Buffer.from(
-        floatVector.buffer,
-        floatVector.byteOffset,
-        floatVector.byteLength
-    );
+  const floatVector =
+    vector instanceof Float32Array ? vector : new Float32Array(vector);
+  return Buffer.from(
+    floatVector.buffer,
+    floatVector.byteOffset,
+    floatVector.byteLength,
+  );
 }
 
-export {
-    decodeVectorBlob,
-    encodeVectorBlob
-};
+export { decodeVectorBlob, encodeVectorBlob };

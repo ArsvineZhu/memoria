@@ -1,16 +1,16 @@
-'use strict';
+"use strict";
 
-import Pipeline = require('../core/pipeline');
-import FileReaderStage = require('../stages/ingestion/file-reader');
-import TagExtractorStage = require('../stages/ingestion/tag-extractor');
-import ChunkerStage = require('../stages/ingestion/text-chunker');
-import ChunkEmbedderStage = require('../stages/ingestion/chunk-embedder');
-import TagEmbedderStage = require('../stages/ingestion/tag-embedder');
-import MetadataWriterStage = require('../stages/ingestion/metadata-writer');
-import VectorIndexerStage = require('../stages/ingestion/vector-indexer');
-import CooccurrenceBuilderStage = require('../stages/ingestion/co-occurrence-builder');
-import type { MemoryConfigOverrides, PipelineData } from '../types';
-import Stage = require('../core/stage');
+import Pipeline from "../core/pipeline.js";
+import FileReaderStage from "../stages/ingestion/file-reader.js";
+import TagExtractorStage from "../stages/ingestion/tag-extractor.js";
+import ChunkerStage from "../stages/ingestion/text-chunker.js";
+import ChunkEmbedderStage from "../stages/ingestion/chunk-embedder.js";
+import TagEmbedderStage from "../stages/ingestion/tag-embedder.js";
+import MetadataWriterStage from "../stages/ingestion/metadata-writer.js";
+import VectorIndexerStage from "../stages/ingestion/vector-indexer.js";
+import CooccurrenceBuilderStage from "../stages/ingestion/co-occurrence-builder.js";
+import type { MemoryConfigOverrides, PipelineData } from "../types.js";
+import Stage from "../core/stage.js";
 
 interface PipelineOptions {
   stages?: Stage[];
@@ -41,21 +41,21 @@ class IngestPipeline extends Pipeline {
   /**
    * @param {object} [config={}] - pipeline-level config (forwarded to ctx.config)
    * @param {object} [options={}]
-   * @param {import('../core/stage').Stage[]} [options.stages] - explicit chain override
+   * @param {import('../core/stage.js').Stage[]} [options.stages] - explicit chain override
    */
   constructor(config: MemoryConfigOverrides = {}, options: PipelineOptions = {}) {
     const stages = Array.isArray(options.stages)
       ? options.stages
       : IngestPipeline.defaultStages(config);
     super(stages);
-    this.name = 'ingestPipeline';
+    this.name = "ingestPipeline";
     this.config = config || {};
   }
 
   /**
    * The default ingestion chain, in _flushBatch execution order.
    * @param {object} config - stage gates (none today; kept for future knobs)
-   * @returns {import('../core/stage').Stage[]}
+   * @returns {import('../core/stage.js').Stage[]}
    */
   static defaultStages(_config: MemoryConfigOverrides): Stage[] {
     return [
@@ -66,9 +66,9 @@ class IngestPipeline extends Pipeline {
       new TagEmbedderStage(),
       new MetadataWriterStage(),
       new VectorIndexerStage(),
-      new CooccurrenceBuilderStage()
+      new CooccurrenceBuilderStage(),
     ];
   }
 }
 
-export = IngestPipeline;
+export default IngestPipeline;

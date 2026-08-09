@@ -1,7 +1,9 @@
-'use strict';
+"use strict";
 
-import EmbeddingProvider = require('../interfaces/embedding-provider');
-import type { EmbeddingOptions, EmbeddingVector } from '../types';
+import { get_encoding } from "@dqbd/tiktoken";
+import EmbeddingProvider from "../interfaces/embedding-provider.js";
+import type { EmbeddingOptions, EmbeddingVector } from "../types.js";
+import { at } from "../utils/numerical.js";
 
 interface TokenEncoding {
   encode(text: string): ArrayLike<number>;
@@ -44,10 +46,7 @@ let _encoding: TokenEncoding | null = null;
 
 function getEncoding(): TokenEncoding {
   if (!_encoding) {
-    const { get_encoding } = require('@dqbd/tiktoken') as {
-      get_encoding: (name: string) => TokenEncoding;
-    };
-    _encoding = get_encoding('cl100k_base');
+    _encoding = get_encoding("cl100k_base");
   }
   return _encoding;
 }
@@ -83,9 +82,9 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
    */
   constructor(config: OpenAIConfig = {}) {
     super();
-    this.apiUrl = config.apiUrl || '';
-    this.apiKey = config.apiKey || '';
-    this.model = config.model || '';
+    this.apiUrl = config.apiUrl || "";
+    this.apiKey = config.apiKey || "";
+    this.model = config.model || "";
     this.modelSig = config.modelSig || null;
     this.dimension = config.dimension || 1024;
     this.maxBatchItems = config.maxBatchItems || 32;
@@ -97,7 +96,7 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
     } else if (config.fallbackModels) {
       this.fallbackModels = String(config.fallbackModels)
         .split(/[,，]/)
-        .map(m => m.trim())
+        .map((m) => m.trim())
         .filter(Boolean);
     } else {
       this.fallbackModels = [];
@@ -105,7 +104,7 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
     this.safeMaxTokens = Math.floor(this.maxToken * 0.85);
   }
 
-  getDimension(): number {
+  override getDimension(): number {
     return this.dimension;
   }
 
@@ -117,7 +116,7 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
   _getModelCandidates(): string[] {
     const candidates: string[] = [];
     const addModel = (model: unknown): void => {
-      const normalized = String(model || '').trim();
+      const normalized = String(model || "").trim();
       if (normalized && !candidates.includes(normalized)) {
         candidates.push(normalized);
       }
@@ -134,7 +133,10 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
    * @returns {Promise<number[][]>} Array of embedding arrays
    * @private
    */
-  async _sendBatch(batchTexts: readonly string[], batchNumber: number): Promise<number[][]> {
+  async _sendBatch(
+    batchTexts: readonly string[],
+    batchNumber: number,
+  ): Promise<number[][]> {
     const modelCandidates = this._getModelCandidates();
     const baseDelay = 1000;
 
@@ -144,14 +146,14 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
         const requestUrl = `${this.apiUrl}/v1/embeddings`;
         const requestBody = { model, input: batchTexts };
         const requestHeaders = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
         };
 
         const response = await fetch(requestUrl, {
-          method: 'POST',
+          method: "POST",
           headers: requestHeaders,
-          body: JSON.stringify(requestBody)
+          body: JSON.stringify(requestBody),
         });
 
         const responseBodyText = await response.text();
@@ -161,40 +163,44 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
             const waitTime = Math.min(5000 * attempt, 15000);
             console.warn(
               `[OpenAIEmbedding] Batch ${batchNumber} model "${model}" ` +
-              `rate limited (429). Switching fallback in ${waitTime / 1000}s...`
+                `rate limited (429). Switching fallback in ${waitTime / 1000}s...`,
             );
-            await new Promise(r => setTimeout(r, waitTime));
+            await new Promise((r) => setTimeout(r, waitTime));
             continue;
           }
           throw new Error(
-            `API Error ${response.status}: ${responseBodyText.substring(0, 500)}`
+            `API Error ${response.status}: ${responseBodyText.substring(0, 500)}`,
           );
         }
 
         let data: OpenAIResponse;
         try {
           const parsed: unknown = JSON.parse(responseBodyText);
-          if (parsed === null || typeof parsed !== 'object') {
-            throw new Error('response root is not an object');
+          if (parsed === null || typeof parsed !== "object") {
+            throw new Error("response root is not an object");
           }
           const record = parsed as Record<string, unknown>;
           const dataItems = Array.isArray(record.data)
-            ? record.data.filter((item): item is OpenAIResponseItem => item !== null && typeof item === 'object')
+            ? record.data.filter(
+                (item): item is OpenAIResponseItem =>
+                  item !== null && typeof item === "object",
+              )
             : undefined;
           data = {
-            error: record.error && typeof record.error === 'object'
-              ? record.error as OpenAIResponse['error']
-              : undefined,
+            error:
+              record.error && typeof record.error === "object"
+                ? (record.error as OpenAIResponse["error"])
+                : undefined,
             data: dataItems,
           };
         } catch (parseError) {
           throw new Error(
-            `Failed to parse API response as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+            `Failed to parse API response as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
           );
         }
 
         if (!data) {
-          throw new Error('API returned empty/null response');
+          throw new Error("API returned empty/null response");
         }
 
         if (data.error) {
@@ -205,25 +211,31 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
 
         if (!data.data || !Array.isArray(data.data)) {
           throw new Error(
-            'Invalid API response structure: missing or invalid data field'
+            "Invalid API response structure: missing or invalid data field",
           );
         }
 
         return data.data
-          .filter((item): item is OpenAIResponseItem & { index: number; embedding: readonly number[] } =>
-            typeof item.index === 'number' && Array.isArray(item.embedding))
+          .filter(
+            (
+              item,
+            ): item is OpenAIResponseItem & {
+              index: number;
+              embedding: readonly number[];
+            } => typeof item.index === "number" && Array.isArray(item.embedding),
+          )
           .sort((a, b) => a.index - b.index)
-          .map(item => [...item.embedding]);
+          .map((item) => [...item.embedding]);
       } catch (e) {
         console.warn(
           `[OpenAIEmbedding] Batch ${batchNumber}, Model "${model}" failed ` +
-            `(${attempt}/${modelCandidates.length}): ${e instanceof Error ? e.message : String(e)}`
+            `(${attempt}/${modelCandidates.length}): ${e instanceof Error ? e.message : String(e)}`,
         );
         if (attempt === modelCandidates.length) throw e;
-        await new Promise(r => setTimeout(r, baseDelay * attempt));
+        await new Promise((r) => setTimeout(r, baseDelay * attempt));
       }
     }
-    throw new Error('No embedding model candidates configured');
+    throw new Error("No embedding model candidates configured");
   }
 
   /**
@@ -235,7 +247,7 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
    * @param {string[]} texts
    * @returns {Promise<(number[]|null)[]>}
    */
-  async embedBatch(
+  override async embedBatch(
     texts: readonly string[] | null | undefined,
     _options?: EmbeddingOptions,
   ): Promise<(EmbeddingVector | null)[]> {
@@ -251,13 +263,13 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
     const oversizeIndices = new Set();
 
     for (let i = 0; i < texts.length; i++) {
-      const text = texts[i];
+      const text = at(texts, i, "embedding texts");
       const textTokens = encoding.encode(text).length;
 
       if (textTokens > this.safeMaxTokens) {
         console.warn(
           `[OpenAIEmbedding] Text at index ${i} exceeds token limit ` +
-          `(${textTokens} > ${this.safeMaxTokens}), skipping.`
+            `(${textTokens} > ${this.safeMaxTokens}), skipping.`,
         );
         oversizeIndices.add(i);
         continue;
@@ -271,7 +283,7 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
       if (isTokenFull || isItemFull) {
         batches.push({
           texts: currentBatchTexts,
-          originalIndices: currentBatchIndices
+          originalIndices: currentBatchIndices,
         });
         currentBatchTexts = [text];
         currentBatchIndices = [i];
@@ -285,13 +297,13 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
     if (currentBatchTexts.length > 0) {
       batches.push({
         texts: currentBatchTexts,
-        originalIndices: currentBatchIndices
+        originalIndices: currentBatchIndices,
       });
     }
 
     if (oversizeIndices.size > 0) {
       console.warn(
-        `[OpenAIEmbedding] ${oversizeIndices.size} texts skipped due to token limit.`
+        `[OpenAIEmbedding] ${oversizeIndices.size} texts skipped due to token limit.`,
       );
     }
 
@@ -304,20 +316,20 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
         const batchIndex = cursor++;
         if (batchIndex >= batches.length) break;
 
-        const batch = batches[batchIndex];
+        const batch = at(batches, batchIndex, "embedding batches");
         try {
           batchResults[batchIndex] = {
             vectors: await this._sendBatch(batch.texts, batchIndex + 1),
-            originalIndices: batch.originalIndices
+            originalIndices: batch.originalIndices,
           };
         } catch (e) {
           console.error(
-            `[OpenAIEmbedding] Batch ${batchIndex + 1} failed permanently: ${e instanceof Error ? e.message : String(e)}`
+            `[OpenAIEmbedding] Batch ${batchIndex + 1} failed permanently: ${e instanceof Error ? e.message : String(e)}`,
           );
           batchResults[batchIndex] = {
             vectors: null,
             originalIndices: batch.originalIndices,
-            error: e instanceof Error ? e.message : String(e)
+            error: e instanceof Error ? e.message : String(e),
           };
         }
       }
@@ -351,7 +363,7 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
     if (failCount > 0) {
       console.warn(
         `[OpenAIEmbedding] Results: ${successCount} succeeded, ` +
-        `${failCount} failed/skipped out of ${texts.length} total.`
+          `${failCount} failed/skipped out of ${texts.length} total.`,
       );
     }
 
@@ -359,4 +371,4 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
   }
 }
 
-export = OpenAIEmbeddingProvider;
+export default OpenAIEmbeddingProvider;

@@ -1,12 +1,52 @@
-'use strict';
+"use strict";
 
-import path = require('path');
-import fs = require('fs');
-import crypto = require('crypto');
-import VectorStore = require('../interfaces/vector-store');
+import * as path from "node:path";
+import * as fs from "node:fs";
+import * as crypto from "node:crypto";
+import VectorStore from "../interfaces/vector-store.js";
 
-import { VexusIndex } from '../native/vexus-lite';
-import type { VectorHit, VectorLike, VectorStoreStats } from '../types';
+import { VexusIndex } from "../native/vexus-lite.js";
+import type {
+  VectorHit,
+  VectorIndexEntry,
+  VectorLike,
+  VectorStoreStats,
+} from "../types.js";
+import {
+  at,
+  assertDimension,
+  assertFiniteVector,
+  assertVectorDimension,
+} from "../utils/numerical.js";
+
+interface NativeSearchResult {
+  id: number;
+  score: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function parseNativeSearchResults(value: unknown): NativeSearchResult[] {
+  if (!Array.isArray(value)) return [];
+  const results: NativeSearchResult[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const rawId = item.id;
+    const rawScore = item.score;
+    if (
+      (typeof rawId !== "number" && typeof rawId !== "bigint") ||
+      (typeof rawScore !== "number" && typeof rawScore !== "bigint")
+    ) {
+      continue;
+    }
+    const id = Number(rawId);
+    const score = Number(rawScore);
+    if (Number.isSafeInteger(id) && Number.isFinite(score)) results.push({ id, score });
+  }
+  return results;
+}
 
 interface VexusStoreConfig {
   dimension?: number;
@@ -46,12 +86,13 @@ class VexusVectorStore extends VectorStore {
    */
   constructor(config: VexusStoreConfig = {}) {
     super();
-    this.dimension = config.dimension || 3072;
-    this.storePath = config.storePath || '.';
-    this.defaultCapacity = config.tagIndexCapacity || 50000;
-    this.indexSaveDelay = config.indexSaveDelay || 5000;
-    this.tagIndexSaveDelay = config.tagIndexSaveDelay || 10000;
-    this.persistTagIndex = config.persistTagIndex || false;
+    this.dimension = config.dimension ?? 3072;
+    assertDimension(this.dimension, "Vexus vector dimension");
+    this.storePath = config.storePath ?? ".";
+    this.defaultCapacity = config.tagIndexCapacity ?? 50000;
+    this.indexSaveDelay = config.indexSaveDelay ?? 5000;
+    this.tagIndexSaveDelay = config.tagIndexSaveDelay ?? 10000;
+    this.persistTagIndex = config.persistTagIndex ?? false;
     this.indexLoadEnabled = config.indexLoadEnabled !== false;
 
     /** @type {Map<string, VexusIndex>} */
@@ -73,7 +114,7 @@ class VexusVectorStore extends VectorStore {
     if (existing) {
       return existing;
     }
-    const cap = capacity || this.defaultCapacity;
+    const cap = capacity ?? this.defaultCapacity;
     let index = null;
     if (this.indexLoadEnabled && this._indexFileExists(indexName)) {
       try {
@@ -81,12 +122,12 @@ class VexusVectorStore extends VectorStore {
           this._getIndexPath(indexName),
           null,
           this.dimension,
-          cap
+          cap,
         );
       } catch (e) {
         console.error(
           `[VexusVectorStore] Failed to load persisted index "${indexName}", ` +
-          `creating fresh one instead: ${e instanceof Error ? e.message : String(e)}`
+            `creating fresh one instead: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }
@@ -118,10 +159,7 @@ class VexusVectorStore extends VectorStore {
    * @private
    */
   _getIndexPath(indexName: string): string {
-    const safeName = crypto
-      .createHash('md5')
-      .update(indexName)
-      .digest('hex');
+    const safeName = crypto.createHash("md5").update(indexName).digest("hex");
     return path.join(this.storePath, `index_${safeName}.usearch`);
   }
 
@@ -132,19 +170,19 @@ class VexusVectorStore extends VectorStore {
    */
   scheduleIndexSave(indexName: string): void {
     if (this.saveTimers.has(indexName)) return;
-    const delay = indexName === 'global_tags'
-      ? this.tagIndexSaveDelay
-      : this.indexSaveDelay;
+    const delay =
+      indexName === "global_tags" ? this.tagIndexSaveDelay : this.indexSaveDelay;
     const timer = setTimeout(() => {
       this.saveTimers.delete(indexName);
       const index = this.indices.get(indexName);
-      if (!index || typeof index.save !== 'function') return;
+      if (!index || typeof index.save !== "function") return;
       try {
         const filePath = this._getIndexPath(indexName);
+        fs.mkdirSync(this.storePath, { recursive: true });
         index.save(filePath);
       } catch (e) {
         console.error(
-          `[VexusVectorStore] Scheduled save failed for "${indexName}": ${e instanceof Error ? e.message : String(e)}`
+          `[VexusVectorStore] Scheduled save failed for "${indexName}": ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }, delay);
@@ -153,33 +191,43 @@ class VexusVectorStore extends VectorStore {
 
   // ── VectorStore interface ────────────────────────────────────
 
-  async add(indexName: string, id: number, vector: VectorLike): Promise<void> {
+  override async add(indexName: string, id: number, vector: VectorLike): Promise<void> {
+    assertVectorDimension(vector, this.dimension, "Vexus vector");
+    assertFiniteVector(vector, "Vexus vector");
     const index = this.getOrCreateIndex(indexName);
-    const vec = vector instanceof Float32Array
-      ? vector
-      : new Float32Array(vector);
+    const vec = vector instanceof Float32Array ? vector : new Float32Array(vector);
     index.add(id, vec);
   }
 
-  async addBatch(
+  override async addBatch(
     indexName: string,
     ids: readonly number[],
     vectors: readonly VectorLike[] | VectorLike,
   ): Promise<void> {
     const index = this.getOrCreateIndex(indexName);
 
-    if (typeof index.addBatch === 'function') {
+    if (typeof index.addBatch === "function") {
       // Native addBatch expects a single flat Float32Array (n * dim)
       let flatVectors;
       if (vectors instanceof Float32Array) {
         flatVectors = vectors;
+        assertVectorDimension(
+          flatVectors,
+          ids.length * this.dimension,
+          "Vexus batch vectors",
+        );
+        assertFiniteVector(flatVectors, "Vexus batch vectors");
       } else {
         flatVectors = new Float32Array(ids.length * this.dimension);
         const vectorList = vectors as readonly VectorLike[];
         for (let i = 0; i < ids.length; i++) {
-          const v = vectorList[i] instanceof Float32Array
-            ? vectorList[i]
-            : new Float32Array(vectorList[i]);
+          const inputVector = at(vectorList, i, "vector list");
+          const v =
+            inputVector instanceof Float32Array
+              ? inputVector
+              : new Float32Array(inputVector);
+          assertVectorDimension(v, this.dimension, `Vexus vector ${i}`);
+          assertFiniteVector(v, `Vexus vector ${i}`);
           flatVectors.set(v, i * this.dimension);
         }
       }
@@ -190,72 +238,108 @@ class VexusVectorStore extends VectorStore {
       for (let i = 0; i < ids.length; i++) {
         const inputVector = vectorList[i];
         if (!inputVector) continue;
-        const v = inputVector instanceof Float32Array
-          ? inputVector
-          : new Float32Array(inputVector);
-        index.add(ids[i], v);
+        const v =
+          inputVector instanceof Float32Array
+            ? inputVector
+            : new Float32Array(inputVector);
+        index.add(at(ids, i, "vector ids"), v);
       }
     }
   }
 
-  async search(indexName: string, queryVector: VectorLike, k: number): Promise<VectorHit[]> {
+  override async search(
+    indexName: string,
+    queryVector: VectorLike,
+    k: number,
+  ): Promise<VectorHit[]> {
+    assertVectorDimension(queryVector, this.dimension, "Vexus query vector");
+    assertFiniteVector(queryVector, "Vexus query vector");
+    if (!Number.isSafeInteger(k) || k < 0)
+      throw new RangeError("Vexus search k must be a non-negative safe integer.");
     const index = this.indices.get(indexName);
     if (!index) return [];
 
-    const query = queryVector instanceof Float32Array
-      ? queryVector
-      : new Float32Array(queryVector);
+    const query =
+      queryVector instanceof Float32Array ? queryVector : new Float32Array(queryVector);
 
-    const results = index.search(query, k);
+    const results: unknown = index.search(query, k);
 
     // Convert BigInt IDs / scores to Number (N-API may return BigInt)
-    return results.map((r): VectorHit => ({
-      id: typeof r.id === 'bigint' ? Number(r.id) : r.id,
-      score: typeof r.score === 'bigint' ? Number(r.score) : r.score
-    }));
+    return parseNativeSearchResults(results);
   }
 
-  async remove(indexName: string, id: number): Promise<void> {
+  override async remove(indexName: string, id: number): Promise<void> {
     const index = this.indices.get(indexName);
     if (!index) return;
     index.remove(id);
   }
 
-  async loadIndex(indexName: string, filePath: string): Promise<VexusIndex> {
+  override async replaceIndex(
+    indexName: string,
+    entries: readonly VectorIndexEntry[],
+  ): Promise<void> {
+    const pendingTimer = this.saveTimers.get(indexName);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.saveTimers.delete(indexName);
+    }
+    const capacity = Math.max(this.defaultCapacity, entries.length, 1);
+    const index = new VexusIndex(this.dimension, capacity);
+    for (const entry of entries) {
+      assertVectorDimension(
+        entry.vector,
+        this.dimension,
+        `Vexus index entry ${entry.id}`,
+      );
+      assertFiniteVector(entry.vector, `Vexus index entry ${entry.id}`);
+      const vector =
+        entry.vector instanceof Float32Array
+          ? entry.vector
+          : new Float32Array(entry.vector);
+      index.add(entry.id, vector);
+    }
+    this.indices.set(indexName, index);
+  }
+
+  override async loadIndex(indexName: string, filePath: string): Promise<VexusIndex> {
     const resolvedPath = filePath || this._getIndexPath(indexName);
     const index = VexusIndex.load(
       resolvedPath,
       null,
       this.dimension,
-      this.defaultCapacity
+      this.defaultCapacity,
     );
     this.indices.set(indexName, index);
     return index;
   }
 
-  async saveIndex(indexName: string, filePath?: string): Promise<void> {
+  override async saveIndex(indexName: string, filePath?: string): Promise<void> {
     const index = this.indices.get(indexName);
     if (!index) return;
     const resolvedPath = filePath || this._getIndexPath(indexName);
+    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
     index.save(resolvedPath);
   }
 
-  async getIndexStats(indexName: string): Promise<VectorStoreStats> {
+  override async getIndexStats(indexName: string): Promise<VectorStoreStats> {
     const index = this.indices.get(indexName);
     if (!index) {
       return { size: 0, capacity: 0, dimension: this.dimension };
     }
     const stats = index.stats();
     return {
-      size: typeof stats.totalVectors === 'bigint'
-        ? Number(stats.totalVectors)
-        : (stats.totalVectors || 0),
-      capacity: typeof stats.capacity === 'bigint'
-        ? Number(stats.capacity)
-        : (stats.capacity || 0),
-      dimension: typeof stats.dimensions === 'bigint'
-        ? Number(stats.dimensions)
-        : (stats.dimensions || this.dimension)
+      size:
+        typeof stats.totalVectors === "bigint"
+          ? Number(stats.totalVectors)
+          : stats.totalVectors || 0,
+      capacity:
+        typeof stats.capacity === "bigint"
+          ? Number(stats.capacity)
+          : stats.capacity || 0,
+      dimension:
+        typeof stats.dimensions === "bigint"
+          ? Number(stats.dimensions)
+          : stats.dimensions || this.dimension,
     };
   }
 
@@ -273,12 +357,13 @@ class VexusVectorStore extends VectorStore {
         this.saveTimers.delete(name);
       }
       const index = this.indices.get(name);
-      if (index && typeof index.save === 'function') {
+      if (index && typeof index.save === "function") {
         try {
+          fs.mkdirSync(this.storePath, { recursive: true });
           index.save(this._getIndexPath(name));
         } catch (e) {
           console.error(
-            `[VexusVectorStore] Flush save failed for "${name}": ${e instanceof Error ? e.message : String(e)}`
+            `[VexusVectorStore] Flush save failed for "${name}": ${e instanceof Error ? e.message : String(e)}`,
           );
         }
       }
@@ -286,4 +371,4 @@ class VexusVectorStore extends VectorStore {
   }
 }
 
-export = VexusVectorStore;
+export default VexusVectorStore;

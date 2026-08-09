@@ -1,5 +1,7 @@
 "use strict";
 
+import * as path from "node:path";
+
 import { DEFAULT_CONFIG, mergeConfig } from "./config/default-config.js";
 import { loadRagParams } from "./config/rag-params-loader.js";
 import PipelineContext from "./core/context.js";
@@ -79,6 +81,10 @@ function normalizeFiles(files: unknown): FileInput[] {
   });
 }
 
+function normalizeMutationPath(filePath: string): string {
+  return path.normalize(filePath).split(path.sep).join("/");
+}
+
 /**
  * MemoryEngine — the standalone knowledge-base engine.
  *
@@ -111,6 +117,7 @@ class MemoryEngine {
   searchPipeline: SearchPipeline;
   initialized: boolean;
   private _initPromise: Promise<void> | null;
+  private readonly _mutationTails = new Map<string, Promise<void>>();
   _closed: boolean;
   ragParams: UnknownRecord;
   _lastIndexedAt: number | null;
@@ -228,6 +235,25 @@ class MemoryEngine {
     return undefined;
   }
 
+  private _runSerializedMutation<T>(
+    key: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this._mutationTails.get(key) || Promise.resolve();
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this._mutationTails.set(key, tail);
+
+    return previous.then(operation).finally(() => {
+      release();
+      if (this._mutationTails.get(key) === tail) {
+        this._mutationTails.delete(key);
+      }
+    });
+  }
+
   /** Rebuild derived vector indices from the metadata/content authority. */
   async reconcile(): Promise<ReconciliationReport> {
     return reconcileVectorIndexes({
@@ -293,15 +319,19 @@ class MemoryEngine {
     const entries = normalizeFiles(files);
     const results: IngestEnvelope[] = [];
     for (const entry of entries) {
-      const result = await this.ingestPipeline.run(
-        {
-          path: entry.path,
-          relPath: entry.relPath,
-          content: entry.content,
-          mtime: entry.mtime,
-          size: entry.size,
-        },
-        this.ctx,
+      const result = await this._runSerializedMutation(
+        `file:${normalizeMutationPath(entry.path)}`,
+        () =>
+          this.ingestPipeline.run(
+            {
+              path: entry.path,
+              relPath: entry.relPath,
+              content: entry.content,
+              mtime: entry.mtime,
+              size: entry.size,
+            },
+            this.ctx,
+          ),
       );
       results.push(result as IngestEnvelope);
       if (result && !result.skipped && result.fileId != null) {
@@ -327,37 +357,39 @@ class MemoryEngine {
       );
     }
 
-    const revision =
-      document.revision === undefined ? undefined : String(document.revision);
-    const storagePath = logicalDocumentPath(documentId);
-    const mtime = Number.isFinite(document.updatedAt) ? Number(document.updatedAt) : 0;
-    const size = Buffer.byteLength(document.content, "utf8");
-    const result = (await this.ingestPipeline.run(
-      {
-        path: storagePath,
-        relPath: storagePath,
-        content: document.content,
-        mtime,
-        size,
-        diaryName: "Logical",
+    return this._runSerializedMutation(`document:${documentId}`, async () => {
+      const revision =
+        document.revision === undefined ? undefined : String(document.revision);
+      const storagePath = logicalDocumentPath(documentId);
+      const mtime = Number.isFinite(document.updatedAt) ? Number(document.updatedAt) : 0;
+      const size = Buffer.byteLength(document.content, "utf8");
+      const result = (await this.ingestPipeline.run(
+        {
+          path: storagePath,
+          relPath: storagePath,
+          content: document.content,
+          mtime,
+          size,
+          diaryName: "Logical",
+          documentId,
+          revision,
+          documentSource: document.source,
+          documentMetadata: document.metadata,
+        },
+        this.ctx,
+      )) as IngestEnvelope;
+
+      if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
+      return {
+        ...result,
         documentId,
         revision,
+        source: document.source,
+        metadata: document.metadata,
         documentSource: document.source,
         documentMetadata: document.metadata,
-      },
-      this.ctx,
-    )) as IngestEnvelope;
-
-    if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
-    return {
-      ...result,
-      documentId,
-      revision,
-      source: document.source,
-      metadata: document.metadata,
-      documentSource: document.source,
-      documentMetadata: document.metadata,
-    };
+      };
+    });
   }
 
   /** Explicit replacement spelling for callers that do not use revisioned ingest. */
@@ -379,27 +411,29 @@ class MemoryEngine {
   /** Remove a logical document by stable identity, without requiring its source path. */
   async remove(documentId: string): Promise<MemoryDocumentDeleteResult> {
     const normalizedId = normalizeDocumentId(documentId);
-    const storagePath = logicalDocumentPath(normalizedId);
-    let row = null;
-    if (typeof this.metadataStore.getFileByDocumentId === "function") {
-      try {
-        row = await this.metadataStore.getFileByDocumentId(normalizedId);
-      } catch (_error) {
-        // Older injected metadata stores may not implement the optional lookup.
+    return this._runSerializedMutation(`document:${normalizedId}`, async () => {
+      const storagePath = logicalDocumentPath(normalizedId);
+      let row = null;
+      if (typeof this.metadataStore.getFileByDocumentId === "function") {
+        try {
+          row = await this.metadataStore.getFileByDocumentId(normalizedId);
+        } catch (_error) {
+          // Older injected metadata stores may not implement the optional lookup.
+        }
       }
-    }
-    if (!row) row = await this.metadataStore.getFileByPath(storagePath);
+      if (!row) row = await this.metadataStore.getFileByPath(storagePath);
 
-    const result = (await this.deletePipeline.run(
-      {
-        path: row?.path || storagePath,
-        relPath: row?.path || storagePath,
-        documentId: normalizedId,
-        diaryName: row?.diary_name || row?.diaryName || "Logical",
-      },
-      this.ctx,
-    )) as DeleteEnvelope;
-    return { ...result, documentId: normalizedId };
+      const result = (await this.deletePipeline.run(
+        {
+          path: row?.path || storagePath,
+          relPath: row?.path || storagePath,
+          documentId: normalizedId,
+          diaryName: row?.diary_name || row?.diaryName || "Logical",
+        },
+        this.ctx,
+      )) as DeleteEnvelope;
+      return { ...result, documentId: normalizedId };
+    });
   }
 
   /**
@@ -439,14 +473,18 @@ class MemoryEngine {
    */
   async handleDelete(input: string | FileInput): Promise<DeleteEnvelope> {
     const source: FileInput = typeof input === "string" ? { path: input } : input;
-    return this.deletePipeline.run(
-      {
-        path: source.path,
-        relPath: source.relPath,
-        documentId: source.documentId,
-        diaryName: source.diaryName,
-      },
-      this.ctx,
+    return this._runSerializedMutation(
+      `file:${normalizeMutationPath(source.path)}`,
+      () =>
+        this.deletePipeline.run(
+          {
+            path: source.path,
+            relPath: source.relPath,
+            documentId: source.documentId,
+            diaryName: source.diaryName,
+          },
+          this.ctx,
+        ) as Promise<DeleteEnvelope>,
     ) as Promise<DeleteEnvelope>;
   }
 

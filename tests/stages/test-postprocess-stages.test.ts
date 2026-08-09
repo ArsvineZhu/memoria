@@ -15,6 +15,7 @@ import TruncatorStage from "../../src/stages/postprocess/truncator.js";
 import ExpanderStage from "../../src/stages/postprocess/expander.js";
 import ResultFormatterStage from "../../src/stages/output/result-formatter.js";
 import type { ChunkCandidate } from "../../src/types.js";
+import { encodeVectorBlob } from "../../src/utils/vector-codec.js";
 
 const dim = 4;
 
@@ -125,6 +126,63 @@ test("ResultDeduplicatorStage keeps below-threshold semantic pairs", async () =>
   );
   assert.strictEqual(out.mergedCandidates.length, 2);
   assert.strictEqual(out.dedupeStats!.removed, 0);
+});
+
+test("ResultDeduplicatorStage hydrates missing vectors through the metadata contract", async () => {
+  const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const fileId = (await store.upsertFile({
+    path: "loader.md",
+    diaryName: "Root",
+    checksum: "loader",
+    mtime: 0,
+    size: 2,
+  }))!;
+  const vector = new Float32Array([1, 0, 0, 0]);
+  const [firstId, secondId] = await store.insertChunks(fileId, [
+    { chunkIndex: 0, content: "first", vector: encodeVectorBlob(vector) },
+    { chunkIndex: 1, content: "second", vector: encodeVectorBlob(vector) },
+  ]);
+  const stage = new ResultDeduplicatorStage();
+  const ctx = new PipelineContext({
+    config: { dimension: dim, semanticThreshold: 0.9 },
+    metadataStore: store,
+  });
+
+  const out = await stage.process(
+    {
+      queryVector: vector,
+      mergedCandidates: [
+        { chunkId: firstId, score: 0.7 },
+        { chunkId: secondId, score: 0.8 },
+      ],
+    },
+    ctx,
+  );
+  assert.equal(out.mergedCandidates.length, 1);
+  store.close();
+});
+
+test("ResultDeduplicatorStage keeps sparse candidates when vector hydration fails", async () => {
+  const stage = new ResultDeduplicatorStage();
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  metadataStore.getChunkById = async () => {
+    throw new Error("optional vector lookup failed");
+  };
+  const ctx = new PipelineContext({
+    config: { dimension: dim, semanticThreshold: 0.9 },
+    metadataStore,
+  });
+  const out = await stage.process(
+    {
+      mergedCandidates: [
+        { chunkId: 101, score: 0.7 },
+        { chunkId: 102, score: 0.8 },
+      ],
+    },
+    ctx,
+  );
+  assert.equal(out.mergedCandidates.length, 2);
+  metadataStore.close();
 });
 
 test("ResultDeduplicatorStage passes through when dedupeEnabled is false", async () => {

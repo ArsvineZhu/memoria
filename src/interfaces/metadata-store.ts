@@ -36,10 +36,6 @@ class MetadataStore implements MetadataStoreContract {
     throw new Error("MetadataStore.getFileByPath() must be implemented");
   }
 
-  async getFileByDocumentId(_documentId: string): Promise<FileRow | null> {
-    throw new Error("MetadataStore.getFileByDocumentId() must be implemented");
-  }
-
   /**
    * Get all distinct diary names of stored files.
    * @returns {Promise<string[]>}

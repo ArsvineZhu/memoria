@@ -512,9 +512,20 @@ class KnowledgeBaseAdapter {
    */
   _createResultDeduplicator(): ResultDeduplicator {
     const engine = this.engine;
-    const store = engine && (engine.metadataStore as unknown as MetadataStoreWithDb);
-    return new ResultDeduplicator(store?.db, {
-      dimension: Number(engine && engine.config && engine.config.dimension) || 3072,
+    const store = engine && engine.metadataStore;
+    const dimension = Number(engine && engine.config && engine.config.dimension) || 3072;
+    const loadVector = store
+      ? async (chunkId: number) => {
+          const row = await store.getChunkById(chunkId);
+          return row?.vector
+            ? decodeVectorBlob(row.vector, dimension, `chunk ${chunkId}`, {
+                logPrefix: "Memoria adapter deduplication",
+              })
+            : null;
+        }
+      : undefined;
+    return new ResultDeduplicator(loadVector, {
+      dimension,
     });
   }
 

@@ -342,7 +342,7 @@ class SqliteMetadataStore extends MetadataStore {
     );
   }
 
-  override async getFileByDocumentId(documentId: string): Promise<FileRow | null> {
+  async getFileByDocumentId(documentId: string): Promise<FileRow | null> {
     return (
       (this.db.prepare("SELECT * FROM files WHERE document_id = ?").get(documentId) as
         FileQueryRow | undefined) || null

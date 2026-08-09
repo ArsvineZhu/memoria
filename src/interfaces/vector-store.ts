@@ -2,8 +2,6 @@ import type {
   VectorHit,
   VectorLike,
   VectorStoreContract,
-  VectorStoreStats,
-  VectorIndexEntry,
 } from "../types.js";
 import { at } from "../utils/numerical.js";
 
@@ -66,39 +64,6 @@ class VectorStore implements VectorStoreContract {
     throw new Error("VectorStore.remove() must be implemented");
   }
 
-  async replaceIndex(
-    _indexName: string,
-    _entries: readonly VectorIndexEntry[],
-  ): Promise<void> {
-    throw new Error("VectorStore.replaceIndex() must be implemented");
-  }
-
-  /**
-   * Load an index from disk.
-   * @param {string} indexName
-   * @param {string} path
-   */
-  async loadIndex(_indexName: string, _path: string): Promise<unknown> {
-    throw new Error("VectorStore.loadIndex() must be implemented");
-  }
-
-  /**
-   * Save an index to disk.
-   * @param {string} indexName
-   * @param {string} path
-   */
-  async saveIndex(_indexName: string, _path: string): Promise<void> {
-    throw new Error("VectorStore.saveIndex() must be implemented");
-  }
-
-  /**
-   * Get index statistics.
-   * @param {string} indexName
-   * @returns {Promise<{size:number, capacity:number, dimension:number}>}
-   */
-  async getIndexStats(_indexName: string): Promise<VectorStoreStats> {
-    throw new Error("VectorStore.getIndexStats() must be implemented");
-  }
 }
 
 export default VectorStore;

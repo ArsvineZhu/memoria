@@ -10,6 +10,7 @@ import KnowledgeBaseAdapter from "../../src/compat/knowledge-base-adapter.js";
 import { createMemoryEngine } from "../../src/index.js";
 import type { EmbeddingProviderContract } from "../../src/types.js";
 import { at } from "../../src/utils/numerical.js";
+import { encodeVectorBlob } from "../../src/utils/vector-codec.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -135,6 +136,37 @@ test("deduplicateResults removes exact duplicates keeping the best score", async
   assert.ok(deduped.length <= hits.length, "exact duplicates must be suppressed");
   const ids = deduped.map((r) => r.chunkId);
   assert.strictEqual(new Set(ids).size, ids.length, "chunkId must stay unique");
+  await adapter.close();
+});
+
+test("adapter result deduplication hydrates vectors through metadata", async () => {
+  const { adapter, engine, root } = makeAdapter();
+  await adapter.initialize();
+  await seedDiary(adapter, root);
+  const chunks = await engine.metadataStore.getAllChunks();
+  assert.ok(chunks.length >= 2);
+  const first = chunks[0]!;
+  const second = chunks[1]!;
+  let loaderCalls = 0;
+  const originalGetChunkById = engine.metadataStore.getChunkById.bind(engine.metadataStore);
+  engine.metadataStore.getChunkById = async (chunkId) => {
+    loaderCalls += 1;
+    const row = await originalGetChunkById(chunkId);
+    return row
+      ? { ...row, vector: encodeVectorBlob(new Float32Array([1, 0, 0, 0, 0, 0, 0, 0])) }
+      : row;
+  };
+
+  const deduped = await adapter.deduplicateResults(
+    [
+      { chunkId: first.id, score: 0.7 },
+      { chunkId: second.id, score: 0.8 },
+    ],
+    new Float32Array([1, 0, 0, 0, 0, 0, 0, 0]),
+    { semanticThreshold: 0.9 },
+  );
+  assert.equal(loaderCalls, 2);
+  assert.equal(deduped.length, 1);
   await adapter.close();
 });
 

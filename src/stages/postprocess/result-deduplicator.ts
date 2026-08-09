@@ -1,16 +1,13 @@
 import type {
   ChunkCandidate,
-  DatabaseLike,
   DedupeStats,
-  MetadataStoreContract,
   PipelineContextLike,
   PipelineData,
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
 import ResultDeduplicator from "../../algorithms/result-deduplicator.js";
-
-type MetadataStoreWithDb = MetadataStoreContract & { db?: DatabaseLike };
+import { decodeVectorBlob } from "../../utils/vector-codec.js";
 
 /**
  * Postprocess stage: deduplicates merged candidates.
@@ -62,10 +59,22 @@ class ResultDeduplicatorStage extends Stage {
       return { ...info, mergedCandidates: candidates, dedupeSkipped: true };
     }
 
-    const db = (ctx.metadataStore as MetadataStoreWithDb | null | undefined)?.db;
+    const dimension = Number(config.dimension) || 3072;
+    const metadataStore = ctx.metadataStore;
+    const loadVector =
+      metadataStore && typeof metadataStore.getChunkById === "function"
+        ? async (chunkId: number) => {
+            const row = await metadataStore.getChunkById(chunkId);
+            return row?.vector
+              ? decodeVectorBlob(row.vector, dimension, `chunk ${chunkId}`, {
+                  logPrefix: "Memoria deduplication",
+                })
+              : null;
+          }
+        : undefined;
 
-    const deduplicator = new ResultDeduplicator(db, {
-      dimension: Number(config.dimension) || 3072,
+    const deduplicator = new ResultDeduplicator(loadVector, {
+      dimension,
       semanticThreshold: config.semanticThreshold,
       maxResults: config.dedupeMaxResults,
       // Pipeline source names mapped onto the original priority table

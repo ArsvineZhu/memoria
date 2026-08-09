@@ -11,18 +11,17 @@
  * 为霰弹枪查询、多路 BM25/Time 合并和最终输出提供统一的后处理能力。
  */
 
-import type { SearchResult, SourcePriority, UnknownRecord, Vector } from "../types.js";
+import type {
+  SearchResult,
+  SourcePriority,
+  UnknownRecord,
+  Vector,
+  VectorLike,
+} from "../types.js";
 import { at } from "../utils/numerical.js";
 
-interface StatementLike {
-  get(...params: readonly unknown[]): unknown;
-}
-
-interface DatabaseLike {
-  prepare(sql: string): StatementLike;
-}
-
 type Candidate = SearchResult & UnknownRecord;
+export type ChunkVectorLoader = (chunkId: number) => Promise<VectorLike | null>;
 
 interface DeduplicatorConfig {
   dimension: number;
@@ -46,11 +45,14 @@ interface RankedCandidate {
 }
 
 class ResultDeduplicator {
-  db?: DatabaseLike;
+  loadVector?: ChunkVectorLoader;
   config: DeduplicatorConfig;
 
-  constructor(db: DatabaseLike | undefined, config: Partial<DeduplicatorConfig> = {}) {
-    this.db = db;
+  constructor(
+    loadVector?: ChunkVectorLoader,
+    config: Partial<DeduplicatorConfig> = {},
+  ) {
+    this.loadVector = loadVector;
     this.config = {
       dimension: 3072,
       semanticThreshold: 0.92,
@@ -137,7 +139,7 @@ class ResultDeduplicator {
     }
 
     try {
-      const hydrated = this._hydrateMissingVectors(hardDeduplicated);
+      const hydrated = await this._hydrateMissingVectors(hardDeduplicated);
       const semanticThreshold = this._resolveSemanticThreshold(
         options.semanticThreshold,
       );
@@ -263,33 +265,32 @@ class ResultDeduplicator {
       .map((entry) => entry.candidate);
   }
 
-  _hydrateMissingVectors(candidates: readonly Candidate[]): Candidate[] {
-    if (!this.db || typeof this.db.prepare !== "function") return [...candidates];
+  async _hydrateMissingVectors(candidates: readonly Candidate[]): Promise<Candidate[]> {
+    if (!this.loadVector) return [...candidates];
 
-    let statement;
-    try {
-      statement = this.db.prepare("SELECT vector FROM chunks WHERE id = ? LIMIT 1");
-    } catch (error) {
-      return [...candidates];
-    }
-
-    return candidates.map((candidate: Candidate): Candidate => {
-      if (this._getCandidateVector(candidate)) return candidate;
+    const hydrated: Candidate[] = [];
+    for (const candidate of candidates) {
+      if (this._getCandidateVector(candidate)) {
+        hydrated.push(candidate);
+        continue;
+      }
 
       const chunkId = this._getChunkId(candidate);
-      if (chunkId === null) return candidate;
+      if (chunkId === null) {
+        hydrated.push(candidate);
+        continue;
+      }
 
       try {
-        const rowValue = statement.get(chunkId);
-        const row =
-          rowValue && typeof rowValue === "object" ? (rowValue as UnknownRecord) : null;
-        const vector = this._decodeStoredVector(row?.vector);
-        if (!vector) return candidate;
-        return { ...candidate, _vector: vector };
-      } catch (error) {
-        return candidate;
+        const loaded = await this.loadVector(chunkId);
+        const vector = this._toValidVector(loaded);
+        hydrated.push(vector ? { ...candidate, _vector: vector } : candidate);
+      } catch (_) {
+        // Semantic hydration is optional; sparse-only candidates remain safe.
+        hydrated.push(candidate);
       }
-    });
+    }
+    return hydrated;
   }
 
   _getExactIdentities(candidate: Candidate): string[] {
@@ -432,25 +433,6 @@ class ResultDeduplicator {
       magnitudeSquared += component * component;
     }
     return magnitudeSquared > 1e-12 ? vector : null;
-  }
-
-  _decodeStoredVector(value: unknown): Vector | null {
-    if (!value) return null;
-    if (value instanceof Float32Array) return this._toValidVector(value);
-
-    if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
-      const expectedBytes = this.config.dimension * Float32Array.BYTES_PER_ELEMENT;
-      if (value.byteLength !== expectedBytes) return null;
-      const copied = Buffer.from(value);
-      const vector = new Float32Array(
-        copied.buffer,
-        copied.byteOffset,
-        this.config.dimension,
-      );
-      return this._toValidVector(new Float32Array(vector));
-    }
-
-    return this._toValidVector(value);
   }
 
   _normalizeText(value: unknown): string {

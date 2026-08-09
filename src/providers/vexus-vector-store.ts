@@ -289,7 +289,7 @@ class VexusVectorStore extends VectorStore {
     index.remove(id);
   }
 
-  override async replaceIndex(
+  async replaceIndex(
     indexName: string,
     entries: readonly VectorIndexEntry[],
   ): Promise<void> {
@@ -317,7 +317,7 @@ class VexusVectorStore extends VectorStore {
     this.indices.set(indexName, index);
   }
 
-  override async loadIndex(indexName: string, filePath: string): Promise<VexusIndex> {
+  async loadIndex(indexName: string, filePath: string): Promise<VexusIndex> {
     const resolvedPath = filePath || this._getIndexPath(indexName);
     const VexusIndex = getVexusIndex();
     const index = VexusIndex.load(
@@ -330,7 +330,7 @@ class VexusVectorStore extends VectorStore {
     return index;
   }
 
-  override async saveIndex(indexName: string, filePath?: string): Promise<void> {
+  async saveIndex(indexName: string, filePath?: string): Promise<void> {
     const index = this.indices.get(indexName);
     if (!index) return;
     const resolvedPath = filePath || this._getIndexPath(indexName);
@@ -379,7 +379,7 @@ class VexusVectorStore extends VectorStore {
     return true;
   }
 
-  override async getIndexStats(indexName: string): Promise<VectorStoreStats> {
+  async getIndexStats(indexName: string): Promise<VectorStoreStats> {
     const index = this.indices.get(indexName);
     if (!index) {
       return { size: 0, capacity: 0, dimension: this.dimension };

@@ -1,5 +1,6 @@
 import type {
   EmbeddingProvider,
+  ExternalReranker,
   MemoryConfigOverrides,
   MemoryDocumentInput,
   MemoryDocumentSource,
@@ -11,6 +12,8 @@ import type {
   Stage,
   VectorStore,
 } from "../../dist/index.js";
+
+const reranker: ExternalReranker = async (_query, candidates) => candidates;
 
 const config: MemoryConfigOverrides = {
   dimension: 128,
@@ -133,3 +136,4 @@ void domainMetadataMethods;
 void compatibleMetadataStore;
 void compatibilityContext;
 void compatibilityConfig;
+void reranker;

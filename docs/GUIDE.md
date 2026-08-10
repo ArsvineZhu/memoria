@@ -2,7 +2,8 @@
 
 本文面向第一次使用 `memoria` 的人，按“安装 → 离线运行 → 保存文字 → 读取文件 →
 搜索和删除”的顺序说明。完整配置请看
-[CONFIGURATION.md](CONFIGURATION.md)，公开接口请看 [API.md](API.md)。
+[CONFIGURATION.md](CONFIGURATION.md)，公开接口请看 [API.md](API.md)，检索增强能力和
+诊断字段请看 [RETRIEVAL_FEATURES.md](RETRIEVAL_FEATURES.md)。
 
 ## 1. 准备环境
 
@@ -143,19 +144,20 @@ recordedAt: 2026-08-08T09:30:00-06:00
 
 ## 6. 使用真实嵌入
 
-真实嵌入不是运行离线示例的必要条件。要运行现成演示：
+真实嵌入不是运行离线示例的必要条件。要运行 50 文件真实召回演示：
 
 1. 在 `examples/real-embed/.env` 写入 `EMBED_API_KEY=...`；
-2. 运行：
+2. 运行（`--reset` 只清理固定的演示运行时目录）：
 
 ```powershell
-corepack pnpm build:test
-node dist-test/examples/real-embed/demo-recall.js
+corepack pnpm demo:real-embed -- --reset --limit 50 --top-k 5
 ```
 
-当前演示使用 DashScope 的 `qwen3.7-text-embedding` 和 1024 维向量。没有密钥时会
-输出明确提示并退出，不会把空结果当作成功。详见
-[../examples/real-embed/README.md](../examples/real-embed/README.md)。
+当前演示使用 DashScope 的 `qwen3.7-text-embedding` 和 1024 维向量，摄入
+`data/content/recall-demo/` 中正好 50 篇标准 MDX，并按 24 条 qrels 比较 baseline、
+local enhanced 和可选 external rerank。没有密钥时会在写入前输出明确提示并退出，
+不会把空结果当作成功。详见 [real-embed 示例](../examples/real-embed/README.md) 和
+[检索能力矩阵](RETRIEVAL_FEATURES.md)。
 
 ## 7. 兼容旧调用
 

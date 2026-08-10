@@ -46,6 +46,7 @@
     "lint": "oxlint src tests examples scripts --type-aware --deny-warnings",
     "build": "tsc -p tsconfig.build.json",
     "build:test": "tsc -p tsconfig.test.json",
+    "demo:real-embed": "corepack pnpm build:test && node dist-test/examples/real-embed/demo-recall.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify:docs": "node scripts/verify-docs.mjs",
     "typecheck:public": "corepack pnpm build && tsc -p tsconfig.public.json --noEmit",

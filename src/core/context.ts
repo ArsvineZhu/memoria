@@ -19,8 +19,8 @@ class PipelineContext {
   epa?: PipelineContextOptions["epa"];
   readonly riverStateStore?: PipelineContextOptions["riverStateStore"];
   readonly tagGraph?: Map<number, Map<number, number>>;
+  reranker?: PipelineContextOptions["reranker"];
   checkpointState?: { fileCount: number; diaries: Set<string> };
-  reranker?: import("../types.js").ExternalReranker;
   /**
    * @param {object} opts
    * @param {object} opts.config - RAG parameters
@@ -42,6 +42,7 @@ class PipelineContext {
     epa,
     riverStateStore,
     tagGraph,
+    reranker,
   }: PipelineContextOptions) {
     this.config = config;
     this.embeddingProvider = embeddingProvider;
@@ -51,6 +52,7 @@ class PipelineContext {
     this.epa = epa;
     this.riverStateStore = riverStateStore;
     this.tagGraph = tagGraph;
+    this.reranker = reranker;
   }
 }
 

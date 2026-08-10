@@ -15,6 +15,7 @@ SQLite 保存正文和元数据，用 Rust 原生索引加速向量检索，并�
 | 让 AI Agent 操作本仓库        | [AGENTS.md](AGENTS.md)                                                         |
 | 查公开 API 和类型             | [docs/API.md](docs/API.md)                                                     |
 | 查配置、路径、模型和 TDB 参数 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)                                 |
+| 查检索能力、开关和诊断字段    | [docs/RETRIEVAL_FEATURES.md](docs/RETRIEVAL_FEATURES.md)                       |
 | 运行测试或理解 CI             | [docs/TESTING.md](docs/TESTING.md)                                             |
 | 排查运行或打包问题            | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                             |
 | 查看版本变更                  | [CHANGELOG.md](CHANGELOG.md)                                                   |
@@ -53,7 +54,8 @@ dist/, dist-test/     编译产物，不是源码，不要手工编辑
 
 ## 数据边界
 
-文件摄入的源文件放在 `data/content/**/*.mdx`。`data/memoria/` 和
+文件摄入的源文件放在 `data/content/**/*.mdx`；真实召回演示的 canonical 语料位于
+`data/content/recall-demo/`。`data/memoria/` 和
 `data/tdb/` 下的 SQLite 文件、向量索引和旁车文件都是运行时生成内容，具体
 规则见 [data/README.md](data/README.md)。
 

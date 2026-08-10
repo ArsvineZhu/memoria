@@ -7,19 +7,19 @@
 
 ## 速查表
 
-| #   | 症状                                                                                 | 根因                                                                                                             | 解法                                                                                                                                                                                                    |
-| --- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | 保存向量索引报错，含 `os error 5`（PermissionDenied/fsync 失败）                     | Rust 侧 fsync 需要**读写句柄**；Windows 只读句柄或被杀毒/只读目录拦截                                            | 保持文件可写权限；已修：`sync_index_file` 显式 read+write 打开（lib.rs:168–177）；仍有故障给目录/文件放开写权限或换盘目录                                                                               |
-| 2   | `Dimension mismatch: expected N, got M`（add 时抛错）                                | provider 实际维度 ≠ `config.dimension`（索引创建/加载时固化维度，lib.rs:392–398）                                | 统一 `embeddingProvider.getDimension()` 与 `config.dimension`；换维度必须删除 `storePath`/`dbPath` 重灌（旧库失效，EMBEDDING.md §5）                                                                    |
-| 3   | `corepack pnpm test` 中实时集成测试输出 SKIP                                         | 仓库根 `.env` 无 `EMBED_API_KEY`；实时测试会在缺少密钥时主动跳过                                                 | 需要实时调用时，把真实 key 写入根 `.env`（`EMBED_API_KEY=sk-...`，勿提交）；无 key 时跳过是预期行为                                                                                                     |
-| 4   | 搜索空结果（历史库 `files.path` 为 `diaryX\a.md`，而引用方查 `diaryX/a.md`，命中 0） | Windows `path.relative` 产出反斜杠相对路径，旧库/外部写入未 posix 化                                             | 统一正斜杠：当前入库路径已 `relPath.split(path.sep).join('/')`（file-reader.ts:69）；存量库须把 files.path 转 `a/b.md` 形式或重灌                                                                       |
-| 5   | `better-sqlite3 is not available...` 或加载报错                                      | `corepack pnpm install --ignore-scripts` 后原生绑定缺失 / 预编译不匹配                                           | `corepack pnpm rebuild better-sqlite3`（或删除 node_modules 后运行 `corepack pnpm install`）                                                                                                            |
-| 6   | 重启后索引内容缺失（`getOrCreateIndex` 找不到 .usearch，建了空索引）                 | 之前进程未 `close()`（定时器未到）或 `storePath` 被清；懒加载只在*文件存在*时读回（vexus-vector-store.ts:56–73） | 检查 `storePath` 下 `index_*.usearch` 是否存在；优雅停机必须 `engine.close()`/`adapter.shutdown()`（flushPendingSaves）；目录被清则只能重灌                                                             |
-| 7   | `Failed to load native binding` / `Unsupported ...` 于 rust-vexus-lite               | 本平台无预编译 `.node`（当前支持矩阵见 [NATIVE-MATRIX.md](NATIVE-MATRIX.md)）                                    | 用含 Rust 工具链环境自行构建：进入 `rust-vexus-lite` 后运行 `corepack pnpm exec napi build --platform --release`；跨平台分发时携带对应 `.node` 文件                                                     |
-| 8   | 记忆召回演示（`examples/real-embed`）无输出、以 `✖ 未找到 EMBED_API_KEY` 退出        | 演示脚本读本目录 `.env`，缺 key 直接 exit 1                                                                      | 按 [示例说明](../examples/real-embed/README.md)：把 `.env` 放 `examples/real-embed/` 下（`EMBED_API_KEY=sk-...`），执行 `corepack pnpm build:test && node dist-test/examples/real-embed/demo-recall.js` |
-| 9   | 初始化停在 dirty / 报 `integrity`，但 SQLite 文档仍存在                              | 派生向量索引缺失、损坏、generation 不一致，或 legacy TDB vector backfill 失败                                    | 保留 SQLite 与 dirty 状态，修复嵌入/维度或目录权限后重试 `initialize()`；不要手动把 dirty 改为 clean                                                                                                    |
-| 10  | 无 scope 搜索只返回 Root，或 vector 与 BM25 结果范围不一致                           | 使用旧调用方默认值，或 metadata scope discovery 不可用                                                           | 显式检查 `getExpectedVectorIndexNames()` / `getDistinctDiaryNames()`；正常行为是无 scope 覆盖全部 authority，`Root` 仅为兼容回退                                                                        |
-| 11  | close 时新操作失败、已有搜索仍在运行                                                 | 引擎已进入 `closing`，正在 drain active operations                                                               | 等待同一个 `close()` Promise 完成；重复 close 安全，失败时检查 `MemoriaError("lifecycle")` 后重试                                                                                                       |
+| #   | 症状                                                                                   | 根因                                                                                                       | 解法                                                                                                                                                                                                        |
+| --- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 保存向量索引报错，含 `os error 5`（PermissionDenied/fsync 失败）                       | Rust 侧 fsync 需要**读写句柄**；Windows 只读句柄或被杀毒/只读目录拦截                                      | 保持文件可写权限；已修：`sync_index_file` 显式 read+write 打开（lib.rs:168–177）；仍有故障给目录/文件放开写权限或换盘目录                                                                                   |
+| 2   | `Dimension mismatch: expected N, got M`（add 时抛错）                                  | provider 实际维度 ≠ `config.dimension`（索引创建/加载时固化维度，lib.rs:392–398）                          | 统一 `embeddingProvider.getDimension()` 与 `config.dimension`；换维度必须删除 `storePath`/`dbPath` 重灌（旧库失效，EMBEDDING.md §5）                                                                        |
+| 3   | `corepack pnpm test` 中实时集成测试输出 SKIP                                           | 仓库根 `.env` 无 `EMBED_API_KEY`；实时测试会在缺少密钥时主动跳过                                           | 需要实时调用时，把真实 key 写入根 `.env`（`EMBED_API_KEY=sk-...`，勿提交）；无 key 时跳过是预期行为                                                                                                         |
+| 4   | 搜索空结果（历史库 `files.path` 为 `diaryX\a.md`，而引用方查 `diaryX/a.md`，命中 0）   | Windows `path.relative` 产出反斜杠相对路径，旧库/外部写入未 posix 化                                       | 统一正斜杠：当前入库路径已 `relPath.split(path.sep).join('/')`（file-reader.ts:69）；存量库须把 files.path 转 `a/b.md` 形式或重灌                                                                           |
+| 5   | `better-sqlite3 is not available...` 或加载报错                                        | `corepack pnpm install --ignore-scripts` 后原生绑定缺失 / 预编译不匹配                                     | `corepack pnpm rebuild better-sqlite3`（或删除 node_modules 后运行 `corepack pnpm install`）                                                                                                                |
+| 6   | 重启后索引内容缺失（索引未落盘或 clean restore 失败）                                  | 之前进程未 `close()`（定时器未到）、`storePath` 被清、文件损坏/维度不符，或 SQLite generation/dirty 不一致 | 检查 `storePath` 下 `index_*.usearch`；优雅停机必须 `engine.close()`/`adapter.shutdown()`；dirty 状态应按 SQLite authority reconciliation，缺少严格能力时修复 provider/store 后重试，不要用空索引标记 clean |
+| 7   | `Failed to load native binding` / `Unsupported ...` 于 rust-vexus-lite                 | 本平台无预编译 `.node`（当前支持矩阵见 [NATIVE-MATRIX.md](NATIVE-MATRIX.md)）                              | 用含 Rust 工具链环境自行构建：进入 `rust-vexus-lite` 后运行 `corepack pnpm exec napi build --platform --release`；跨平台分发时携带对应 `.node` 文件                                                         |
+| 8   | 记忆召回演示（`examples/real-embed`）在写库前退出，提示 `EMBED_API_KEY is required...` | Demo 在初始化数据库前校验本目录 `.env`/进程环境中的 embedding key；默认语料是 50 篇 MDX                    | 按 [示例说明](../examples/real-embed/README.md) 配置 `EMBED_API_KEY`，执行 `corepack pnpm demo:real-embed -- --reset --limit 50 --top-k 5`；外部重排另需显式 `--external-rerank` 和三个 `RERANK_*` 变量     |
+| 9   | 初始化停在 dirty / 报 `integrity`，但 SQLite 文档仍存在                                | 派生向量索引缺失、损坏、generation 不一致，或 legacy TDB vector backfill 失败                              | 保留 SQLite 与 dirty 状态，修复嵌入/维度或目录权限后重试 `initialize()`；不要手动把 dirty 改为 clean                                                                                                        |
+| 10  | 无 scope 搜索只返回 Root，或 vector 与 BM25 结果范围不一致                             | 使用旧调用方默认值、authority discovery 不可用，或某 stage 未使用 resolver 结果                            | 检查 `scopeSource`、`scopeWasExplicit` 和 `resolvedIndexNames`；调用参数 aliases > config > authority > `Root` fallback；显式 `[]` 是空 scope，完整语义见 [检索能力矩阵](RETRIEVAL_FEATURES.md)             |
+| 11  | close 时新操作失败、已有搜索仍在运行                                                   | 引擎已进入 `closing`，正在 drain active operations                                                         | 等待同一个 `close()` Promise 完成；重复 close 安全，失败时检查 `MemoriaError("lifecycle")` 后重试                                                                                                           |
 
 （若某条与你所在环境不符，先看对应源码行号再操作——不要凭记忆改配置。）
 
@@ -39,10 +39,10 @@
   2. 若在受限 CI/沙箱，参考 `tests/providers/test-vexus-vector-store.test.ts:
 192–201` 的做法：把原生 save 视为环境依赖，跳过 roundtrip 断言；
   3. 兜底：改 `storePath` 到可写目录后重灌。
-- **要点**：保存失败**不会**抛到调用面（JS 侧 catch 后 console.error），
-  但该次索引的磁盘态仍是旧的——重启后懒加载读到旧文件；因目标文件
-  仍在，不会触发"读回失败→建空索引"分支（判断信号：重启后向量数
-  比预期少 → 磁盘与内存不一致）。
+- **要点**：定时保存失败可能先记录日志，但磁盘态仍是旧的；生命周期
+  `flushPendingSaves()` 会再次尝试并把失败传给 `close()`，阻止 generation 被标记
+  clean。下次初始化会按 generation/dirty 和索引验证结果选择 clean restore 或
+  SQLite authority reconciliation；不能把旧索引或空索引当作已恢复。
 
 ## 2. 维度不匹配（provider dimension vs config.dimension）
 
@@ -95,17 +95,19 @@ test-ingestion-stages.test.ts:132–144` 验证 Windows 风格入参输出
   `corepack pnpm install`）。注意它与 `rust-vexus-lite`
   是两套独立原生依赖——后者缺平台二进制见第 7 条，不被本命令覆盖。
 
-## 6. 索引懒加载异常 / 找不到 `.usearch`
+## 6. 索引加载或 reconciliation 异常
 
-- **行为**：`getOrCreateIndex` 只在 **文件存在** 时 `VexusIndex.load`
-  读回（vexus-vector-store.ts:51–73）；文件损坏/加载失败则打
-  `Failed to load persisted index ... creating fresh one instead` 并
-  **静默新建空索引**——之后搜索自然 0 结果。
-- **查因**：1) 未 `close()` 就退出，`scheduleIndexSave` 定时器没到，
-  最后写入未落盘（log 里没有保存失败也能发生）；2) `storePath` 被清空；3) 换了维度（旧文件维度不符）→ 检查 `storePath` 下 `index_*.usearch`
-  是否存在及其保存时间。
-- **处理**：存在但内容旧 → 重新 `close()`/`shutdown()` 触发 flush；
-  不存在 → 无可恢复，只能重灌（或手动 `saveIndex` 先保存一次）。
+- **行为**：写入时的 `getOrCreateIndex` 只负责为当前写入取得索引；它不是
+  initialize 的 recovery authority，`search()` 也不会隐式读盘。clean initialize 会
+  验证并注册所有 expected index；dirty、generation 不一致、文件缺失/损坏或维度不符
+  时改走 SQLite authority reconciliation。
+- **查因**：1) 未 `close()` 就退出，`scheduleIndexSave` 定时器没到，最后写入未落盘；2) `storePath` 被清空或索引文件维度不符；3) SQLite 的 `vector_dirty`、
+  `metadata_generation` 和 `vector_generation` 不一致；4) 外部 vector store 缺少
+  `rebuildDerivedState()`，或缺少成对的 `resetDerivedState()` + `replaceIndex()`。
+- **处理**：先检查 `storePath` 下 `index_*.usearch` 和 SQLite generation；优雅停机
+  必须 `engine.close()`/`adapter.shutdown()` 触发 flush。缺少严格 reconciliation
+  能力时会保持 dirty 并失败，补齐 provider/store 能力后重试；不要手工把 dirty 改为
+  clean，也不要用 fallback `add` 冒充完整恢复。
 
 ## 7. Rust 预编译二进制缺平台
 
@@ -119,16 +121,18 @@ binding` 或 `Unsupported OS/architecture`（`rust-vexus-lite/index.js:299–310
   target），产物放回包内
   `vexus-lite.<platform>-<arch>.node` 即可离线 require。
 
-## 8. 记忆召回演示无输出 / 无 key 前缀提示
+## 8. 记忆召回演示无输出 / 配置缺失
 
-- **行为**：编译后的 `dist-test/examples/real-embed/demo-recall.js` 未读到本目录 `.env` 的
-  `EMBED_API_KEY` 时输出 `✖ 未找到 EMBED_API_KEY...` 并 exit 1
-  （[examples/real-embed/README.md](../examples/real-embed/README.md) 的“无 key 提示”一节）。
-- **解法**：在该目录放 `.env`（`EMBED_API_KEY=sk-...`）；注意它与第 3 条的
-  “仓库根 `.env`”是**两个文件**——测试
-  读根 `.env`，演示读自己的 `.env`。
-- 若 key 存在仍无输出，对照第 1/2 条（目录权限、维度 1024 与模型
-  `qwen3.7-text-embedding` 是否一致）。
+- **行为**：编译后的 `dist-test/examples/real-embed/demo-recall.js` 在创建数据库前
+  校验 `EMBED_API_KEY`。缺失时退出码为 1，并输出可识别的
+  `EMBED_API_KEY is required before the demo initializes its database`；不会生成半成品
+  `data/memoria/recall-demo/`。
+- **解法**：在 `examples/real-embed/.env` 放 `EMBED_API_KEY=...`，或设置进程环境变量，
+  再执行 `corepack pnpm demo:real-embed -- --reset --limit 50 --top-k 5`。注意它与第 3
+  条的“仓库根 `.env`”是两个文件——测试读根 `.env`，Demo 读自己的 `.env`。
+- 若 embedding key 存在仍失败，对照第 1/2 条（目录权限、维度 1024 与模型是否一致）；
+  使用 `--external-rerank` 时还必须配置 `RERANK_API_URL`、`RERANK_API_KEY`、
+  `RERANK_MODEL`，外部服务失败会保留 local 结果并记录 `rerankSkipped`/`rerankError`。
 
 ## 附：通用排查顺序
 

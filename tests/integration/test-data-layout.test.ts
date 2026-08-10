@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { parseMdxDocument } from "../../src/utils/mdx-document.js";
+import { RECALL_DEMO_CORPUS_PATHS } from "../../examples/real-embed/recall-cases.js";
 
 const repoRoot = process.cwd();
 const contentRoot = path.join(repoRoot, "data", "content");
@@ -24,8 +25,9 @@ test("managed data content contains the canonical MDX source inventory", () => {
     "life/coffee.mdx",
     "memory/cold-knowledge.mdx",
     "quantum/qubit.mdx",
+    ...RECALL_DEMO_CORPUS_PATHS.map((relativePath) => `recall-demo/${relativePath}`),
   ];
-  assert.deepEqual(listFiles(contentRoot).sort(), expected);
+  assert.deepEqual(listFiles(contentRoot).sort(), expected.sort());
 
   for (const relativePath of expected) {
     const source = fs.readFileSync(path.join(contentRoot, relativePath), "utf8");

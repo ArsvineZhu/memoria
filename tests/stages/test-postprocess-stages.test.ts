@@ -515,16 +515,32 @@ async function seedAssociatorStore() {
   const outsideFile = (await makeFile("outside.md", "diary3", "outside"))!;
   const vectorFile = (await makeFile("vector.md", "diary2", "vector"))!;
   const [seedChunk] = await store.insertChunks(seedFile, [
-    { chunkIndex: 0, content: "seed", vector: encodeVectorBlob(new Float32Array([1, 0, 0, 0])) },
+    {
+      chunkIndex: 0,
+      content: "seed",
+      vector: encodeVectorBlob(new Float32Array([1, 0, 0, 0])),
+    },
   ]);
   const [tagChunk] = await store.insertChunks(tagFile, [
-    { chunkIndex: 0, content: "tag match", vector: encodeVectorBlob(new Float32Array([0, 1, 0, 0])) },
+    {
+      chunkIndex: 0,
+      content: "tag match",
+      vector: encodeVectorBlob(new Float32Array([0, 1, 0, 0])),
+    },
   ]);
   const [outsideChunk] = await store.insertChunks(outsideFile, [
-    { chunkIndex: 0, content: "outside", vector: encodeVectorBlob(new Float32Array([0, 0, 1, 0])) },
+    {
+      chunkIndex: 0,
+      content: "outside",
+      vector: encodeVectorBlob(new Float32Array([0, 0, 1, 0])),
+    },
   ]);
   const [vectorChunk] = await store.insertChunks(vectorFile, [
-    { chunkIndex: 0, content: "vector match", vector: encodeVectorBlob(new Float32Array([0, 0, 0, 1])) },
+    {
+      chunkIndex: 0,
+      content: "vector match",
+      vector: encodeVectorBlob(new Float32Array([0, 0, 0, 1])),
+    },
   ]);
   const [seedTag, neighborTag] = await store.upsertTags([
     { name: "seed-tag", vector: null },
@@ -581,11 +597,10 @@ test("AssociatorStage adds scoped tag and vector neighbors with deterministic me
     ctx,
   );
 
-  assert.deepStrictEqual(out.mergedCandidates.map((candidate) => candidate.chunkId), [
-    seedChunk,
-    tagChunk,
-    vectorChunk,
-  ]);
+  assert.deepStrictEqual(
+    out.mergedCandidates.map((candidate) => candidate.chunkId),
+    [seedChunk, tagChunk, vectorChunk],
+  );
   const added = out.mergedCandidates[1];
   assert.strictEqual(added.source, "associate");
   assert.strictEqual(added.associationChannel, "tag");
@@ -632,7 +647,9 @@ test("AssociatorStage keeps vector-only candidates, excludes existing chunks, an
   );
 
   assert.strictEqual(out.mergedCandidates.length, 3);
-  assert.ok(out.mergedCandidates.some((candidate) => candidate.chunkId === vectorChunk));
+  assert.ok(
+    out.mergedCandidates.some((candidate) => candidate.chunkId === vectorChunk),
+  );
   assert.strictEqual(
     out.mergedCandidates.filter((candidate) => candidate.chunkId === seedChunk).length,
     1,
@@ -697,7 +714,7 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
   assert.strictEqual(row.diaryName, "diary1");
   assert.strictEqual(row.score, 0.77);
   assert.strictEqual(row.source, "associate");
-  assert.ok(!("associationChannel" in row));
+  assert.strictEqual(row.associationChannel, "tag");
   assert.strictEqual(row.similarity, 0.77);
   assert.ok(Number.isFinite(row.updatedAt));
   assert.deepStrictEqual(row.tags, ["重要"]);

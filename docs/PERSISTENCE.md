@@ -144,8 +144,9 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
    | 其他（diary 索引） | `indexSaveDelay` = 5000ms     | 120000ms                                |
 
    `persistTagIndex=true` 时 `global_tags` 按上述延迟持久化并在 clean restore 时加载；
-   `false` 时不保存该索引，旧 `.usearch`/旁车文件保留但被忽略，恢复阶段从 SQLite
-   authority 重建内存标签索引。
+   `false` 时不保存该索引，旧 `.usearch`/旁车文件会被失效并删除，不能在以后切回
+   `true` 时复活。clean recovery 只从 SQLite authority 读取标签向量并局部重建内存
+   `global_tags`，不会因此重新读取全部 chunks。
 
 **关闭时序**（engine.ts）：`close()` 等待 keyed mutation queue，先
 `flushPendingSaves()`，仅在 flush 成功且 vector state 完整时调用
@@ -166,11 +167,13 @@ clean，并使 `close()` 抛 `MemoriaError("lifecycle", ...)`。内置
 - `memoria.vector_dirty`
 
 当 `vector_dirty=0` 且两个 generation 相等时，走 clean fast path：从 SQLite
-一次读取 expected index names，调用 `restorePersistedIndexes()`。Vexus 会对每个
-预期名称检查 `.usearch` 文件、`.meta.json` dimension、native stats dimension，
-并调用 `VexusIndex.load()`；所有 index 成功后才把临时 Map 原子提交到
-`this.indices`。因此 clean reopen 后 search 直接使用已注册的内存 index，search
-本身不负责隐式读盘，也不会把“验证成功但 Map 为空”当作成功。
+一次读取逻辑 expected index names，调用 `restorePersistedIndexes()`。Vexus 会对可
+持久化的 diary index 检查 `.usearch` 文件、`.meta.json` dimension、native stats
+dimension，并调用 `VexusIndex.load()`；`persistTagIndex=false` 时则排除
+`global_tags`，随后从 SQLite 标签向量局部替换内存 tag index。所有恢复步骤成功后才
+把状态标记 clean；search 本身不负责隐式读盘，也不会把“验证成功但 Map 为空”当作
+成功。自定义 VectorStore 若没有 `replaceIndex()`，该局部路径安全回退到完整
+reconciliation。
 
 以下任一条件都会进入全量 rebuild：dirty、generation mismatch、预期文件缺失、
 loader 异常、metadata/native dimension 不匹配，或 `indexLoadEnabled=false`：

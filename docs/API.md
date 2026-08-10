@@ -126,7 +126,8 @@ extractTags
 `memoria/errors` 导出 `MemoriaError`、`asMemoriaError`，以及类型
 `MemoriaErrorCode` 和 `MemoriaErrorOptions`。稳定错误码为：
 `configuration`、`ingestion`、`persistence`、`embedding`、`vector_backend`、
-`integrity`、`retrieval`、`lifecycle`。
+`integrity`、`retrieval`、`lifecycle`、`concurrency`。`concurrency` 用于报告
+稳定读阶段中的写入重入等会导致等待环的调用。
 
 `MemoriaError` 的公共字段是 `code`、`retryable` 和只读 `details`；构造参数为
 `(code, message, {cause?, retryable?, details?})`。`asMemoriaError(error, code,

@@ -6,7 +6,8 @@ export type MemoriaErrorCode =
   | "vector_backend"
   | "integrity"
   | "retrieval"
-  | "lifecycle";
+  | "lifecycle"
+  | "concurrency";
 
 export interface MemoriaErrorOptions {
   cause?: unknown;

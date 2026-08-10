@@ -72,11 +72,12 @@ initialize()        ── 幂等：按需 dynamic import 并创建缺失 Provid
                        rag_params.json（可选）并应用热调参 → 读取 generation/dirty
                        状态；clean 且 persisted indexes 可验证时直接加载并注册它们，
                        dirty/stale/missing/corrupt 时 reset derived vector state 后
-                       从 SQLite authority 批量重建 → onReady 回调 → ready
+                       从 SQLite authority 批量重建；`persistTagIndex=false` 的 clean
+                       path 只局部重建内存 `global_tags` → onReady 回调 → ready
 ingest(document)    ── 逻辑内容摄入；按稳定 documentId 幂等 upsert
 ingestBatch(docs)   ── 顺序执行逻辑内容摄入
 remove(documentId)  ── 按逻辑身份删除，不依赖源文件路径
-flushBatch(files)   ── 文件快照兼容入口；Filesystem adapter 将完整快照交给它
+flushBatch(files)   ── 文件快照入口；Filesystem adapter 优先将完整快照交给它
 flush(files)        ── flushBatch 别名（兼容 KBM 调用形状）
 search(query)       ── 混合检索；query 可为字符串或 {query, options}
 handleDelete()      ── 删除单文件（行 + 块级联 + 日记索引向量清除）
@@ -102,7 +103,8 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
    `replaceIndex()` 重建并 flush。缺少完整能力时保持 dirty 并失败。
 3. **摄入时序（单文档/单文件）**：逻辑文档由引擎生成确定性内部路径并带上
    `documentId`、`revision`、source 与 metadata；文件快照由 `FilesystemIngestionAdapter`
-   在交给引擎前读取并做稳定性检查。随后按源码注册顺序执行摄入阶段，最后
+   在交给引擎前读取并做稳定性检查；target 同时提供文件与逻辑两组方法时优先
+   `flushBatch/handleDelete`，从而保留 `relPath` 与 diary 语义。随后按源码注册顺序执行摄入阶段，最后
    `CooccurrenceBuilderStage`（默认 no-op）。**双写盘次序**：内置
    `SqliteMetadataStore` 的 `MetadataWriterStage` 通过单事务
    `replaceDocumentState()` 原子替换 file/chunks/tags/file_tags，并增加 metadata
@@ -121,6 +123,9 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
 - SQLite authority commits atomically：权威文件、分块、向量 BLOB（以及主引擎的标签关系）在单事务内提交。
 - Partial embeddings never commit：嵌入批次缺项、维度错误或非有限值时，事务不会写入新的文档版本。
 - Persisted vector indexes are derived/rebuildable；权威 SQLite 内容足以重建向量索引。
+- 稳定读可以并发执行；待处理的 mutation/reconciliation 会阻止新的读进入，
+  不同 mutation identity 仍可并发。stable read 回调重新发起 mutation 时会以
+  `MemoriaError("concurrency")` 快速失败，避免等待环。
 - Persisted dirty state is separate from current in-memory completeness：磁盘 generation/dirty 标记与本次进程的向量完整性分别维护。
 - A failed vector mutation blocks normal vector search until reconciliation；失败后的搜索先完成恢复。
 - Reconciliation plans authority state before destructive reset：读取、解码和校验计划成功前，不清空当前 live index。

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +52,50 @@ test("filesystem adapter owns reading and delegates snapshots to the engine", as
   assert.equal(snapshot.path, filePath);
   assert.equal(snapshot.size, Buffer.byteLength("adapter-owned content"));
   assert.equal(await readFile(snapshot.path, "utf8"), snapshot.content);
+});
+
+test("filesystem adapter prefers file snapshots when both target contracts exist", async () => {
+  const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-dual-"));
+  const filePath = join(root, "life", "coffee.mdx");
+  await mkdir(join(root, "life"), { recursive: true });
+  await writeFile(
+    filePath,
+    "---\ntags:\n  - coffee\n---\nBody only",
+    "utf8",
+  );
+  let logicalIngests = 0;
+  let logicalDeletes = 0;
+  const fileSnapshots: FileInput[][] = [];
+  let fileDeletes = 0;
+  const target: FilesystemIngestionTarget = {
+    async ingest(): Promise<MemoryDocumentIngestResult> {
+      logicalIngests += 1;
+      throw new Error("logical contract should not be selected");
+    },
+    async remove(): Promise<MemoryDocumentDeleteResult> {
+      logicalDeletes += 1;
+      throw new Error("logical contract should not be selected");
+    },
+    async flushBatch(files): Promise<IngestEnvelope[]> {
+      fileSnapshots.push([...files]);
+      return [];
+    },
+    async handleDelete(input): Promise<DeleteEnvelope> {
+      fileDeletes += 1;
+      return { path: input.path, deleted: true, removedChunkIds: [] };
+    },
+  };
+  const adapter = new FilesystemIngestionAdapter(target, { rootPath: root });
+
+  await adapter.ingestFile(filePath);
+  await adapter.removeFile(filePath);
+
+  assert.equal(logicalIngests, 0);
+  assert.equal(logicalDeletes, 0);
+  assert.equal(fileSnapshots.length, 1);
+  assert.equal(fileSnapshots[0]?.[0]?.content, "Body only");
+  assert.deepEqual(fileSnapshots[0]?.[0]?.documentMetadata, { tags: ["coffee"] });
+  assert.equal(fileDeletes, 1);
 });
 
 test("filesystem adapter maps files to the logical ingestion contract", async () => {
@@ -197,6 +242,33 @@ test("filesystem adapter scans accepted files and maps deletes", async () => {
   await adapter.removeFile(join(root, "nested", "two.md"));
   assert.equal(target.deleted.length, 1);
   assert.equal(target.deleted[0]?.relPath, "nested/two.md");
+});
+
+test("filesystem adapter rejects symlink or junction paths outside its root", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-containment-"));
+  const outside = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-outside-"));
+  const linked = join(root, "linked");
+  await writeFile(join(outside, "secret.md"), "outside", "utf8");
+  try {
+    fs.symlinkSync(outside, linked, "junction");
+  } catch (error) {
+    t.skip(
+      `junction creation unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+
+  const adapter = new FilesystemIngestionAdapter(makeTarget(), { rootPath: root });
+  await assert.rejects(
+    () => adapter.ingestFile(join(linked, "secret.md")),
+    (error: unknown) =>
+      error instanceof Error && /outside|root/i.test(error.message),
+  );
+  await assert.rejects(
+    () => adapter.ingestFile(join(linked, "new.md")),
+    (error: unknown) =>
+      error instanceof Error && /outside|root/i.test(error.message),
+  );
 });
 
 test("filesystem adapter closes its watcher without leaking lifecycle state", async () => {

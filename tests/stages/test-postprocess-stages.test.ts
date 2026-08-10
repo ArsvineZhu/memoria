@@ -15,6 +15,7 @@ import TruncatorStage from "../../src/stages/postprocess/truncator.js";
 import ExpanderStage from "../../src/stages/postprocess/expander.js";
 import AssociatorStage from "../../src/stages/postprocess/associator.js";
 import ResultFormatterStage from "../../src/stages/output/result-formatter.js";
+import { MemoriaError } from "../../src/errors.js";
 import type { ChunkCandidate, VectorStoreContract } from "../../src/types.js";
 import { encodeVectorBlob } from "../../src/utils/vector-codec.js";
 
@@ -292,6 +293,32 @@ test("ExternalRerankerStage passes through when gated off", async () => {
   );
   assert.strictEqual(called, false);
   assert.strictEqual(out.mergedCandidates.length, 1);
+});
+
+test("ExternalRerankerStage propagates stable-read reentrancy errors", async () => {
+  const stage = new ExternalRerankerStage();
+  const ctx = new PipelineContext({
+    config: {
+      externalRerankEnabled: true,
+      reranker: async () => {
+        throw new MemoriaError("concurrency", "mutation reentered stable read", {
+          details: { reason: "stable_read_reentrancy" },
+        });
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      stage.process(
+        { query: "q", mergedCandidates: [{ chunkId: 1, score: 0.5 }] },
+        ctx,
+      ),
+    (error: unknown) =>
+      error instanceof MemoriaError &&
+      error.code === "concurrency" &&
+      error.details.reason === "stable_read_reentrancy",
+  );
 });
 
 // ── TimeDecayStage ──────────────────────────────────────────────────────

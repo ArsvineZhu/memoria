@@ -463,6 +463,77 @@ test("TDBEngine routes search through an injected TriviumDBAdapter", async (t) =
   await engine.close();
 });
 
+test("TDBEngine upsertFile serializes by effective destination identity", async (t) => {
+  const dir = makeTempDir(t, "memoria-tdb-destination-lock-");
+  const rootPath = path.join(dir, "knowledge");
+  fs.mkdirSync(path.join(rootPath, "source-a"), { recursive: true });
+  fs.mkdirSync(path.join(rootPath, "source-b"), { recursive: true });
+  const sourceA = path.join(rootPath, "source-a", "a.md");
+  const sourceB = path.join(rootPath, "source-b", "b.md");
+  fs.writeFileSync(sourceA, FACT_ALPHA, "utf8");
+  fs.writeFileSync(sourceB, FACT_BETA, "utf8");
+
+  const engine = new TDBEngine({
+    config: baseConfig({ tdbRootPath: rootPath }),
+    embeddingProvider: fakeEmbeddingProvider,
+    vectorStore: newVectorStore(),
+  });
+  await engine.initialize();
+  const keys: string[] = [];
+  const internals = engine as unknown as {
+    _runSerializedMutation: (
+      library: string,
+      relPath: string,
+      operation: () => Promise<unknown>,
+    ) => Promise<unknown>;
+  };
+  const original = internals._runSerializedMutation.bind(engine);
+  internals._runSerializedMutation = (library, relPath, operation) => {
+    keys.push(`${library}:${relPath}`);
+    return original(library, relPath, operation);
+  };
+
+  await Promise.all([
+    engine.upsertFile(sourceA, { library: "facts", path: "shared.md" }),
+    engine.upsertFile(sourceB, { library: "facts", path: "shared.md" }),
+  ]);
+
+  assert.deepEqual(keys, ["facts:shared.md", "facts:shared.md"]);
+  await engine.close();
+});
+
+test("TDB Trivium preserves an explicitly empty library scope", async (t) => {
+  const triviumVector = newVectorStore();
+  const trivium = new TriviumDBAdapter({
+    vectorStore: triviumVector,
+    indexName: "facts",
+    dimension: DIM,
+  });
+  const withTrivium = new TDBEngine({
+    config: baseConfig(),
+    embeddingProvider: fakeEmbeddingProvider,
+    vectorStore: triviumVector,
+    trivium,
+  });
+  await withTrivium.initialize();
+  await withTrivium.upsertText(FACT_ALPHA, { path: "facts/a.md", library: "facts" });
+
+  const triviumEmpty = await withTrivium.search("alpha", { libraries: [] });
+  assert.deepEqual(triviumEmpty.results, []);
+  await withTrivium.close();
+
+  const ordinary = new TDBEngine({
+    config: baseConfig(),
+    embeddingProvider: fakeEmbeddingProvider,
+    vectorStore: newVectorStore(),
+  });
+  await ordinary.initialize();
+  await ordinary.upsertText(FACT_ALPHA, { path: "facts/a.md", library: "facts" });
+  const ordinaryEmpty = await ordinary.search("alpha", { libraries: [] });
+  assert.deepEqual(ordinaryEmpty.results, []);
+  await ordinary.close();
+});
+
 test("TDBEngine persists facts across reopen (same store + disk vector indices)", async (t) => {
   const dir = makeTempDir(t);
   const config = baseConfig({

@@ -54,7 +54,7 @@ SQLite 路径。
 | `tagIndexCapacity`  |                         `50000` | 标签索引初始容量                                                                                    |
 | `indexSaveDelay`    |                        `120000` | 主索引延迟保存时间，单位毫秒                                                                        |
 | `tagIndexSaveDelay` |                        `300000` | 标签索引延迟保存时间，单位毫秒                                                                      |
-| `persistTagIndex`   |                         `false` | `true` 保存并恢复 `global_tags`；`false` 不写入该索引，恢复时从 SQLite authority 重建，并保留旧文件 |
+| `persistTagIndex`   |                         `false` | `true` 保存并恢复 `global_tags`；`false` 不落盘，clean recovery 从 SQLite authority 局部重建内存索引并删除旧文件 |
 | `indexLoadEnabled`  |                            可选 | 兼容配置；`DEFAULT_CONFIG` 未提供默认值                                                             |
 
 Provider 的 `getDimension()` 必须等于 `config.dimension`。更换模型或维度后旧向量

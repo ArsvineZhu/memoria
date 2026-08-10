@@ -483,6 +483,32 @@ test("TagExpanderStage returns no candidates for an explicit empty scope", async
   assert.deepEqual(out.tagExpansion?.added, []);
 });
 
+test("TagExpanderStage propagates tag vector backend failures", async () => {
+  const { metaStore, vectorStore, c1 } = await seedExpansionStore();
+  vectorStore.search = async () => {
+    throw new Error("tag index unavailable");
+  };
+
+  await assert.rejects(
+    () =>
+      new TagExpanderStage().process(
+        {
+          mergedCandidates: [{ chunkId: c1, score: 0.8 }],
+        },
+        new PipelineContext({
+          config: { tagExpansionEnabled: true },
+          vectorStore,
+          metadataStore: metaStore,
+        }),
+      ),
+    (error: unknown) =>
+      error instanceof MemoriaError &&
+      error.code === "vector_backend" &&
+      error.cause instanceof Error &&
+      error.cause.message === "tag index unavailable",
+  );
+});
+
 test("AssociatorStage returns no candidates for an explicit empty scope", async () => {
   const { metaStore, vectorStore, c1 } = await seedExpansionStore();
   const out = await new AssociatorStage().process(

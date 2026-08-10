@@ -14,6 +14,7 @@ import { at } from "../utils/numerical.js";
 import { asMemoriaError, MemoriaError } from "../errors.js";
 import { encodeVectorBlob, decodeVectorBlob } from "../utils/vector-codec.js";
 import { requireCompleteEmbeddingBatch } from "../utils/embedding-validation.js";
+import { isRealPathContained } from "../utils/path-containment.js";
 import type {
   EmbeddingProviderContract,
   MemoryConfig,
@@ -54,27 +55,7 @@ function safeLibraryName(name: unknown): string {
 }
 
 function assertRealPathContained(rootPath: string, targetPath: string): void {
-  if (!fs.existsSync(rootPath)) return;
-
-  const realRoot = fs.realpathSync.native(rootPath);
-  let probe = targetPath;
-  const missingSuffix: string[] = [];
-  while (!fs.existsSync(probe)) {
-    const parent = path.dirname(probe);
-    if (parent === probe) return;
-    missingSuffix.unshift(path.basename(probe));
-    probe = parent;
-  }
-
-  const realProbe = fs.realpathSync.native(probe);
-  const realTarget = path.resolve(realProbe, ...missingSuffix);
-  const realRelative = path.relative(realRoot, realTarget);
-  if (
-    !realRelative ||
-    realRelative === ".." ||
-    realRelative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(realRelative)
-  ) {
+  if (!isRealPathContained(rootPath, targetPath)) {
     throw new MemoriaError(
       "persistence",
       `TDB path resolves outside the configured root: ${targetPath}`,
@@ -719,9 +700,13 @@ class TDBEngine {
         retryable: true,
       });
     }
+    const destinationPath = String(options.path || resolved.relPath);
+    const destinationLibrary = safeLibraryName(
+      options.library || resolved.library,
+    );
     return this._upsertTextInternal(content, {
-      path: options.path || resolved.relPath,
-      library: options.library || resolved.library,
+      path: destinationPath,
+      library: destinationLibrary,
       title: options.title || path.basename(absPath),
       mtime: options.mtime != null ? options.mtime : stats.mtimeMs,
       size: options.size != null ? options.size : stats.size,
@@ -739,8 +724,16 @@ class TDBEngine {
       async () => {
         const absPath = path.resolve(filePath);
         const resolved = resolveLibrary(this.config.tdbRootPath, absPath);
-        return this._runSerializedMutation(resolved.library, resolved.relPath, () =>
-          this._upsertFileInternal(filePath, options),
+        const destinationPath = String(options.path || resolved.relPath);
+        const destinationLibrary = safeLibraryName(
+          options.library || resolved.library,
+        );
+        return this._runSerializedMutation(destinationLibrary, destinationPath, () =>
+          this._upsertFileInternal(filePath, {
+            ...options,
+            path: destinationPath,
+            library: destinationLibrary,
+          }),
         );
       },
     );
@@ -929,10 +922,9 @@ class TDBEngine {
     const hybridAlpha = Number.isFinite(Number(options.hybridAlpha))
       ? Number(options.hybridAlpha)
       : Number(this.config.tdbHybridAlpha) || 0.7;
-    const libraries =
-      Array.isArray(options.libraries) && options.libraries.length > 0
-        ? options.libraries.map(safeLibraryName)
-        : await this._expectedLibraries();
+    const libraries = Array.isArray(options.libraries)
+      ? options.libraries.map(safeLibraryName)
+      : await this._expectedLibraries();
     const results: TdbSearchResult[] = [];
     for (const library of libraries) {
       let hits: TriviumSearchHit[] | null = null;

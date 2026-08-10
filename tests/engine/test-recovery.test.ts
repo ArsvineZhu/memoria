@@ -21,7 +21,9 @@ const DIMENSION = 8;
 type CountingVectorStore = VectorStoreContract & {
   indices: Map<string, unknown>;
   replaceCalls: number;
+  replaceNames: string[];
   restoreCalls: number;
+  restoreNames: string[][];
   flushCalls: number;
   validationResult: boolean;
   flushError?: Error;
@@ -36,7 +38,9 @@ function countingVectorStore(
     dimension: DIMENSION,
     indices: new Map(),
     replaceCalls: 0,
+    replaceNames: [],
     restoreCalls: 0,
+    restoreNames: [],
     flushCalls: 0,
     validationResult: options.validationResult ?? true,
     flushError: options.flushError,
@@ -56,6 +60,7 @@ function countingVectorStore(
     },
     async replaceIndex(indexName, entries) {
       store.replaceCalls += 1;
+      store.replaceNames.push(indexName);
       store.indices.set(indexName, new Set(entries.map((entry) => entry.id)));
     },
     resetDerivedState() {
@@ -68,8 +73,9 @@ function countingVectorStore(
         dimension: DIMENSION,
       };
     },
-    async restorePersistedIndexes() {
+    async restorePersistedIndexes(indexNames) {
       store.restoreCalls += 1;
+      store.restoreNames.push([...indexNames]);
       return store.validationResult;
     },
     flushPendingSaves() {
@@ -234,6 +240,87 @@ test("clean close and reopen restores persisted indexes without rebuilding", asy
   assert.equal(secondVector.restoreCalls, 1);
   assert.equal(secondVector.replaceCalls, 0);
   assert.deepEqual(second.lastReconciliation?.rebuiltIndexes, []);
+  await second.close();
+});
+
+test("clean recovery locally rebuilds non-persisted tags without full chunk reconciliation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-recovery-tags-clean-"));
+  const dbPath = join(root, "memory.sqlite");
+  const firstVector = countingVectorStore();
+  const first = createMemoryEngine({
+    dbPath,
+    config: { dimension: DIMENSION, storePath: root, persistTagIndex: false },
+    embeddingProvider: embeddingProvider(),
+    vectorStore: firstVector,
+  });
+  await first.initialize();
+  await first.ingest({
+    id: "clean:tagged",
+    content: "persisted vector with a tag",
+    metadata: { tags: ["coffee"] },
+  });
+  const tag = (await first.metadataStore.getAllTags())[0];
+  assert.ok(tag);
+  await first.close();
+
+  const secondVector = countingVectorStore({ validationResult: true });
+  const second = createMemoryEngine({
+    dbPath,
+    config: { dimension: DIMENSION, storePath: root, persistTagIndex: false },
+    embeddingProvider: embeddingProvider(),
+    vectorStore: secondVector,
+  });
+  await second.initialize();
+
+  assert.equal(secondVector.restoreCalls, 1);
+  assert.equal(secondVector.restoreNames[0]?.includes("global_tags"), false);
+  assert.deepEqual(secondVector.replaceNames, ["global_tags"]);
+  assert.deepEqual(
+    [...(secondVector.indices.get("global_tags") as Set<number>)],
+    [tag.id],
+  );
+  assert.deepEqual(second.lastReconciliation?.rebuiltIndexes, []);
+  await second.close();
+});
+
+test("clean tag recovery falls back to the vector store reconciliation capability", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-recovery-tags-fallback-"));
+  const dbPath = join(root, "memory.sqlite");
+  const first = createMemoryEngine({
+    dbPath,
+    config: { dimension: DIMENSION, storePath: root, persistTagIndex: false },
+    embeddingProvider: embeddingProvider(),
+    vectorStore: countingVectorStore(),
+  });
+  await first.initialize();
+  await first.ingest({
+    id: "fallback:tagged",
+    content: "fallback content",
+    metadata: { tags: ["fallback"] },
+  });
+  await first.close();
+
+  const fallback = countingVectorStore({ validationResult: true });
+  delete (fallback as unknown as { replaceIndex?: unknown }).replaceIndex;
+  let rebuildCalls = 0;
+  fallback.rebuildDerivedState = async (plan) => {
+    rebuildCalls += 1;
+    for (const indexName of plan.expectedIndexNames) {
+      fallback.indices.set(
+        indexName,
+        new Set((plan.indexEntries.get(indexName) ?? []).map((entry) => entry.id)),
+      );
+    }
+  };
+  const second = createMemoryEngine({
+    dbPath,
+    config: { dimension: DIMENSION, storePath: root, persistTagIndex: false },
+    embeddingProvider: embeddingProvider(),
+    vectorStore: fallback,
+  });
+  await second.initialize();
+  assert.equal(rebuildCalls, 1);
+  assert.ok(fallback.replaceCalls === 0);
   await second.close();
 });
 

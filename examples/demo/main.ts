@@ -5,10 +5,10 @@
  *
  * 章节：
  *   1. 初始化   —— createMemoryEngine + 注入 Fake 嵌入 Provider
- *   2. 摄入     —— 写 3 篇演示日记 → flushBatch → getStats
+ *   2. 摄入     —— 文件适配器扫描 3 篇演示日记 → getStats
  *   3. 基础检索 —— 混合检索（向量 + BM25）展示格式化结果
  *   4. 高级检索 —— TagMemo 浪潮 + EPA 投影 + 残差金字塔 痕迹
- *   5. 删除     —— handleDelete → 再查询确认消失
+ *   5. 删除     —— 文件适配器 removeFile → 再查询确认消失
  *   6. 收尾     —— close() 关闭引擎
  *
  * 运行：node main.js   （零依赖、零网络、结果可复现）
@@ -19,6 +19,7 @@ import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { createMemoryEngine } from "../../src/index.js";
+import FilesystemIngestionAdapter from "../../src/adapters/filesystem-ingestion-adapter.js";
 import { FakeEmbeddingProvider } from "./fake-embedding.js";
 import type { MemoryEngine } from "../../src/engine.js";
 import type { SearchEnvelope } from "../../src/types.js";
@@ -78,7 +79,12 @@ const NOTES = ["quantum/qubit.mdx", "memory/cold-knowledge.mdx", "life/coffee.md
 
 /* ---------------- 引擎初始化 ---------------- */
 
-async function initEngine() {
+interface DemoRuntime {
+  engine: MemoryEngine;
+  filesystem: FilesystemIngestionAdapter;
+}
+
+async function initEngine(): Promise<DemoRuntime> {
   fs.mkdirSync(NOTES_DIR, { recursive: true });
   fs.mkdirSync(DEMO_INDEX_DIR, { recursive: true });
 
@@ -100,7 +106,13 @@ async function initEngine() {
   });
 
   await engine.initialize();
-  return engine;
+  return {
+    engine,
+    filesystem: new FilesystemIngestionAdapter(engine, {
+      rootPath: NOTES_DIR,
+      extensions: [".mdx"],
+    }),
+  };
 }
 
 /* ---------------- 章节 ---------------- */
@@ -115,16 +127,17 @@ async function chapter1(engine: MemoryEngine): Promise<void> {
   done("初始化完成，引擎就绪");
 }
 
-async function chapter2(engine: MemoryEngine): Promise<void> {
+async function chapter2(
+  engine: MemoryEngine,
+  filesystem: FilesystemIngestionAdapter,
+): Promise<void> {
   for (const note of NOTES) {
     const abs = path.join(NOTES_DIR, note);
     const stat = fs.statSync(abs);
     info(`读取 ${note} (${stat.size} 字节)`);
   }
 
-  const envelopes = await engine.flushBatch(
-    NOTES.map((note) => ({ path: path.join(NOTES_DIR, note) })),
-  );
+  const envelopes = await filesystem.scan();
   const stats = await engine.getStats();
   const errors = envelopes
     .filter((e) => typeof e.error === "string")
@@ -223,10 +236,13 @@ async function chapter4(engine: MemoryEngine): Promise<void> {
   }
 }
 
-async function chapter5(engine: MemoryEngine): Promise<void> {
+async function chapter5(
+  engine: MemoryEngine,
+  filesystem: FilesystemIngestionAdapter,
+): Promise<void> {
   console.log("");
   const target = path.join(NOTES_DIR, "life/coffee.mdx");
-  await engine.handleDelete({ path: target });
+  await filesystem.removeFile(target);
   const stats = await engine.getStats();
   info(
     `删除 ${path.basename(target)} → 文件 ${stats.files}｜块 ${stats.chunks}｜标签 ${stats.tags}`,
@@ -243,7 +259,10 @@ async function chapter5(engine: MemoryEngine): Promise<void> {
   }
 }
 
-async function chapter6(engine: MemoryEngine): Promise<void> {
+async function chapter6(
+  engine: MemoryEngine,
+  filesystem: FilesystemIngestionAdapter,
+): Promise<void> {
   // Windows 沙盒下 Rust 索引延迟落盘可能被拒（已知环境限制），
   // 捕获后汇总为一条提示，避免刷屏红色错误。
   const rawError = console.error;
@@ -254,6 +273,7 @@ async function chapter6(engine: MemoryEngine): Promise<void> {
     else rawError(msg);
   };
   try {
+    await filesystem.close();
     await engine.close();
   } finally {
     console.error = rawError;
@@ -273,27 +293,32 @@ async function main() {
     `${C.bold}${C.cyan}memoria 命令行演示 · 最小用例${C.reset} ${C.dim}(离线确定性嵌入, d=${DIM})${C.reset}`,
   );
 
-  const engine = await initEngine();
+  let runtime: DemoRuntime | null = null;
   try {
+    runtime = await initEngine();
+    const { engine, filesystem } = runtime;
     chapter("初始化");
     await chapter1(engine);
     chapter("摄入 3 篇演示日记");
-    await chapter2(engine);
+    await chapter2(engine, filesystem);
     chapter("基础检索（向量 + BM25 混合）");
     await chapter3(engine);
     chapter("高级检索（TagMemo 浪潮 / EPA / 残差金字塔）");
     await chapter4(engine);
     chapter("删除");
-    await chapter5(engine);
+    await chapter5(engine, filesystem);
     chapter("收尾");
-    await chapter6(engine);
+    await chapter6(engine, filesystem);
     console.log(`\n${C.green}${C.bold}演示完成，全部章节通过。${C.reset}`);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.stack || err.message : String(err);
     console.error(`\n${C.red}演示失败: ${message}${C.reset}`);
     process.exitCode = 1;
   } finally {
-    if (engine && !engine._closed) await engine.close().catch(() => {});
+    if (runtime) {
+      await runtime.filesystem.close().catch(() => {});
+      if (!runtime.engine._closed) await runtime.engine.close().catch(() => {});
+    }
   }
 }
 

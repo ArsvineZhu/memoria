@@ -223,7 +223,7 @@ test("saveIndex and loadIndex roundtrip", async () => {
   }
 });
 
-test("persistTagIndex controls global tag persistence and preserves old files when disabled", async () => {
+test("persistTagIndex invalidates old global tag files when disabled", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-tag-persist-off-"));
   try {
     const source = new VexusVectorStore({
@@ -248,15 +248,12 @@ test("persistTagIndex controls global tag persistence and preserves old files wh
         disabled as unknown as {
           restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
         }
-      ).restorePersistedIndexes(["global_tags"]),
-      false,
+      ).restorePersistedIndexes([]),
+      true,
     );
     assert.equal(disabled.indices.has("global_tags"), false);
-    assert.equal(
-      fs.existsSync(tagPath),
-      true,
-      "old tag files are ignored, not deleted",
-    );
+    assert.equal(fs.existsSync(tagPath), false);
+    assert.equal(fs.existsSync(`${tagPath}.meta.json`), false);
 
     const before = fs.readdirSync(tmpDir).sort();
     await disabled.add("global_tags", 8, vec(0, 1, 0, 0));

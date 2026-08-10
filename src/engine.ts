@@ -32,6 +32,7 @@ import { asMemoriaError, MemoriaError } from "./errors.js";
 import { logicalDocumentPath, normalizeDocumentId } from "./utils/logical-document.js";
 import {
   applyVectorReconciliationPlan,
+  buildTagVectorIndexEntries,
   buildVectorReconciliationPlan,
 } from "./reconciliation.js";
 
@@ -393,9 +394,26 @@ class MemoryEngine {
         typeof this.metadataStore.getExpectedVectorIndexNames === "function"
           ? await this.metadataStore.getExpectedVectorIndexNames()
           : [...(this.vectorStore.indices?.keys() ?? [])];
+      const hasNonPersistedTagIndex =
+        this.config.persistTagIndex === false &&
+        expectedIndexNames.includes("global_tags");
+      const persistedIndexNames = hasNonPersistedTagIndex
+        ? expectedIndexNames.filter((name) => name !== "global_tags")
+        : expectedIndexNames;
       let valid = false;
       try {
-        valid = await this.vectorStore.restorePersistedIndexes(expectedIndexNames);
+        valid = await this.vectorStore.restorePersistedIndexes(persistedIndexNames);
+        if (valid && hasNonPersistedTagIndex) {
+          if (typeof this.vectorStore.replaceIndex !== "function") {
+            valid = false;
+          } else {
+            const tagEntries = await buildTagVectorIndexEntries(
+              this.metadataStore,
+              this.config.dimension,
+            );
+            await this.vectorStore.replaceIndex("global_tags", tagEntries);
+          }
+        }
       } catch (_) {
         valid = false;
       }
@@ -558,6 +576,17 @@ class MemoryEngine {
     return `file:${normalizeMutationPath(identity)}`;
   }
 
+  private _canonicalMutationKey(input: {
+    path: string;
+    relPath?: string;
+    documentId?: string;
+  }): string {
+    if (input.documentId !== undefined) {
+      return `document:${normalizeDocumentId(input.documentId)}`;
+    }
+    return this._fileMutationKey(input.path, input.relPath);
+  }
+
   /** Rebuild derived vector indices from the metadata/content authority. */
   reconcile(): Promise<ReconciliationReport> {
     return this._runReadyOperation("reconcile", async () => {
@@ -641,7 +670,7 @@ class MemoryEngine {
       const results: IngestEnvelope[] = [];
       for (const entry of entries) {
         const result = await this._runSerializedMutation(
-          this._fileMutationKey(entry.path, entry.relPath),
+          this._canonicalMutationKey(entry),
           async () => {
             return this.ingestPipeline.run(
               {
@@ -858,7 +887,7 @@ class MemoryEngine {
     try {
       const source: FileInput = typeof input === "string" ? { path: input } : input;
       return (await this._runSerializedMutation(
-        this._fileMutationKey(source.path, source.relPath),
+        this._canonicalMutationKey(source),
         async () => {
           return (await this.deletePipeline.run(
             {

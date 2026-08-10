@@ -103,7 +103,7 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 | 组件                                 | 文件                                 | 要点                                                                                                                                                                                                               |
 | ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SqliteMetadataStore`                | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async                                                                                      |
-| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex=false` 忽略旧 `global_tags` 文件并从 authority 重建                |
+| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex=false` 失效旧 `global_tags` 文件并从 authority 局部重建 |
 | `VectorStore` / `MetadataStore` 接口 | `interfaces/`                        | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；恢复要求 `rebuildDerivedState(plan)`，或同时提供 `resetDerivedState + replaceIndex`；SQLite 标签-only 更新使用可选 `replaceDocumentTags` |
 
 验证视角：`tests/providers/test-sqlite-metadata-store.test.ts`、
@@ -181,8 +181,8 @@ tagMemoActivation, expansionSignal}`（逐层残差正交投影 + 能量解释�
   空文本 → `[EMPTY_CONTENT]`。
 - **标签向量**：`TagEmbedderStage` 嵌入后由 `VectorIndexerStage` 写入
   `global_tags` 共享索引（容量 `tagIndexCapacity`=50000）。`persistTagIndex=true`
-  才会按 `tagIndexSaveDelay` 持久化并恢复；`false` 不保存该索引，恢复时从 authority
-  重建内存索引但保留旧文件。
+  才会按 `tagIndexSaveDelay` 持久化并恢复；`false` 不保存该索引，clean recovery
+  从 authority 局部重建内存索引并删除旧文件。
 - **标签召回**：`tagSearchEnabled` 开启时，`VectorSearcherStage` 在标签索引
   取前 `tagK`（默认 10）个标签，经 `getFileIdsByTagId` → `getChunksByFileId`
   展开为候选块（打分继承标签命中分）。

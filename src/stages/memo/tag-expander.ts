@@ -144,14 +144,12 @@ class TagExpanderStage extends Stage {
     try {
       hits = await vectorStore.search(tagIndexName, expansionVector, topK);
     } catch (e) {
-      console.warn(
-        `[TagExpander] tag index search failed for "${tagIndexName}": ${e instanceof Error ? e.message : String(e)}`,
+      throw asMemoriaError(
+        e,
+        "vector_backend",
+        `TagExpander tag index search failed for "${tagIndexName}".`,
+        { retryable: true },
       );
-      return {
-        ...info,
-        mergedCandidates,
-        tagExpansion: { added: [], boosted: [] },
-      };
     }
 
     const rawBoost = Number(config.tagExpansionBoost);

@@ -173,6 +173,17 @@ class VexusVectorStore extends VectorStore {
     return `${indexPath}.meta.json`;
   }
 
+  private _invalidatePersistedIndex(indexName: string): void {
+    const indexPath = this._getIndexPath(indexName);
+    for (const filePath of [indexPath, this._getIndexMetadataPath(indexPath)]) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  }
+
   _writeIndexMetadata(indexPath: string): void {
     fs.writeFileSync(
       this._getIndexMetadataPath(indexPath),
@@ -346,12 +357,13 @@ class VexusVectorStore extends VectorStore {
   }
 
   async restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean> {
-    if (!this.indexLoadEnabled) return false;
     const VexusIndex = getVexusIndex();
     const requestedNames = [...indexNames];
-    const requiresTagRebuild =
+    const nonPersistedTagRequested =
       !this.persistTagIndex && requestedNames.includes("global_tags");
-    const namesToLoad = requiresTagRebuild
+    if (!this.persistTagIndex) this._invalidatePersistedIndex("global_tags");
+    if (!this.indexLoadEnabled) return false;
+    const namesToLoad = nonPersistedTagRequested
       ? requestedNames.filter((name) => name !== "global_tags")
       : requestedNames;
     const loadedIndexes = new Map<string, VexusIndex>();
@@ -386,7 +398,7 @@ class VexusVectorStore extends VectorStore {
     for (const [indexName, index] of loadedIndexes) {
       this.indices.set(indexName, index);
     }
-    return !requiresTagRebuild;
+    return true;
   }
 
   async getIndexStats(indexName: string): Promise<VectorStoreStats> {
@@ -427,15 +439,6 @@ class VexusVectorStore extends VectorStore {
     for (const entry of fs.readdirSync(this.storePath, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
       if (!/^index_[0-9a-f]{32}\.usearch(?:\.meta\.json)?$/.test(entry.name)) {
-        continue;
-      }
-      if (
-        !this.persistTagIndex &&
-        (path.resolve(this.storePath, entry.name) ===
-          path.resolve(this._getIndexPath("global_tags")) ||
-          path.resolve(this.storePath, entry.name) ===
-            path.resolve(this._getIndexMetadataPath(this._getIndexPath("global_tags"))))
-      ) {
         continue;
       }
       fs.unlinkSync(path.join(this.storePath, entry.name));

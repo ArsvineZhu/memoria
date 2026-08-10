@@ -3,10 +3,10 @@
 这是 memoria 的离线章节演示，共 6 个章节，覆盖记忆库的完整生命周期：
 
 1. **初始化** —— `createMemoryEngine` + 注入 Fake 嵌入 Provider
-2. **摄入** —— 读取 3 篇 MDX 演示日记 → `flushBatch` → `getStats`
+2. **摄入** —— `FilesystemIngestionAdapter.scan()` 读取 3 篇 MDX 演示日记 → `getStats`
 3. **基础检索** —— 混合检索（向量 + BM25）展示格式化结果
 4. **高级检索** —— TagMemo 浪潮 + EPA 投影 + 残差金字塔痕迹
-5. **删除** —— `handleDelete` → 再查询确认消失
+5. **删除** —— `FilesystemIngestionAdapter.removeFile()` → 再查询确认消失
 6. **收尾** —— `close()` 关闭引擎
 
 ## 运行

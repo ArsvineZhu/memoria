@@ -270,3 +270,70 @@ test("absolute and relative file mutations share one canonical queue key", async
     await engine.close();
   }
 });
+
+test("logical and file mutations with one documentId share a canonical queue key", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-mutation-document-file-"));
+  const engine = createMemoryEngine({
+    dbPath: ":memory:",
+    config: {
+      dimension: DIMENSION,
+      rootPath: root,
+      storePath: join(root, "indices"),
+    },
+    embeddingProvider: embeddingProvider(),
+  });
+  await engine.initialize();
+
+  const events: string[] = [];
+  let markFlushStarted!: () => void;
+  let releaseFlush!: () => void;
+  const flushStarted = new Promise<void>((resolve) => {
+    markFlushStarted = resolve;
+  });
+  const flushRelease = new Promise<void>((resolve) => {
+    releaseFlush = resolve;
+  });
+
+  engine.ingestPipeline.run = async (input) => {
+    const label = String(input.path).includes("__logical__") ? "logical" : "file";
+    events.push(`${label}-start`);
+    if (label === "file") {
+      markFlushStarted();
+      await flushRelease;
+    }
+    events.push(`${label}-finish`);
+    return ingestResult(input);
+  };
+
+  const filePath = join(root, "foo.md");
+  try {
+    const fileMutation = engine.flushBatch({
+      path: filePath,
+      relPath: "foo.md",
+      documentId: "shared:authority",
+      content: "file state",
+      mtime: 0,
+      size: 10,
+    });
+    await flushStarted;
+
+    const logicalMutation = engine.ingest({
+      id: "shared:authority",
+      content: "logical state",
+    });
+    await Promise.resolve();
+    assert.deepEqual(events, ["file-start"]);
+
+    releaseFlush();
+    await Promise.all([fileMutation, logicalMutation]);
+    assert.deepEqual(events, [
+      "file-start",
+      "file-finish",
+      "logical-start",
+      "logical-finish",
+    ]);
+  } finally {
+    releaseFlush();
+    await engine.close();
+  }
+});

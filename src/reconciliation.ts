@@ -55,6 +55,42 @@ async function loadExpectedIndexNames(
 }
 
 /**
+ * Build only the shared tag index entries from the SQLite authority. This is
+ * intentionally separate from the full reconciliation plan so a non-
+ * persisted tag index can be restored without rereading every chunk.
+ */
+export async function buildTagVectorIndexEntries(
+  metadataStore: MetadataStoreContract,
+  dimension: number,
+): Promise<VectorIndexEntry[]> {
+  try {
+    const entries: VectorIndexEntry[] = [];
+    for (const tag of await metadataStore.getAllTags()) {
+      if (tag.vector == null) continue;
+      const vector = decodeVectorBlob(tag.vector, dimension, `tag ${tag.id}`, {
+        logPrefix: "Memoria tag-index recovery",
+      });
+      if (vector === null) {
+        throw new MemoriaError(
+          "integrity",
+          `Authoritative tag vector ${tag.id} is invalid.`,
+          { retryable: true },
+        );
+      }
+      entries.push({ id: tag.id, vector });
+    }
+    return entries;
+  } catch (error) {
+    if (error instanceof MemoriaError) throw error;
+    throw new MemoriaError(
+      "integrity",
+      "Failed to build the tag vector index from metadata.",
+      { cause: error, retryable: true },
+    );
+  }
+}
+
+/**
  * Read and validate the complete authority state without touching the vector
  * store. A caller may safely discard a failed plan while live indexes remain
  * available for search.

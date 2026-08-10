@@ -7,6 +7,7 @@ import type { FSWatcher } from "chokidar";
 
 import { MemoriaError } from "../errors.js";
 import { parseMdxDocument } from "../utils/mdx-document.js";
+import { isRealPathContained } from "../utils/path-containment.js";
 import type {
   DeleteEnvelope,
   FileInput,
@@ -95,7 +96,7 @@ class FilesystemIngestionAdapter {
     const absolutePath = this.assertFilePath(filePath);
     if (!this.accepts(absolutePath)) return [];
     const snapshot = await this.readSnapshot(absolutePath);
-    if (this.target.ingest && snapshot.content !== undefined) {
+    if (!this.target.flushBatch && this.target.ingest && snapshot.content !== undefined) {
       const relativePath = snapshot.relPath ?? this.relativePath(absolutePath);
       const metadata = {
         ...(snapshot.documentMetadata ?? {}),
@@ -125,7 +126,9 @@ class FilesystemIngestionAdapter {
   async removeFile(filePath: string): Promise<DeleteEnvelope> {
     const absolutePath = this.assertFilePath(filePath);
     const relPath = this.relativePath(absolutePath);
-    if (this.target.remove) return this.target.remove(`filesystem:${relPath}`);
+    if (!this.target.handleDelete && this.target.remove) {
+      return this.target.remove(`filesystem:${relPath}`);
+    }
     if (!this.target.handleDelete) {
       throw new MemoriaError(
         "configuration",
@@ -253,9 +256,10 @@ class FilesystemIngestionAdapter {
     for (const entry of entries) {
       const filePath = resolve(directory, entry.name);
       if (entry.isDirectory()) {
+        this.assertFilePath(filePath);
         files.push(...(await this.collectFiles(filePath)));
       } else if (entry.isFile() && this.accepts(filePath)) {
-        files.push(filePath);
+        files.push(this.assertFilePath(filePath));
       }
     }
     return files.sort();
@@ -281,6 +285,12 @@ class FilesystemIngestionAdapter {
       throw new MemoriaError(
         "configuration",
         `Path is outside filesystem root: ${filePath}`,
+      );
+    }
+    if (!isRealPathContained(this.rootPath, absolutePath)) {
+      throw new MemoriaError(
+        "configuration",
+        `Path resolves outside filesystem root: ${filePath}`,
       );
     }
     return absolutePath;

@@ -1,6 +1,7 @@
 import type { ChunkCandidate, PipelineContextLike, PipelineData } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { MemoriaError } from "../../errors.js";
 
 /**
  * Postprocess stage: optional LLM/external reranking of merged candidates.
@@ -61,6 +62,13 @@ class ExternalRerankerStage extends Stage {
     try {
       reranked = await reranker(query, candidates);
     } catch (error) {
+      if (
+        error instanceof MemoriaError &&
+        error.code === "concurrency" &&
+        error.details.reason === "stable_read_reentrancy"
+      ) {
+        throw error;
+      }
       return { ...info, mergedCandidates: candidates, rerankSkipped: true };
     }
 

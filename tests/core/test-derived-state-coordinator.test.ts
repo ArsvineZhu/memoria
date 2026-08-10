@@ -74,6 +74,89 @@ test("stable reads wait for mutations and block new mutation admission", async (
   assert.equal(secondStarted, true);
 });
 
+test("stable reads run concurrently while a pending writer blocks later reads", async () => {
+  const coordinator = new DerivedStateCoordinator(async () => undefined);
+  const firstStarted = deferred();
+  const releaseFirst = deferred();
+  const secondStarted = deferred();
+  const releaseSecond = deferred();
+  const events: string[] = [];
+
+  const first = coordinator.runStableRead(async () => {
+    events.push("read:first:start");
+    firstStarted.resolve();
+    await releaseFirst.promise;
+    events.push("read:first:end");
+  });
+  await firstStarted.promise;
+
+  const second = coordinator.runStableRead(async () => {
+    events.push("read:second:start");
+    secondStarted.resolve();
+    await releaseSecond.promise;
+    events.push("read:second:end");
+  });
+  const secondBegan = await Promise.race([
+    secondStarted.promise.then(() => true as const),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+  ]);
+  if (!secondBegan) {
+    releaseFirst.resolve();
+    await secondStarted.promise;
+    releaseSecond.resolve();
+    await Promise.all([first, second]);
+    assert.fail("stable reads were serialized instead of running concurrently");
+  }
+
+  const mutation = coordinator.runMutation("doc:writer", async () => {
+    events.push("mutation:start");
+    events.push("mutation:end");
+  });
+  const blockedRead = coordinator.runStableRead(async () => {
+    events.push("read:blocked");
+  });
+
+  await Promise.resolve();
+  assert.equal(events.includes("read:blocked"), false);
+  releaseFirst.resolve();
+  releaseSecond.resolve();
+  await Promise.all([first, second, mutation, blockedRead]);
+  assert.deepEqual(events, [
+    "read:first:start",
+    "read:second:start",
+    "read:first:end",
+    "read:second:end",
+    "mutation:start",
+    "mutation:end",
+    "read:blocked",
+  ]);
+});
+
+test("mutation reentry from a stable read fails immediately with a concurrency error", async () => {
+  const coordinator = new DerivedStateCoordinator(async () => undefined);
+  const operation = coordinator
+    .runStableRead(() => coordinator.runMutation("doc:reentry", async () => undefined))
+    .then(
+      () => "resolved" as const,
+      (error: unknown) => error,
+    );
+  const result = await Promise.race([
+    operation,
+    new Promise<"timed out">((resolve) => setTimeout(() => resolve("timed out"), 100)),
+  ]);
+
+  assert.notEqual(result, "timed out");
+  assert.ok(result instanceof Error);
+  assert.equal(
+    (result as Error & { code?: string }).code,
+    "concurrency",
+  );
+  assert.equal(
+    (result as Error & { details?: Record<string, unknown> }).details?.reason,
+    "stable_read_reentrancy",
+  );
+});
+
 test("dirty mutations reconcile before ordinary writes can continue", async () => {
   const order: string[] = [];
   const coordinator = new DerivedStateCoordinator(async () => {

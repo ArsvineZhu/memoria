@@ -23,19 +23,19 @@ class EmbeddingProvider {
 
 ## 2. 三实现对比表
 
-| 属性      | DashScope 原生                                                                                                           | OpenAI 兼容                                                                                                                                                     | FakeEmbeddingProvider             |
-| --------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| 源码      | `src/providers/dashscope-embedding-provider.ts`                                                                          | `src/providers/openai-embedding-provider.ts`                                                                                                                    | `examples/demo/fake-embedding.ts` |
-| 协议端点  | `POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding`（`config.apiUrl` 可覆盖） | `{config.apiUrl}/v1/embeddings`（apiUrl 为基址，如 `https://api.openai.com`）                                                                                   | 无网络                            |
-| 请求体    | `{ model, input: { texts }, parameters: { dimension, output_type: 'dense', text_type } }`                                | `{ model, input: [...texts] }`（OpenAI 标准数组形）                                                                                                             | —                                 |
-| 默认模型  | `qwen3.7-text-embedding`（模型注释：自定维度 256–2560、单行≤128k tokens）                                                | **无内置默认**；引擎装配默认传 `config.model`（默认 `google / gemini-embedding-001`，见 default-config.ts）                                                     | `fakeEmbeddingProvider`           |
-| 默认维度  | `1024`（`config.dimension                                                                                                |                                                                                                                                                                 | 1024`）                           | 类默认 `1024`（`config.dimension |     | 1024`）；**engine 装配显式传 `config.dimension`（默认 3072）**→ 引擎内实际 3072 | `128`（构造可传 `dimension`） |
-| 分批上限  | `maxBatchItems` 默认 `20`（DashScope 硬上限 ≤20 行/请求，代码按片逐批切分）                                              | `maxBatchItems` 默认 `32`，并且**按 token 动态分桶**：`safeMaxTokens = maxToken × 0.85`（`maxToken` 默认 8000 → 6800），超限文本跳过置 null                     | 无分批（逐条同步）                |
-| 并发      | 默认 5 个 worker 并发发请求                                                                                              | 默认 5 个 worker 并发发请求                                                                                                                                     | 单线程                            |
-| 超时/重试 | `timeoutMs` 默认 `60000`ms（`AbortController`）；**无重试**；任何失败返回 `null`（不抛错）                               | **无请求超时**（无 AbortController）；429 等 `5000×attempt`ms（上限 15000）后切换 `fallbackModels` 候选；其他错误退避 `1000ms × attempt` 后重试，候选耗尽才抛错 | 永不失败（对 null 输入返回 null） |
-| key 来源  | `config.apiKey`（Bearer）                                                                                                | `config.apiKey`（Bearer）                                                                                                                                       | 无                                |
-| 返回类型  | `Float32Array`（`_asToFloat32Array` 校验，长度 ≠ dimension 返回 null）                                                   | **`number[]`（非 Float32Array），且不做维度校验**                                                                                                               | `Float32Array`                    |
-| 离线可用  | 否                                                                                                                       | 否                                                                                                                                                              | **是（全确定性，无需 key/网络）** |
+| 属性      | DashScope 原生                                                                            | OpenAI 兼容                                                             | FakeEmbeddingProvider             |
+| --------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------- |
+| 源码      | `src/providers/dashscope-embedding-provider.ts`                                           | `src/providers/openai-embedding-provider.ts`                            | `examples/demo/fake-embedding.ts` |
+| 协议端点  | DashScope 嵌入接口；`config.apiUrl` 可覆盖                                                | `{config.apiUrl}/v1/embeddings`                                         | 无网络                            |
+| 请求体    | `{ model, input: { texts }, parameters: { dimension, output_type: 'dense', text_type } }` | `{ model, input: [...texts] }`                                          | —                                 |
+| 默认模型  | `qwen3.7-text-embedding`                                                                  | 无内置默认；引擎使用 `config.model`                                     | `fakeEmbeddingProvider`           |
+| 默认维度  | `1024`；可由 `config.dimension` 覆盖                                                      | 类默认 `1024`；引擎装配显式传入 `config.dimension`（默认 `3072`）       | `128`；构造时可覆盖               |
+| 分批上限  | `maxBatchItems` 默认 `20`；服务端单批最多 20 条                                           | `maxBatchItems` 默认 `32`，并按 token 动态分桶；超限文本跳过并置 `null` | 无网络批处理                      |
+| 并发      | 默认 5 个 worker                                                                          | 默认 5 个 worker                                                        | 单线程                            |
+| 超时/重试 | `timeoutMs` 默认 `60000`ms；无重试；失败返回 `null`                                       | 无请求超时；429 和其他错误按候选模型重试                                | 永不失败（null 输入返回 null）    |
+| key 来源  | `config.apiKey`（Bearer）                                                                 | `config.apiKey`（Bearer）                                               | 无                                |
+| 返回类型  | `Float32Array`；维度不符返回 `null`                                                       | `number[]`；Provider 本身不做维度校验                                   | `Float32Array`                    |
+| 离线可用  | 否                                                                                        | 否                                                                      | 是（确定性、无需 key）            |
 
 共同点：都收取 `concurrency`（默认 5）；失败位均以 null 补齐，保证
 `embedBatch` 返回长度始终等于输入长度；都不读取 `process.env`
@@ -88,8 +88,8 @@ new OpenAIEmbeddingProvider({
 1. 构造实例：`new DashScopeEmbeddingProvider({ apiUrl, apiKey, model, dimension })`（或 fake）。
 2. 注入引擎：`createMemoryEngine({ embeddingProvider: myProvider, config: { dimension: <相同值> } })`。
 3. **维度不可变**：已有向量的 BLOB 长度与 VEXUS 索引维度在创建时固定。
-   更换维度 = 旧库全部失效，**必须重灌**（用 agents：删除现有
-   `storePath`/`dbPath` 后重新 `flush`）；若前后维度相同（如两个 1024 的
+   更换维度 = 旧库全部失效，**必须重灌**（确认备份后删除现有
+   `storePath`/`dbPath`，再重新 `flush`）；若前后维度相同（如两个 1024 的
    商用模型互切），可复用旧库——但嵌入分布变化递归序，是否重灌视效果。
 4. 临时试验：注入 `fakeEmbeddingProvider`（128 维）验证管线流程，不回
    生产（维度与真实模型不同）。

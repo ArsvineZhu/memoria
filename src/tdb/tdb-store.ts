@@ -24,9 +24,9 @@ import type {
  * TDBStore — dedicated SQLite metadata layer for the TDB (TriviumDB
  * cold-knowledge) engine.
  *
- * Mirrors the table shape of TDBKnowledge.js (VectorStoreTDB/
- * tdb_knowledge_meta.sqlite): per-library `files` rows carry the document
- * checksum / mtime / size bookkeeping while `chunks` map chunk_index →
+ * Mirrors the legacy TDB table shape used by VectorStoreTDB. Per-library
+ * `files` rows carry document checksum / mtime / size bookkeeping while
+ * `chunks` map chunk_index →
  * vector node id. One local deviation: the `chunks.text` column stores the
  * chunk text itself, replacing the original TriviumDB native payload, since
  * this library has no native text index (the BM25 stage reads it).

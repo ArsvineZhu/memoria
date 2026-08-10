@@ -1,6 +1,6 @@
-# memoria CLI 章节演示
+# memoria 离线章节演示
 
-这是 memoria 的命令行章节演示，共 6 个章节，覆盖记忆库完整生命周期：
+这是 memoria 的离线章节演示，共 6 个章节，覆盖记忆库的完整生命周期：
 
 1. **初始化** —— `createMemoryEngine` + 注入 Fake 嵌入 Provider
 2. **摄入** —— 读取 3 篇 MDX 演示日记 → `flushBatch` → `getStats`
@@ -14,7 +14,6 @@
 ```bash
 corepack pnpm build:test
 node ../../dist-test/examples/demo/main.js
-# 或在本目录编译产物后执行 node main.js
 ```
 
 零网络、零 API Key，一键运行、结果可复现 —— 运行前提：仓库根已完成
@@ -22,12 +21,12 @@ node ../../dist-test/examples/demo/main.js
 
 ## 文件说明
 
-| 文件                | 作用                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------ |
-| `main.ts`           | TypeScript ESM 章节式演示主脚本，导入仓库根的 memoria 入口                           |
-| `fake-embedding.ts` | 离线确定性伪嵌入（128 维），与 `EmbeddingProvider` 接口兼容                          |
-| `../../data/content/` | 仓库维护的 MDX 演示源文件；运行时只读取，不覆盖源文件                  |
-| `../../data/memoria/demo/` | 运行期生成的 demo SQLite、向量索引与 sidecar，已被 `.gitignore` 排除 |
+| 文件                       | 作用                                                            |
+| -------------------------- | --------------------------------------------------------------- |
+| `main.ts`                  | TypeScript ESM 演示主脚本，导入仓库根的 memoria 入口            |
+| `fake-embedding.ts`        | 离线确定性伪嵌入（128 维），与 `EmbeddingProvider` 接口兼容     |
+| `../../data/content/`      | 仓库维护的 MDX 演示源文件；运行时只读取，不覆盖源文件           |
+| `../../data/memoria/demo/` | 运行期生成的 SQLite、向量索引与 sidecar；已被 `.gitignore` 排除 |
 
 ## 目录结构
 

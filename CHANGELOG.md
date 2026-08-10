@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 重建文档入口与维护边界：新增面向普通用户、高级用户和 AI Agent 的分层导航，
+  统一命令、路径、配置说明，并将 `eval/` 明确为 Git 忽略且不维护的目录。
 - 完成最终可靠性 remediation：partial embedding 不再提交，metadata-only 更新不重嵌入，
   SQLite document replacement/TDB replacement 原子化；主引擎与 TDB 均增加 active-operation
   drain、显式生命周期、失败恢复与结构化错误边界。
@@ -34,7 +36,7 @@
 首个独立发布，能力继承 vcp-memory 全部积累：
 
 - MemoryEngine 全生命周期：config merge / pipeline 初始化 / provider 注入 / 读写删
-- 7 阶段检索管线（ingestion/embedding/chunking/candidate/retrieval/postprocessing/storage）
+- 检索管线覆盖 ingestion、embedding、chunking、candidate、retrieval、postprocessing、storage
 - 混合检索（向量 + BM25）、语义去重（exact/semantic）、Gram-Schmidt 向量正交化
 - 记忆综合体：TagMemory 浪潮算法、RiverMemory 拓扑（scaled-field solver / 河流可见性）、
   EPA 语义分析（逻辑深度/主轴/共振）、残差金字塔

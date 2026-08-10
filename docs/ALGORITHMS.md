@@ -64,7 +64,7 @@ u_{k+1} = (1−α)·S + α·T(u_k)   local α=0.15 / transfer α=0.55；
   默认（:437–446），`diagnostics` 含收敛标志、质量增量与 operator 签名。
 
 测试：`tests/algorithms/topology/test-scaled-field-solver.test.ts`（收敛、
-空源错误码、错误方法和 operator 空间不一致等 10 个用例）；下游消费见
+空源错误码、错误方法和 operator 空间不一致等行为）；下游消费见
 `src/stages/memo/tagmemo-v10.ts`。
 
 ## 3. 河流可见性（src/algorithms/topology/river-observability.ts）

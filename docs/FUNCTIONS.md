@@ -1,6 +1,6 @@
 # FUNCTIONS — 完整功能说明
 
-> 按功能域逐一说明 memoria 的完整能力：引擎核心、七条阶段族、混合检索、
+> 按功能域逐一说明 memoria 的完整能力：引擎核心、六类阶段族、混合检索、
 > 语义去重、EPA、标签体系、删除级联、TDB 冷知识库与统计。所有阶段类名 /
 > 阈值 / 默认值均取自源码；每节附"验证视角"指向对应 `tests/` 目录。
 
@@ -30,7 +30,7 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 验证视角：`tests/engine/test-engine.test.ts`、`tests/pipelines/test-pipelines.test.ts`。
 
-## 2. 七条阶段族（真实 stage 类名）
+## 2. 六类阶段族（真实 stage 类名）
 
 ### 2.1 Ingestion（摄入：文本读取与分块，8 阶段固定链）
 
@@ -61,7 +61,7 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 `{textType:'query'}` 调起（DashScope 非对称检索规格）。详见
 [EMBEDDING.md](./EMBEDDING.md)。
 
-### 2.3 Candidate（混淆召回：向量 + 稀疏双路）
+### 2.3 Candidate（混合召回：向量 + 稀疏双路）
 
 | Stage 类名             | 文件                                   | 职责                                                                                                                                                                                         |
 | ---------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -75,8 +75,8 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 ### 2.4 Retrieval（检索主链编排）
 
 `SearchPipeline` 固定前段（queryEmbedder → queryVectorBridge → 双路召回 →
-融合）后按配置门插入 memo / 后处理算子，末段必为 `resultFormatter`。18 步完整
-链与门见 [ARCHITECTURE.md](./ARCHITECTURE.md) §4。
+融合）后按配置门插入 memo / 后处理算子，末段必为 `resultFormatter`。完整阶段顺序
+与开关见 [ARCHITECTURE.md](./ARCHITECTURE.md) §4。
 
 ### 2.5 Postprocessing（后处理：EPA / 去重 / 格式化）
 
@@ -85,9 +85,9 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 | `EPAProjectorStage`       | `stages/memo/epa-projector.ts`              | 查询 EPA 投影：`{ready, queryAnalysis: {logicDepth, dominantAxes, resonance}, candidateAnalyses}`                                                                                                               |
 | `ResidualPyramidStage`    | `stages/memo/residual-pyramid.ts`           | 残差金字塔：`{levels, totalExplainedEnergy, finalResidual, features}`                                                                                                                                           |
 | `ResultDeduplicatorStage` | `stages/postprocess/result-deduplicator.ts` | 硬去重 + 语义去重（阈值 0.92）                                                                                                                                                                                  |
-| `ExternalRerankerStage`   | `external-reranker.ts`                      | 调用 `config.reranker                                                                                                                                                                                           |     | ctx.reranker(query, candidates)` 重排（门：externalRerankEnabled / useLLMRerank） |
+| `ExternalRerankerStage`   | `external-reranker.ts`                      | 调用配置中的 `reranker` 或上下文中的 `ctx.reranker(query, candidates)` 重排（门：`externalRerankEnabled` / `useLLMRerank`）                                                                                     |
 | `TimeDecayStage`          | `time-decay.ts`                             | `decay = 0.5^(ageDays/halfLife)`；`timeDecayUpperBound` 封顶                                                                                                                                                    |
-| `TruncatorStage`          | `truncator.ts`                              | `topK                                                                                                                                                                                                           |     | maxResults`条数截断 +`maxContentLength` 内容截断 + 可选省略号                     |
+| `TruncatorStage`          | `truncator.ts`                              | 按 `topK` 或 `maxResults` 截断条数，再按 `maxContentLength` 截断内容，可选添加省略号                                                                                                                            |
 | `ExpanderStage`           | `expander.ts`                               | 前 `expandCount` 个候选展开同文件兄弟块，分数 ×`expansionBoost`                                                                                                                                                 |
 | `ResultFormatterStage`    | `stages/output/result-formatter.ts`         | 终格式化：`{id, chunkId, content, path, sourceFile, fileId, diaryName, score, similarity, updatedAt, mtime, tags, matchedTags, memoScore?, source, decay?, rerankScore?}` + `resultCount`；缺失字段从元数据回查 |
 
@@ -103,7 +103,7 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 | 组件                                 | 文件                                 | 要点                                                                                                                                                                                                         |
 | ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SqliteMetadataStore`                | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async                                                                                |
-| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex` 控制标签索引持久化                                          |
+| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex` 为兼容配置，当前保存调度不以它为开关                        |
 | `VectorStore` / `MetadataStore` 接口 | `interfaces/`                        | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；`upsertFile/getFileByPath/insertChunks/upsertTags/setFileTags/getFileIdsByTagId/buildCooccurrenceMatrix/checkpoint/healthCheck` 等 |
 
 验证视角：`tests/providers/test-sqlite-metadata-store.test.ts`、
@@ -180,8 +180,8 @@ tagMemoActivation, expansionSignal}`（逐层残差正交投影 + 能量解释�
   `prepareTextForEmbedding` 剥离装饰 emoji、`<|x|>` 管道符，规整空白；
   空文本 → `[EMPTY_CONTENT]`。
 - **标签向量**：`TagEmbedderStage` 嵌入后由 `VectorIndexerStage` 写入
-  `global_tags` 共享索引（容量 `tagIndexCapacity`=50000；持久化开关
-  `persistTagIndex`=false）。
+  `global_tags` 共享索引（容量 `tagIndexCapacity`=50000）。当前实现会按
+  `tagIndexSaveDelay` 调度保存；`persistTagIndex` 仍作为兼容配置保留，但不是保存开关。
 - **标签召回**：`tagSearchEnabled` 开启时，`VectorSearcherStage` 在标签索引
   取前 `tagK`（默认 10）个标签，经 `getFileIdsByTagId` → `getChunksByFileId`
   展开为候选块（打分继承标签命中分）。

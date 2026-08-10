@@ -7,7 +7,8 @@
 ## 前提
 
 1. 仓库根目录已执行 `corepack pnpm install --frozen-lockfile`，且 Rust 向量引擎二进制已构建就位（参见根 README 的构建说明）。
-2. 本目录放置 `.env` 文件，内容为 `EMBED_API_KEY=sk-xxxx`（或从旧 demo 仓库根目录复制已有配置）。`.env` 已被根 `.gitignore` 排除，勿提交。
+2. 本目录放置 `.env` 文件，内容为 `EMBED_API_KEY=sk-xxxx`。`.env` 已被根
+   `.gitignore` 排除，勿提交。
 
 ## 运行
 
@@ -19,7 +20,7 @@ node ../../dist-test/examples/real-embed/demo-recall.js
 ## 输出样式示例
 
 ```
-◈ 已入库 10 个文件 / 58 个 chunk / 1920 个向量
+◈ 已入库 10 个文件 / 58 个 chunk / 1920 个向量（示意，实际数量会随分块配置变化）
 ┌─ [直配] "量子纠缠 叠加态 退相干"
 │  → 量子计算文档
 │  ① 0.8261  quantum-computing.md
@@ -32,5 +33,5 @@ node ../../dist-test/examples/real-embed/demo-recall.js
 若未配置 `.env`，脚本会输出以下提示并退出（exit 1）：
 
 ```
-✖ 未找到 EMBED_API_KEY（请确认 demo 根目录 .env 已配置）
+✖ 未找到 EMBED_API_KEY（请确认本目录 `.env` 已配置）
 ```

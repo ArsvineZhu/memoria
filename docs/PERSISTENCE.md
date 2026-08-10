@@ -106,7 +106,9 @@ WAL 模式意味着 `.sqlite-wal` / `.sqlite-shm` 伴生文件与主库同目录
   Rust 侧 `add` 对维度不匹配直接抛 `Dimension mismatch: expected N, got M`
   （lib.rs:392–398），因此 `config.dimension` 必须等于
   `embeddingProvider.getDimension()`（见 TROUBLESHOOTING）。
-- **加载开关**：`indexLoadEnabled`（默认 true，:35）为 false 时跳过磁盘读回。
+- **加载开关**：`VexusVectorStore` 的 `indexLoadEnabled` 默认开启；设为 `false`
+  时跳过磁盘读回并走 SQLite 重建。它是 vector-store 配置项，不是
+  `DEFAULT_CONFIG` 中的必填默认字段。
 
 ## 4. 摄入时序：SQLite 先写，向量后写
 
@@ -139,8 +141,8 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
    | `global_tags`      | `tagIndexSaveDelay` = 10000ms | 300000ms                                |
    | 其他（diary 索引） | `indexSaveDelay` = 5000ms     | 120000ms                                |
 
-   `persistTagIndex` 为历史兼容构造项（构造保留，:34），当前实现不按它
-   门控调度——`global_tags` 同样进入定时保存。
+   `persistTagIndex` 是兼容构造项，当前实现不按它门控调度——`global_tags`
+   同样进入定时保存。不要把它当作关闭标签索引保存的开关。
 
 **关闭时序**（engine.ts）：`close()` 等待 keyed mutation queue，先
 `flushPendingSaves()`，仅在 flush 成功且 vector state 完整时调用
@@ -259,7 +261,7 @@ data/
 - **双写一致性**：`.usearch` 是可重建缓存；删除 `storePath` 下的索引而保留
   SQLite 是可恢复的维护动作，重启/初始化会从 SQLite authority 重建。若同时
   删除 `dbPath`，才代表连同权威元数据一起清空；维度更换时应使用新
-  `storePath` 与 SQLite 文件并重新 `flushBatch`（见 `docs/EMBEDDING.md` §5）。
+  `storePath` 与 SQLite 文件并重新 `flushBatch`（见 [EMBEDDING.md](EMBEDDING.md) §5）。
 - **定时器**：不调 `close()` 而直接退出进程，`scheduleIndexSave` 的
   定时器可能未到期，最后几批向量丢失。优雅停机务必走
   `engine.close()` / `adapter.shutdown()`。

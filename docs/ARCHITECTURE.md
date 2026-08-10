@@ -22,8 +22,8 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
                             ▼                            ▼
               ┌────────────────────┐          ┌────────────────────┐
               │   IngestPipeline   │          │ SearchPipeline     │
-              │   8 阶段固定串行    │          │ 5 检索 + 8 记忆 +   │
-              │   read→tags→chunk  │          │ 6 后处理 +1 输出     │
+              │   摄入阶段串行执行  │          │ 检索与后处理按开关组合 │
+              │   read→tags→chunk  │          │ 并在末端统一格式化     │
               │   →embed→write→vec │          └────────────────────┘
               └───────┬────┬──────┘
                       ▼    ▼
@@ -101,7 +101,7 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
    `resetDerivedState()`，再以 SQLite authority 的 bulk rows 重建并 flush。
 3. **摄入时序（单文档/单文件）**：逻辑文档由引擎生成确定性内部路径并带上
    `documentId`、`revision`、source 与 metadata；文件快照由 `FilesystemIngestionAdapter`
-   在交给引擎前读取并做稳定性检查。随后 7 个阶段依次执行，最后
+   在交给引擎前读取并做稳定性检查。随后按源码注册顺序执行摄入阶段，最后
    `CooccurrenceBuilderStage`（默认 no-op）。**双写盘次序**：内置
    `SqliteMetadataStore` 的 `MetadataWriterStage` 通过单事务
    `replaceDocumentState()` 原子替换 file/chunks/tags/file_tags，并增加 metadata
@@ -130,18 +130,18 @@ TDB 的 `chunks.vector` 列通过幂等 migration 加入旧库。旧行没有可
 
 ## 3. 组件分层
 
-| 层         | 目录              | 职责                 | 关键成员                                                                                                     |
-| ---------- | ----------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Core       | `src/core/`       | 管线编排内核         | `Pipeline`（串行执行 / pipe / replace）、`Stage`（抽象 process）、`PipelineContext`（DI 容器）               |
-| 配置       | `src/config/`     | 全量默认参数 + 加载  | `DEFAULT_CONFIG`、`mergeConfig`、`loadRagParams` / `loadRagParamsSync` / `RAG_PARAMS_DEFAULTS`               |
-| Compat     | `src/compat/`     | 老调用面兼容         | `KnowledgeBaseAdapter`（KBM drop-in 封装；`db` / `config` / 派发式 `search` / `runExternalFileMutation` 等） |
-| Stages     | `src/stages/`     | 算子群（6 子目录）   | ingestion ×8、retrieval ×4、memo ×7、postprocess ×5、output ×1、tdb ×2                                       |
-| Pipelines  | `src/pipelines/`  | 阶段组合             | `IngestPipeline` / `SearchPipeline` / `DeletePipeline`                                                       |
-| Providers  | `src/providers/`  | 存储与嵌入实现       | `SqliteMetadataStore`、`VexusVectorStore`、`OpenAIEmbeddingProvider`、`DashScopeEmbeddingProvider`           |
-| Interfaces | `src/interfaces/` | 三方契约（抽象类）   | `EmbeddingProvider` / `VectorStore` / `MetadataStore`                                                        |
-| Algorithms | `src/algorithms/` | 纯数学算法（零 I/O） | EPA、ResidualPyramid、ResultDeduplicator + gram-schmidt / svd / wave + topology/                             |
-| TDB        | `src/tdb/`        | 冷知识库引擎         | `TDBEngine` / `TDBSearchPipeline` / `TDBStore` / `TriviumDBAdapter`                                          |
-| Utils      | `src/utils/`      | 通用工具             | `mdx-document`（YAML front matter）、`text-chunker`（tiktoken 智能分块）、`text-preprocessor`（清洗 + 标签提取）、`vector-codec`（BLOB 编解码）   |
+| 层         | 目录              | 职责                 | 关键成员                                                                                                                                        |
+| ---------- | ----------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core       | `src/core/`       | 管线编排内核         | `Pipeline`（串行执行 / pipe / replace）、`Stage`（抽象 process）、`PipelineContext`（DI 容器）                                                  |
+| 配置       | `src/config/`     | 全量默认参数 + 加载  | `DEFAULT_CONFIG`、`mergeConfig`、`loadRagParams` / `loadRagParamsSync` / `RAG_PARAMS_DEFAULTS`                                                  |
+| Compat     | `src/compat/`     | 老调用面兼容         | `KnowledgeBaseAdapter`（KBM drop-in 封装；`db` / `config` / 派发式 `search` / `runExternalFileMutation` 等）                                    |
+| Stages     | `src/stages/`     | 按功能分目录的算子群 | ingestion、retrieval、memo、postprocess、output、tdb 阶段                                                                                       |
+| Pipelines  | `src/pipelines/`  | 阶段组合             | `IngestPipeline` / `SearchPipeline` / `DeletePipeline`                                                                                          |
+| Providers  | `src/providers/`  | 存储与嵌入实现       | `SqliteMetadataStore`、`VexusVectorStore`、`OpenAIEmbeddingProvider`、`DashScopeEmbeddingProvider`                                              |
+| Interfaces | `src/interfaces/` | 三方契约（抽象类）   | `EmbeddingProvider` / `VectorStore` / `MetadataStore`                                                                                           |
+| Algorithms | `src/algorithms/` | 纯数学算法（零 I/O） | EPA、ResidualPyramid、ResultDeduplicator + gram-schmidt / svd / wave + topology/                                                                |
+| TDB        | `src/tdb/`        | 冷知识库引擎         | `TDBEngine` / `TDBSearchPipeline` / `TDBStore` / `TriviumDBAdapter`                                                                             |
+| Utils      | `src/utils/`      | 通用工具             | `mdx-document`（YAML front matter）、`text-chunker`（tiktoken 智能分块）、`text-preprocessor`（清洗 + 标签提取）、`vector-codec`（BLOB 编解码） |
 
 ## 4. 检索主链路（SearchPipeline，真实阶段名）
 
@@ -192,7 +192,7 @@ memoria/
 │   ├── knowledge/             # TDB 原始源文件
 │   ├── memoria/               # 主 SQLite + indexes 派生状态（Git 忽略）
 │   └── tdb/                   # TDB SQLite + indexes 派生状态（Git 忽略）
-├── src/index.ts                 # TypeScript ESM 源入口（根运行时导出保持 41 个）
+├── src/index.ts                 # TypeScript ESM 源入口
 ├── src/index.cts                # 兼容 require('memoria') 的 CJS facade
 ├── dist/index.js                # 编译后的 ESM 库入口
 ├── dist/index.cjs               # 既有 CommonJS 导入兼容入口
@@ -203,8 +203,8 @@ memoria/
 │   │   ├── default-config.ts    # DEFAULT_CONFIG（全量默认参数）+ mergeConfig
 │   │   └── rag-params-loader.ts # rag_params.json 热调参加载
 │   ├── pipelines/
-│   │   ├── ingest-pipeline.ts   # 8 阶段固定链
-│   │   ├── search-pipeline.ts   # 21 步混合检索链（按 gate 裁剪）
+│   │   ├── ingest-pipeline.ts   # 摄入阶段组合
+│   │   ├── search-pipeline.ts   # 按 gate 裁剪的混合检索链
 │   │   └── delete-pipeline.ts   # 单阶段（file-deleter）
 │   ├── stages/
 │   │   ├── ingestion/           # file-reader, tag-extractor, text-chunker,
@@ -238,16 +238,16 @@ memoria/
 │   ├── reconciliation.ts        # SQLite 权威状态 → 派生向量索引重建
 │   ├── tdb/
 │   │   ├── tdb-engine.ts         # TDBEngine（冷知识库引擎，upsert/search 拉取式）
-│   │   ├── tdb-search-pipeline.ts# TDB 查询链（7 阶段）
+│   │   ├── tdb-search-pipeline.ts# TDB 查询链
 │   │   ├── tdb-store.ts          # TDB 元数据（library×path 维度表）
 │   │   └── triviumdb-adapter.ts  # 原生调用面本地代理（insert/search/searchHybrid/…）
 │   ├── compat/knowledge-base-adapter.ts # K 调用面 Passthrough
 │   └── utils/                   # text-chunker（tiktoken）、text-preprocessor、
 │                               # vector-codec
-├── rust-vexus-lite/              # Rust N-API 向量引擎（6 平台预编译二进制）
+├── rust-vexus-lite/              # Rust N-API 向量引擎（平台产物见 NATIVE-MATRIX.md）
 ├── examples/demo/                # 离线 TypeScript 源演示（编译到 dist-test/）
 ├── examples/real-embed/          # 真实嵌入 TypeScript 源演示
-└── tests/                       # 319 项编译后测试（10 目录）
+└── tests/                       # TypeScript 测试源码和 fixtures
 ```
 
 ## 6. 生命周期关键时序
@@ -257,7 +257,7 @@ memoria/
 | 构造             | 三个管道 + 全部 stage 注册      | 只保存配置/注入项，不创建默认 backend 或 native addon                               |
 | initialize       | Provider lazy-create + recovery | clean generation 验证并注册 persisted indexes；dirty/stale 先 reset 再 bulk rebuild |
 | 摄入             | `flushBatch` 串行执行           | 双写盘：SQLite 先行 → Rust 向量索引；`scheduleIndexSave` 延迟落盘（延迟见 config）  |
-| 检索（每次查询） | `search()`                      | 21 阶段（按门裁剪）；去重阶段恒在链中                                               |
+| 检索（每次查询） | `search()`                      | 按配置门组合阶段；去重阶段仍在链中                                                  |
 | 删除             | `handleDelete`                  | FK 级联删块，向量 Remove + 触发延迟落盘                                             |
 | 关闭             | `close()`                       | queue drain → flush → mark clean → SQLite close；失败抛 lifecycle 并可重试          |
 

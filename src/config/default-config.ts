@@ -183,8 +183,8 @@ const DEFAULT_CONFIG: MemoryConfig = {
   riverDecay: 1.0,
   riverTopologyCap: 0.08,
 
-  // ── TDB cold-knowledge engine (TDBKnowledge.js mirror) ────────────
-  // Env counterpart mapping:
+  // ── TDB cold-knowledge engine (legacy-compatible configuration) ─────
+  // Legacy environment-name counterparts (the library does not auto-read env):
   //   TDB_KNOWLEDGE_ENABLED              -> tdbEnabled (default false)
   //   TDB_KNOWLEDGE_ROOT_PATH            -> tdbRootPath
   //   TDB_KNOWLEDGE_STORE_PATH           -> tdbStorePath

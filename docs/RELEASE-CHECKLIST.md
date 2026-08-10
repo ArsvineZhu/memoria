@@ -1,10 +1,11 @@
-# Release checklist
+# 发布前检查
 
-Run these commands from the repository root with Node `>=24.18.1 <25` and Corepack
-using pnpm `11.20.0`:
+从仓库根目录运行。Node.js 版本必须落在 `>=24.18.1 <25`，Corepack 使用
+pnpm `11.20.0`：
 
-```bash
+```powershell
 corepack pnpm install --frozen-lockfile
+corepack pnpm verify:docs
 corepack pnpm format:check
 corepack pnpm lint
 corepack pnpm typecheck
@@ -18,26 +19,35 @@ corepack pnpm pack --dry-run
 git diff --check
 ```
 
-这些本地命令是发布判断的权威证据；不要求额外等待或依赖 GitHub Actions run。
-真实 API 集成测试没有 key 时可以按 `docs/TROUBLESHOOTING.md` 的说明 skip，不能
-把网络不可用伪装成通过。
+这些命令是本地发布判断的主要证据。没有实时嵌入密钥时，相关测试可以按
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) 的说明跳过，但不能把网络不可用伪装成
+通过。
 
-Rust gate：
+## Rust 检查
 
-```bash
-cd rust-vexus-lite
+```powershell
+Set-Location rust-vexus-lite
 cargo fmt --check
 cargo test
 cargo build --release
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-The release artifact must contain `dist/`, `README.md`, `CHANGELOG.md`, the generated
-N-API loader and only the native binaries listed in [NATIVE-MATRIX.md](./NATIVE-MATRIX.md).
-It must not contain `src/`, `tests/`, `dist-test/`, SQLite databases, or temporary
-tarballs.
+Clippy 当前在 CI 中是非阻塞任务；发布前仍应记录它是否实际通过。
 
-Before publishing, confirm that `Object.keys(require("memoria"))` still contains the
-historical 41 root exports, while ESM consumers import `dist/index.js` and receive
-`dist/index.d.ts`. Keep database files and vector-index formats backward compatible;
-the SQLite logical-document columns are added through idempotent migrations.
+## 包内容
+
+发布包应包含 `dist/`、`README.md`、`CHANGELOG.md`、生成的 N-API 加载器和
+[NATIVE-MATRIX.md](NATIVE-MATRIX.md) 列出的原生文件；不应包含 `src/`、`tests/`、
+`dist-test/`、SQLite 数据库或临时 tarball。
+
+发布前用下面的命令核对公开导出和两种模块入口：
+
+```powershell
+node --input-type=module -e "import * as m from './dist/index.js'; console.log(Object.keys(m))"
+node --input-type=module -e "import {createRequire} from 'node:module'; const r=createRequire(import.meta.url); console.log(Object.keys(r('./dist/index.cjs')))"
+```
+
+如果导出清单发生变化，必须同步检查 [API.md](API.md)、类型声明、消费者测试和变更记录。
+数据库文件和向量索引格式的
+兼容性也必须通过对应迁移和恢复测试确认。

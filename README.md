@@ -1,122 +1,64 @@
-# memoria — 面向 AI 应用的持久化语义记忆系统
+# memoria：给 AI 应用使用的持久化记忆库
 
-> 向量检索 + 标签浪潮 + 拓扑记忆 + 冷知识库，Node.js 核心 + Rust N-API 原生向量引擎。
-> 内置 TagMemo 浪潮激活、RiverMemo 拓扑记忆、EPA 语义分析、残差金字塔与 TDB 冷知识库，
-> 通过统一的 `createMemoryEngine` 入口交付"摄入 → 检索 → 记忆"完整链路。
+`memoria` 可以把文字保存下来，并在之后按意思或关键词找回。它同时保存
+原文、标签和向量，关闭程序后数据仍可恢复。默认数据放在项目的 `data/` 目录，
+源文件和运行状态分开管理。
 
-## 特性矩阵
+## 你可以用它做什么
 
-| 能力                      | 说明                                                                                                  |
-| ------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 向量 + BM25 混合检索      | 多路召回按权重融合（`vectorWeight` / `bm25Weight`），兼顾语义与词面命中                               |
-| TagMemory 浪潮激活        | 标签能量沿波传播（V9 波传播 / V10 双尺度场解算），关联标签联想唤醒                                    |
-| RiverMemory 拓扑记忆      | scaled-field 双尺度场求解 + 河流可见性（`computeRiverObservability`），记忆衰减可控                   |
-| EPA 语义分析              | 正交语义基投影，输出逻辑深度 / 主轴 / 跨域共振（`EPA.computeBasis` + `project`）                      |
-| 残差金字塔覆盖            | 多分辨率残差分解，逐层解释查询能量，输出覆盖率与新颖度                                                |
-| 自动标签提取与聚类        | 摄取阶段自动抽标签，SVD / 加权 PCA / 幂法聚类成语义基                                                 |
-| TDB 冷知识库（TriviumDB） | 独立检索管线（`TDBEngine` + `TDBSearchPipeline`），长尾冷知识周期复习入口                             |
-| SQLite + Rust 双持久化    | SQLite 存元数据、Rust N-API 索引存向量，双写盘 + 懒加载磁盘恢复                                       |
-| Provider 抽象             | 统一 `EmbeddingProvider` 接口：DashScope 原生 / OpenAI 兼容 / 离线伪嵌入                              |
-| Rust N-API 原生向量引擎   | `rust-vexus-lite`：随包分发当前仓库携带的预编译 `.node` 变体；加载器仍保持独立 CommonJS package scope |
+- 用关键词和语义一起搜索，减少“换一种说法就找不到”的情况；
+- 自动从文档提取标签，并按标签扩展相关记忆；
+- 保存并恢复 SQLite 元数据和向量索引；
+- 直接提交一段文字，也可以让文件适配器读取 Markdown/MDX；
+- 按需使用 DashScope、OpenAI 兼容接口或离线的确定性嵌入；
+- 用独立的 TDB 引擎保存较稳定的冷知识。
 
-## 架构概览
+## 最快运行方式：离线演示
 
-核心是一个**算子级 stage 编排管线**（`Pipeline` / `Stage` / `PipelineContext`），
-三大管线（ingest / search / delete）由可插拔 stage 串联；记忆侧算法
-（TagMemo / RiverMemo / EPA / 残差金字塔）以阶段产物注入检索结果；
-底层由 SQLite 元数据存储与 Rust N-API 向量索引双持久化支撑；默认由
-`data/` 统一管理 MDX 原始数据和可重建运行状态。
+离线演示不需要网络和 API 密钥。先在仓库根目录安装依赖：
 
-```text
-memoria/
-├── data/
-│   ├── content/               # MDX 原始源文件（默认 rootPath）
-│   ├── knowledge/             # TDB 原始源文件
-│   ├── memoria/               # 主 SQLite + indexes（Git 忽略）
-│   └── tdb/                   # TDB SQLite + indexes（Git 忽略）
-├── src/index.ts                 # TypeScript ESM 源入口
-├── dist/index.js                # 编译后的 ESM 库入口
-├── dist/index.cjs              # 既有 require('memoria') 兼容 facade
-├── src/
-│   ├── core/                    # Pipeline / Stage / Context 编排内核
-│   ├── engine.ts                # MemoryEngine 生命周期（init / flush / search / delete / close）
-│   ├── config/                  # DEFAULT_CONFIG 与 mergeConfig
-│   ├── pipelines/               # ingest / search / delete 三级主管线
-│   ├── stages/                  # ingestion / retrieval / memo / postprocess 算子
-│   ├── algorithms/              # EPA / 残差金字塔 / SVD / wave / topology
-│   ├── providers/               # 嵌入 Provider + SQLite 元数据 + Rust 向量存储
-│   ├── tdb/                     # TDB 冷知识库（TriviumDB 适配）
-│   ├── compat/                  # KnowledgeBaseAdapter 兼容面
-│   └── interfaces/              # EmbeddingProvider / VectorStore / MetadataStore 契约
-├── rust-vexus-lite/             # Rust N-API 原生向量引擎（6 平台预编译二进制）
-├── tests/                       # TypeScript 测试源（编译到 dist-test/ 后由 node --test 执行）
-├── examples/
-│   ├── demo/                    # 离线章节演示（零配置：main.ts + fake-embedding.ts）
-│   └── real-embed/              # 真实嵌入记忆召回演示（demo-recall.ts）
-├── docs/                        # 文档导航见下表
-├── LICENSE                      # MIT © 2026 Arsvine Zhu
-└── CHANGELOG.md
-```
-
-默认文件数据布局：`data/content/**/*.mdx` 是应备份和版本控制的原始来源；
-`data/memoria/memory.sqlite` 保存主引擎文件、块、标签和持久向量 BLOB，
-`data/memoria/indexes/` 是可从 SQLite 重建的 `.usearch` 派生缓存；TDB 对应
-`data/knowledge/`、`data/tdb/knowledge.sqlite` 和 `data/tdb/indexes/`。
-MDX front matter 的 `tags` 进入标签管线，其他字段进入文件 metadata；正文才会
-被分块和嵌入，MDX/JSX 不会执行。
-
-## 快速开始
-
-### 离线运行（零配置、零网络）
-
-```bash
-git clone <你的仓库地址> && cd memoria
+```powershell
 corepack pnpm install --frozen-lockfile
-corepack pnpm typecheck
-corepack pnpm build
 corepack pnpm build:test
-node dist-test/examples/demo/main.js   # 6 章节完整演示：初始化 → 摄取 → 检索 → 删除 → 关闭
+node dist-test/examples/demo/main.js
 ```
 
-Rust 向量引擎二进制随仓库分发，**无需本地 Rust 工具链**；如需自行重建，执行
-`cd rust-vexus-lite && corepack pnpm exec napi build --platform --release`。
+演示会读取 `data/content/` 中的三篇 MDX 文件，执行初始化、摄入、搜索、删除和
+关闭六个步骤，并把演示用的数据库和索引写入 `data/memoria/demo/`。源文件不会被
+覆盖。详细说明见 [examples/demo/README.md](examples/demo/README.md)。
 
-核心摄入 API 以逻辑内容为中心，不要求 filesystem path：
+## 最小接入示例
+
+下面的例子展示逻辑接口的调用形状。它需要应用自己提供一个嵌入 Provider；仓库自带
+的离线 Provider 只用于 [离线演示](examples/demo/README.md)，不是主包的公开导出。
 
 ```ts
 import { createMemoryEngine } from "memoria";
-import { FakeEmbeddingProvider } from "./examples/demo/fake-embedding.js";
+import type { EmbeddingProviderContract } from "memoria";
+
+declare const embeddingProvider: EmbeddingProviderContract;
 
 const engine = createMemoryEngine({
   config: {
+    dataPath: "./data",
     dimension: 128,
-    // 未指定时默认使用 ./data/memoria/indexes
     topK: 3,
-    tagMemoV9Enabled: true,
-    epaProjectionEnabled: true,
-    residualPyramidEnabled: true,
   },
-  // 未指定时默认使用 ./data/memoria/memory.sqlite
-  embeddingProvider: new FakeEmbeddingProvider(128),
+  embeddingProvider,
 });
 
 async function main(): Promise<void> {
   await engine.initialize();
+
   await engine.ingest({
     id: "demo:coffee",
-    content: "手冲咖啡的萃取参数与水温记录。",
-    source: { type: "demo" },
+    content: "手冲咖啡：水温约 93 度，粉水比 1:15。",
     revision: "1",
     metadata: { topic: "coffee" },
   });
-  const stats = await engine.getStats();
-  console.log(
-    `已入库：文档 ${stats.files}｜块 ${stats.chunks}｜向量 ${stats.vectorStats.totalVectors}`,
-  );
 
-  const out = await engine.search("手冲 萃取参数", { topK: 3 });
-  for (const result of out.results)
-    console.log(`[${result.score}] ${result.documentId}: ${result.content}`);
+  const result = await engine.search("手冲 萃取参数", { topK: 3 });
+  console.log(result.results);
 
   await engine.remove("demo:coffee");
   await engine.close();
@@ -128,144 +70,77 @@ void main().catch((error) => {
 });
 ```
 
-filesystem 摄入保留为 adapter；它负责读取文件、扫描和 watcher，再把完整快照交给引擎：
+如果你的数据已经是文件，可以使用 `memoria/adapters/filesystem`。文件适配器负责
+扫描、读取和监听文件；`MemoryEngine` 负责实际摄入和检索。推荐的文件位置是
+`data/content/<分类>/<文件名>.mdx`。
 
-```ts
-import { createMemoryEngine } from "memoria";
-import FilesystemIngestionAdapter from "memoria/adapters/filesystem";
+## MDX 文件格式
 
-const engine = createMemoryEngine({
-  config: { rootPath: "./data/content" },
-});
-const files = new FilesystemIngestionAdapter(engine, {
-  rootPath: "./data/content",
-  extensions: [".mdx", ".md"],
-});
+文件可以在开头写 YAML front matter。`tags` 会进入标签流程，其他字段会作为结果
+中的 metadata；正文才会被分块和嵌入。MDX/JSX 只作为文字读取，不会被执行。
 
-await engine.initialize();
-await files.scan();
-await files.start();
-// ...让 watcher 接收变更...
-await files.close();
-await engine.close();
+```mdx
+---
+title: 手冲咖啡
+tags:
+  - 咖啡
+  - 生活记录
+recordedAt: 2026-08-08T09:30:00-06:00
+source: personal-journal
+---
+
+# 正文
+
+今天手冲咖啡：水温约 93 度，粉水比 1:15。
 ```
 
-### 真实嵌入（DashScope / OpenAI 兼容）
+没有 front matter 的 `.md` 文件仍然可以读取。只改标题或标签时，系统会尽量复用
+正文向量，不重复计算正文嵌入。数据目录的备份和清理规则见
+[data/README.md](data/README.md)。
 
-在 `examples/real-embed` 下放置 `.env`（`EMBED_API_KEY=sk-xxxx`），然后：
+## 使用真实嵌入
 
-```bash
+真实嵌入是可选的。把 `EMBED_API_KEY=...` 写入
+`examples/real-embed/.env`，然后运行：
+
+```powershell
 corepack pnpm build:test
 node dist-test/examples/real-embed/demo-recall.js
 ```
 
-它会用真实模型（qwen3.7-text-embedding，1024 维）灌入 10 篇中文文档并执行
-6 组难度递增的语义召回（直配 / 同义改写 / 跨主题联想 / 概念等价 / 模糊记忆）。
-在自有代码中接入真实嵌入：
+这个示例使用 DashScope 的 `qwen3.7-text-embedding`，维度为 1024。它会读取
+测试资料并打印六组查询的召回结果。完整前提和无密钥行为见
+[examples/real-embed/README.md](examples/real-embed/README.md)。
 
-```ts
-import { join } from "node:path";
+## 文档入口
 
-import { createMemoryEngine } from "memoria";
-import DashScopeEmbeddingProvider from "memoria/providers/dashscope";
-// OpenAI 兼容 provider：import OpenAIEmbeddingProvider from "memoria/providers/openai";
+| 需要了解的内容         | 文档                                               |
+| ---------------------- | -------------------------------------------------- |
+| 所有项目入口和目录边界 | [INDEX.md](INDEX.md)                               |
+| 第一次接入             | [docs/GUIDE.md](docs/GUIDE.md)                     |
+| 配置和默认值           | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)     |
+| 公开 API 和类型        | [docs/API.md](docs/API.md)                         |
+| 架构和生命周期         | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)       |
+| 持久化、恢复和备份     | [docs/PERSISTENCE.md](docs/PERSISTENCE.md)         |
+| 测试和验证             | [docs/TESTING.md](docs/TESTING.md)                 |
+| 常见故障               | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
+| 全部专题文档           | [docs/INDEX.md](docs/INDEX.md)                     |
+| 参与开发               | [CONTRIBUTING.md](CONTRIBUTING.md)                 |
 
-const rootPath = join(process.cwd(), "data", "content");
-const storePath = join(process.cwd(), "data", "memoria", "indexes");
+## 运行检查
 
-const engine = createMemoryEngine({
-  config: {
-    dimension: 1024,
-    rootPath,
-    storePath,
-    chunkMaxTokens: 600,
-    chunkOverlapTokens: 96,
-  },
-  dbPath: join(process.cwd(), "data", "memoria", "memory.sqlite"),
-  embeddingProvider: new DashScopeEmbeddingProvider({
-    apiKey: process.env.EMBED_API_KEY ?? "",
-    model: "qwen3.7-text-embedding",
-    dimension: 1024,
-  }),
-});
-```
-
-### 兼容层：KnowledgeBaseAdapter
-
-面向既有调用的 drop-in 接口，方法：`initialize / flushBatch / getStats / search /
-removeDocument / shutdown`（另有 `runExternalFileMutation`、`getEPAAnalysis` 等扩展面）：
-
-```ts
-import { createMemoryEngine, KnowledgeBaseAdapter } from "memoria";
-
-async function main(): Promise<void> {
-  const kb = new KnowledgeBaseAdapter({ engine: createMemoryEngine({/* ... */}) });
-  const docs: Array<{ path: string }> = [{ path: "/abs/path/file.md" }];
-
-  await kb.initialize();
-  await kb.flushBatch(docs); // [{ path }]
-  const stats = await kb.getStats(); // { files, chunks, tags, vectorStats }
-  const out = await kb.search("量子纠缠 叠加态"); // 文本走引擎检索管线
-  await kb.removeDocument("/abs/path/file.md"); // 移除单个已索引文件
-  await kb.shutdown();
-  void stats;
-  void out;
-}
-
-void main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
-```
-
-## 示例
-
-| 目录                   | 说明                                                                                                                                                                                   |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `examples/demo/`       | 离线章节演示：`main.ts`（6 章节生命周期）+ `fake-embedding.ts`（128 维确定性伪嵌入，接口与真实 Provider 一致），编译后从 `dist-test/examples/demo/main.js` 运行                        |
-| `examples/real-embed/` | 真实 API 记忆召回：`demo-recall.ts` 用 qwen3.7-text-embedding 灌库 10 篇中文文档并做 6 组语义召回排序（需 `EMBED_API_KEY`，编译后运行 `dist-test/examples/real-embed/demo-recall.js`） |
-
-## 文档导航
-
-| 目录                                                   | 主题                                                                   |
-| ------------------------------------------------------ | ---------------------------------------------------------------------- |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)           | 体系总览：引擎生命周期、管线编排与存储链                               |
-| [docs/GUIDE.md](docs/GUIDE.md)                         | 快速上手：安装、配置、最小接入                                         |
-| [docs/FUNCTIONS.md](docs/FUNCTIONS.md)                 | 完整功能说明：检索 / 记忆体 / 标签 / TDB 全清单                        |
-| [docs/ALGORITHMS.md](docs/ALGORITHMS.md)               | 算法族数学说明：TagMemo 浪潮 / EPA / 残差金字塔 / SVD                  |
-| [docs/EMBEDDING.md](docs/EMBEDDING.md)                 | 嵌入 Provider 体系：接口契约与三种实现                                 |
-| [docs/PERSISTENCE.md](docs/PERSISTENCE.md)             | 持久化与重启恢复：SQLite + Rust 双写盘 / 懒加载                        |
-| [docs/API.md](docs/API.md)                             | 根入口 41 个导出、逻辑摄入 API、adapter/error 子路径与 TypeScript 类型 |
-| [docs/NATIVE-MATRIX.md](docs/NATIVE-MATRIX.md)         | 实际随包分发的 N-API 二进制矩阵与 smoke 验证                           |
-| [docs/RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md) | 发布前工具链、公共边界与 tarball 验收清单                              |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)     | 常见问题：构建 / 维度不匹配 / 索引恢复                                 |
-
-## 测试
-
-```bash
-corepack pnpm test
-```
-
-本地发布门（不依赖 GitHub Actions）：
-
-```bash
+```powershell
+corepack pnpm verify:docs
 corepack pnpm format:check
 corepack pnpm lint
 corepack pnpm typecheck
 corepack pnpm build
-corepack pnpm typecheck:public
-corepack pnpm test:native
-corepack pnpm verify:pack
-corepack pnpm pack --dry-run
-git diff --check
+corepack pnpm test
 ```
 
-测试数量以当前命令的实际输出为准；没有 `EMBED_API_KEY` 时，真实 API 集成测试会明确 skip，
-不会把网络不可用伪装成通过。验证覆盖算法、管线、阶段、Provider、TDB、兼容层、逻辑摄入、
-filesystem adapter、恢复和打包 consumer。
+真实嵌入测试没有密钥时会明确跳过；这不等同于真实网络链路已验证。完整检查和 CI
+说明见 [docs/TESTING.md](docs/TESTING.md)。
 
-## License 与贡献
+## 许可证
 
-MIT © 2026 Arsvine Zhu。欢迎提交 issue / PR：请遵循现有代码风格（node --test 无依赖测试），
-提交前跑通 `corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm build`，
-并向 CHANGELOG 追加变更说明。
+MIT © 2026 Arsvine Zhu

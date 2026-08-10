@@ -1,5 +1,6 @@
 node_modules/
 dist/
+eval/
 dist-test/
 *.tsbuildinfo
 rust-vexus-lite/node_modules/

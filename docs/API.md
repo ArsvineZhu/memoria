@@ -11,11 +11,11 @@
 > ```ts
 > import { createRequire } from "node:module";
 > const require = createRequire(import.meta.url);
-> Object.keys(require("memoria")); // 历史顺序，精确 41 个
+> Object.keys(require("memoria")); // 当前 CommonJS 运行时导出
 > ```
 >
-> 分组名与 `index.ts` 顶部注释一致，共 10 组；每个符号给出签名 / 参数 / 返回 /
-> 默认值。类型标注以 TypeScript 源码和 `dist/index.d.ts` 为准。
+> 分组名与 `index.ts` 顶部注释一致；每个符号给出签名、参数、返回值和默认值。
+> 类型标注以 TypeScript 源码和 `dist/index.d.ts` 为准。
 
 ## 0. 全量导出清单（实测输出）
 
@@ -32,7 +32,8 @@ computeFirWeights, adjacencyFromEdges, computeRiverObservability,
 decodeVectorBlob, encodeVectorBlob, prepareTextForEmbedding, extractTags
 ```
 
-（根运行时共 41 个导出符号；下列分组按 `src/index.ts` 注释划分）
+上表对应当前 `src/index.ts` 的运行时导出；如需核对构建产物，可重新运行上方的
+`Object.keys` 示例。下列分组按 `src/index.ts` 注释划分。
 
 ## 1. Core
 
@@ -44,16 +45,16 @@ decodeVectorBlob, encodeVectorBlob, prepareTextForEmbedding, extractTags
 
 ## 2. 引擎工厂 + 配置加载
 
-| 符号                                                | 签名                                                                                                                                                                                         | 说明                                                          |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `createMemoryEngine(options?)`                      | `options: {config?, dbPath?, ragParamsPath?, ragParams?, embeddingProvider?, vectorStore?, metadataStore?, ctx?, ingestOptions?, deleteOptions?, searchOptions?, onReady?}` → `MemoryEngine` | 工厂：构建（不打开）引擎                                      |
-| `MemoryEngine`                                      | `new MemoryEngine(options)`                                                                                                                                                                  | 引擎类，生命周期方法见下                                      |
-| `DEFAULT_CONFIG`                                    | 对象                                                                                                                                                                                         | 全量默认配置（字段表见 GUIDE.md §3）                          |
-| `mergeConfig(userConfig)`                           | `(object\|null\|undefined) → object`                                                                                                                                                         | 默认合并：一层深合并对象、整替换数组/标量、`undefined` 不覆盖 |
-| `loadRagParams({path?, overrides?, defaults?})`     | `→ Promise<object>`                                                                                                                                                                          | 从 rag_params.json 异步加载（缺失文件 → `{}`；根必须为对象）  |
-| `loadRagParamsSync({path?, overrides?, defaults?})` | `→ object`                                                                                                                                                                                   | 同步变体；文件不存在则跳过                                    |
-| `RAG_PARAMS_DEFAULTS`                               | `{}`                                                                                                                                                                                         | 默认装载基                                                    |
-| `KnowledgeBaseAdapter`                              | `new KnowledgeBaseAdapter({engine})` （engine 必填，否则 TypeError）                                                                                                                         | KBM 兼容层，方法见 FUNCTIONS §10（下节）                      |
+| 符号                                                | 签名                                                                                                                                                                                         | 说明                                                            |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `createMemoryEngine(options?)`                      | `options: {config?, dbPath?, ragParamsPath?, ragParams?, embeddingProvider?, vectorStore?, metadataStore?, ctx?, ingestOptions?, deleteOptions?, searchOptions?, onReady?}` → `MemoryEngine` | 工厂：构建（不打开）引擎                                        |
+| `MemoryEngine`                                      | `new MemoryEngine(options)`                                                                                                                                                                  | 引擎类，生命周期方法见下                                        |
+| `DEFAULT_CONFIG`                                    | 对象                                                                                                                                                                                         | 全量默认配置（字段表见 [CONFIGURATION.md](./CONFIGURATION.md)） |
+| `mergeConfig(userConfig)`                           | `(object\|null\|undefined) → object`                                                                                                                                                         | 默认合并：一层深合并对象、整替换数组/标量、`undefined` 不覆盖   |
+| `loadRagParams({path?, overrides?, defaults?})`     | `→ Promise<object>`                                                                                                                                                                          | 从 rag_params.json 异步加载（缺失文件 → `{}`；根必须为对象）    |
+| `loadRagParamsSync({path?, overrides?, defaults?})` | `→ object`                                                                                                                                                                                   | 同步变体；文件不存在则跳过                                      |
+| `RAG_PARAMS_DEFAULTS`                               | `{}`                                                                                                                                                                                         | 默认装载基                                                      |
+| `KnowledgeBaseAdapter`                              | `new KnowledgeBaseAdapter({engine})` （engine 必填，否则 TypeError）                                                                                                                         | KBM 兼容层；方法面见下方清单和 [FUNCTIONS.md](FUNCTIONS.md) §1  |
 
 **MemoryEngine 实例方法**（类型与实现摘自 `src/engine.ts`）：
 
@@ -69,7 +70,18 @@ decodeVectorBlob, encodeVectorBlob, prepareTextForEmbedding, extractTags
 
 `MemoryDocumentInput` 至少包含 `{ id: string, content: string }`，可选 `revision`、
 `source` 与 JSON-safe `metadata`。文件系统入口位于 `memoria/adapters/filesystem`，
-错误类型位于 `memoria/errors`；两者不增加根入口的 41 个运行时导出。
+错误类型位于 `memoria/errors`；文件适配器位于 `memoria/adapters/filesystem`，两者都不增加根入口运行时导出。
+
+**子路径导出**：
+
+| 子路径                        | 主要导出                         | 模块边界                    |
+| ----------------------------- | -------------------------------- | --------------------------- |
+| `memoria/adapters/filesystem` | `FilesystemIngestionAdapter`     | 文件扫描、读取和监听        |
+| `memoria/errors`              | `MemoriaError`、`asMemoriaError` | 结构化错误类型和转换函数    |
+| `memoria/providers/openai`    | `OpenAIEmbeddingProvider`        | OpenAI 兼容嵌入 Provider    |
+| `memoria/providers/dashscope` | `DashScopeEmbeddingProvider`     | DashScope 原生嵌入 Provider |
+
+这些子路径当前提供 ESM 入口和类型声明；CommonJS 兼容仅由根包入口提供。
 
 `search()` 的 scope precedence 是：显式 `indexNames` / `diaryNames` → 只检索该范围；
 没有显式 scope → 检索 SQLite authority 发现的全部内容索引；只有 scope discovery
@@ -86,7 +98,7 @@ getChunksByFilePaths`，另有只读 `initialized` / `db` / `config` 属性
 （legacy search 的向量路径返回 `{chunkId, text, score, sourceFile, fullPath,
 matchedTags, tagMatchCount, coreTagsMatched, boostFactor, tagMatchScore}`）。
 
-## 3. TDB 冷知识库（Phase 6）
+## 3. TDB 冷知识库
 
 | 符号                | 签名                                                                                                   | 说明                                                                                                                                                                                                                                                                                       |
 | ------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -163,7 +175,7 @@ matchedTags, tagMatchCount, coreTagsMatched, boostFactor, tagMatchScore}`）。
 | ------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `decodeVectorBlob`        | `(blob, dimension, label='vector', {logPrefix?}) → Float32Array\|null` | SQLite BLOB → Float32Array；字节数 `dim×4` 不符 → null；未对齐 Buffer 先复制                                      |
 | `encodeVectorBlob`        | `(vector) → Buffer`                                                    | Float32Array → 视图范围 Buffer                                                                                    |
-| `prepareTextForEmbedding` | `(text) → string`                                                      | 剥离装饰 emoji / `<                                                                                               | x   | >`管道符、规整空白换行；空 →`'[EMPTY_CONTENT]'` |
+| `prepareTextForEmbedding` | `(text) → string`                                                      | 剥离装饰 emoji 和形如 `<x>` 的管道符，规整空白换行；空文本 → `'[EMPTY_CONTENT]'`                                  |
 | `extractTags`             | `(content, config?, options?) → string[]`                              | 文末连续 `Tag:` 行解析；黑名单/超集黑名单/长度上限（中文 20 / 非中文 40）/日期剔除/去重/`maxTags` 截断（默认 50） |
 
 验证视角：上述签名与 `dist/index.js` / `dist/index.d.ts` 实际产物逐项对照；行为验证见对应

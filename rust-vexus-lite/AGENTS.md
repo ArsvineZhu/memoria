@@ -1,24 +1,42 @@
-# rust-vexus-lite 子项目知识库
+# Agent Instructions: `rust-vexus-lite/`
 
-## 概览
-`rust-vexus-lite/` 是 Rust N-API 向量/索引子项目，为主 Node 运行时提供性能敏感路径（向量检索与相关计算）的原生能力。
+## Scope and role
 
-## 快速定位
-| 任务 | 位置 | 说明 |
-|------|------|------|
-| 构建脚本 | `rust-vexus-lite/package.json` | `napi build` 发布/调试命令 |
-| Rust 源码 | `rust-vexus-lite/src/` | 原生实现细节 |
-| 包元数据 | `rust-vexus-lite/Cargo.toml` | 依赖与构建配置 |
-| JS 加载边界 | `rust-vexus-lite/index.js` | 平台 `.node` 产物解析与导出 |
-| 主调用入口 | `KnowledgeBaseManager.js` | 主运行时集成点 |
+This directory contains the Rust N-API vector/index binding used by the main
+Node runtime. These instructions apply only to this subtree. The repository
+root `AGENTS.md` remains authoritative for cross-cutting work.
 
-## 约定
-- 使用 `@napi-rs/cli` 构建（`napi build --platform --release`）。
-- Node 兼容范围以 `engines.node` 为准。
-- 变更 Rust 导出接口时需保持 JS 侧 ABI/签名兼容。
+## Source of truth
 
-## 反模式
-- 不要修改原生导出符号/接口名而不同步更新 JS 调用方。
-- 不要假设单平台构建，当前脚本包含多平台产物策略。
-- 不要移除发布链路依赖的原生产物命名与加载约定。
-- 不要修改 Rust 侧 DB 恢复/查询假设而不核对 `KnowledgeBaseManager` 调用路径。
+- Rust implementation: `src/`
+- N-API metadata and build settings: `Cargo.toml`, `package.json`
+- Native loader and exported types: `index.js`, `index.d.ts`
+- Platform artifacts: root-level `*.node` files
+- TypeScript host adapter: `../src/providers/vexus-vector-store.ts`
+- Native tests: `../tests/native/` and Rust tests in `src/`
+
+The current host integration is through the TypeScript Vexus adapter, not a
+legacy JavaScript manager.
+
+## Required workflow
+
+1. Inspect the loader, Rust exports, TypeScript adapter, and native tests before
+   changing an exported symbol, argument, return shape, or artifact name.
+2. Preserve the loader ABI, platform filename convention, and CommonJS package
+   boundary unless the root package and all consumers are updated together.
+3. Run focused Rust checks for Rust changes:
+   `cargo fmt --check`, `cargo test`, and `cargo build --release`.
+4. Run the root native/package checks before handoff:
+   `corepack pnpm test:native`, `corepack pnpm verify:pack`, and the relevant
+   root build/type checks.
+5. Update the corresponding advanced documentation when the public native
+   surface, supported platform matrix, build process, or failure behavior
+   changes.
+
+## Boundaries
+
+- Do not edit `eval/`; it is Git-ignored and outside documentation scope.
+- Do not commit generated `target/`, `node_modules/`, `dist/`, or temporary
+  native build output.
+- Do not change Rust persistence/recovery behavior without checking the
+  TypeScript lifecycle and persistence contracts.

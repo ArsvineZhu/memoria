@@ -1,388 +1,171 @@
-# GUIDE — 快速上手
+# 快速上手
 
-> 面向接入方：从零开始安装、最小链路、配置速查、删除语义与指标说明。
-> 所有字段名与默认值均摘自 `src/config/default-config.ts`，行为摘自 `src/engine.ts`；发布运行时使用 `dist/`。
+本文面向第一次使用 `memoria` 的人，按“安装 → 离线运行 → 保存文字 → 读取文件 →
+搜索和删除”的顺序说明。完整配置请看
+[CONFIGURATION.md](CONFIGURATION.md)，公开接口请看 [API.md](API.md)。
 
-## 1. 前置条件
+## 1. 准备环境
 
-- **Node.js ≥ 24.18.1 < 25**（当前 LTS；`fetch` / `AbortController` 为全局可用）
-- **TypeScript 7.0.2**（源码构建与类型检查；发布包优先使用 `dist/` 的 ESM）
-- **pnpm 11.20.0**（通过 Corepack 启用；依赖：`better-sqlite3`、`@dqbd/tiktoken`、`chokidar`、`yaml`）
-- `corepack pnpm install --frozen-lockfile`（安装锁定依赖）
-- `pnpm typecheck && pnpm build`（严格类型检查并生成 `dist/`）
-- **Rust 向量引擎二进制**：`rust-vexus-lite/*.node` 随仓库分发（当前平台预编译），
-  无需本地 Rust 工具链。仅在需要自行重建时执行：
-  ```bash
-  cd rust-vexus-lite && pnpm exec napi build --platform --release && cd ..
-  ```
-- 联网嵌入（可选）：`EMBED_API_KEY` 或直接在构造参数传 `apiKey`；离线伪嵌入不需要。
+- Node.js：`>=24.18.1 <25`；
+- pnpm：`11.20.0`，通过 Corepack 使用；
+- 当前平台可用的 `rust-vexus-lite` 原生文件；
+- 依赖安装命令：
 
-## 2. 最小链路（离线可跑，TypeScript + ESM）
+```powershell
+corepack pnpm install --frozen-lockfile
+```
 
-以 `examples/demo/fake-embedding.ts` 的离线确定性嵌入为例——无需 API Key、无网络、
-结果可复现。假设脚本与仓库根目录同级：
+如果只想确认仓库能运行，先执行离线演示：
+
+```powershell
+corepack pnpm build:test
+node dist-test/examples/demo/main.js
+```
+
+它不访问网络、不需要密钥，使用固定的 128 维离线嵌入。演示源文件在
+`data/content/`，演示生成内容在 `data/memoria/demo/`。
+
+## 2. 保存和搜索一段文字
+
+`MemoryEngine` 的逻辑接口不要求文件路径，适合由应用自己管理文档：
 
 ```ts
-import { join } from "node:path";
-
+// 这是调用形状示例；运行时请替换为应用自己的嵌入 Provider。
 import { createMemoryEngine } from "memoria";
-import { FakeEmbeddingProvider } from "./dist-test/examples/demo/fake-embedding.js";
+import type { EmbeddingProviderContract } from "memoria";
 
-const root = process.cwd();
+declare const embeddingProvider: EmbeddingProviderContract;
 
 const engine = createMemoryEngine({
   config: {
-    dimension: 128, // 必须与 Provider 维度一致
-    dataPath: join(root, "data"), // 派生 data/content 与 data/memoria/*
-    topK: 3,
+    dataPath: "./data",
+    dimension: 128,
+    topK: 5,
   },
-  embeddingProvider: new FakeEmbeddingProvider(128), // 离线确定性伪嵌入
+  embeddingProvider,
 });
 
-async function main(): Promise<void> {
-  await engine.initialize(); // 加载 rag 参数、置就绪
-  await engine.ingest({
-    id: "demo:coffee",
-    content: "今天手冲咖啡：水温 93 度左右，粉水比 1:15，浅烘焙豆子香气明亮。",
-    revision: "1",
-    metadata: { topic: "coffee" },
-  });
+await engine.initialize();
 
-  const stats = await engine.getStats();
-  console.log(
-    `已入库：文件 ${stats.files}｜块 ${stats.chunks}｜向量 ${stats.vectorStats.totalVectors}`,
-  );
-
-  const out = await engine.search("手冲 萃取参数", { topK: 3 });
-  for (const r of out.results)
-    console.log(`[${r.score}] ${r.documentId}: ${r.content}`);
-
-  await engine.remove("demo:coffee");
-  await engine.close();
-}
-
-void main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+await engine.ingest({
+  id: "note:coffee",
+  content: "手冲咖啡：水温 93 度，粉水比 1:15。",
+  revision: "1",
+  metadata: { topic: "coffee" },
 });
+
+const found = await engine.search("手冲 萃取参数", { topK: 3 });
+console.log(found.results);
+
+await engine.remove("note:coffee");
+await engine.close();
 ```
 
-文件系统摄入的默认数据根是 `data/content/`，推荐把一篇记忆保存为
-`data/content/life/coffee.mdx`：
+使用自己的嵌入 Provider 时，`embeddingProvider.getDimension()` 必须和
+`config.dimension` 相同。维度不同时，向量不能写入原索引；更换维度后需要重新
+摄入全部文档。
+
+## 3. 从文件摄入
+
+推荐的文件目录如下：
+
+```text
+data/
+├─ content/                 # 可备份的源文件
+│  ├─ life/coffee.mdx
+│  └─ memory/example.mdx
+├─ memoria/                  # 主引擎生成状态
+│  ├─ memory.sqlite
+│  └─ indexes/
+└─ tdb/                      # TDB 生成状态
+```
+
+MDX 文件开头可以写 front matter：
 
 ```mdx
 ---
 title: 手冲咖啡
 tags:
   - 咖啡
-  - 生活记录
 recordedAt: 2026-08-08T09:30:00-06:00
-source: personal-journal
 ---
 
 # 正文
 
-今天手冲咖啡：水温 93 度左右，粉水比 1:15，浅烘焙豆子香气明亮。
+正文会被读取、分块和嵌入。
 ```
 
-`tags` 会进入既有标签抽取/向量链路；其他 front matter 键写入
-`files.metadata_json`，并在结果 hydration 后出现在 `metadata`。front matter 不参与
-分块和嵌入，MDX 的 JSX/import/export 只按文本处理，不会执行。只修改 front matter
-时会复用正文向量并执行 metadata-only 更新。没有 front matter 的 `.md` 仍兼容，文末
-连续 `Tag:` 行也仍可使用。
+规则很简单：
 
-零网络运行 `pnpm build:test && node dist-test/examples/demo/main.js` 可看 6 章节完整生命周期演示；示例读取
-仓库的 `data/content/**/*.mdx`，只在 `data/memoria/demo/` 写入 SQLite 与向量索引。
+- `tags` 会加入标签；
+- 其他 JSON 兼容字段会进入结果的 `metadata`；
+- front matter 不会进入正文分块；
+- MDX/JSX 不会执行；
+- 没有 front matter 的 `.md` 仍可读取；
+- 只修改 front matter 时，正文向量可以复用。
 
-### 真实嵌入（DashScope / OpenAI 兼容）
+需要扫描目录或监听文件变化时，使用 `memoria/adapters/filesystem`。适配器负责
+读取和报告文件变化，真正的内容写入仍由 `MemoryEngine` 完成。文件适配器的完整
+参数以 [API.md](API.md) 和 `src/adapters/filesystem-ingestion-adapter.ts` 为准。
 
-```ts
-import { join } from "node:path";
+## 4. 常用操作
 
-import { createMemoryEngine } from "memoria";
-import DashScopeEmbeddingProvider from "./src/providers/dashscope-embedding-provider.js";
+| 操作          | 调用                                   | 结果                             |
+| ------------- | -------------------------------------- | -------------------------------- |
+| 初始化        | `await engine.initialize()`            | 打开数据库、恢复或重建索引       |
+| 写入/更新文字 | `await engine.ingest(document)`        | 写入一篇逻辑文档                 |
+| 搜索          | `await engine.search(query, options?)` | 返回结果信封和结果数组           |
+| 删除逻辑文档  | `await engine.remove(documentId)`      | 按文档 ID 删除，不依赖原文件路径 |
+| 删除文件      | `await engine.deleteFile(filePath)`    | 删除单个文件及其块向量           |
+| 兼容文件摄入  | `await engine.flushBatch(files)`       | 处理文件快照或路径               |
+| 查看统计      | `await engine.getStats()`              | 文件、块、标签、索引和健康状态   |
+| 关闭          | `await engine.close()`                 | 等待写入、保存索引并关闭资源     |
 
-const engine = createMemoryEngine({
-  config: { dimension: 1024 }, // 与 model 输出维度一致
-  dbPath: join(process.cwd(), "memory.sqlite"),
-  embeddingProvider: new DashScopeEmbeddingProvider({
-    apiKey: process.env.EMBED_API_KEY ?? "",
-    model: "qwen3.7-text-embedding",
-    dimension: 1024,
-  }),
-});
+删除未知文档是幂等的。标签记录可能被其他文件共享，因此删除一篇文档不会盲目
+删除全局标签。项目没有一个“清空全部数据”的安全快捷 API；需要清空时应使用新
+的 `dbPath`/`storePath`，或由应用逐项删除并确认备份。
+
+## 5. 最常用的配置
+
+| 目的                 | 配置                                      |
+| -------------------- | ----------------------------------------- |
+| 改变所有默认数据位置 | `dataPath`                                |
+| 指定文件源目录       | `rootPath`                                |
+| 指定主向量索引目录   | `storePath`                               |
+| 指定主 SQLite 文件   | `dbPath` 或顶层 `options.dbPath`          |
+| 改变返回条数         | `topK`                                    |
+| 打开标签/记忆算法    | 对应的 `...Enabled` 开关                  |
+| 改变分块大小         | `chunkMaxTokens`、`chunkOverlapTokens`    |
+| 改变向量维度         | `dimension`，同时更换 Provider 的输出维度 |
+
+所有字段、默认值、别名和 TDB 参数见
+[CONFIGURATION.md](CONFIGURATION.md)。
+
+## 6. 使用真实嵌入
+
+真实嵌入不是运行离线示例的必要条件。要运行现成演示：
+
+1. 在 `examples/real-embed/.env` 写入 `EMBED_API_KEY=...`；
+2. 运行：
+
+```powershell
+corepack pnpm build:test
+node dist-test/examples/real-embed/demo-recall.js
 ```
 
-详见 [EMBEDDING.md](./EMBEDDING.md)。
+当前演示使用 DashScope 的 `qwen3.7-text-embedding` 和 1024 维向量。没有密钥时会
+输出明确提示并退出，不会把空结果当作成功。详见
+[../examples/real-embed/README.md](../examples/real-embed/README.md)。
 
-## 3. 配置速查表（`DEFAULT_CONFIG` 全字段）
+## 7. 兼容旧调用
 
-### 路径类
+已有应用可以使用 `KnowledgeBaseAdapter`。它提供
+`initialize`、`flushBatch`、`getStats`、`search`、`removeDocument` 和 `shutdown`
+等兼容方法；新的应用优先使用 `MemoryEngine` 的逻辑文档接口。
 
-| 字段        | 默认值                         | 说明                                                     |
-| ----------- | ------------------------------ | -------------------------------------------------------- |
-| `dataPath`  | `<cwd>/data`                   | 托管源文件与运行期状态的总目录                           |
-| `rootPath`  | `<cwd>/data/content`           | 文件系统摄入根；相对路径按此目录计算并入库               |
-| `storePath` | `<cwd>/data/memoria/indexes`  | 主引擎向量索引持久化目录                                 |
-| `dbPath`    | `<cwd>/data/memoria/memory.sqlite` | SQLite 元数据路径；构造时 `options.dbPath` 可覆盖     |
+## 8. 下一步
 
-`dataPath` 会派生上述主引擎路径以及 TDB 的 `knowledge`、`tdb/indexes`、
-`tdb/knowledge.sqlite`；显式传入的旧 `rootPath` / `storePath` / `dbPath` 仍优先。
-SQLite 是元数据、块正文和持久向量 BLOB 的权威存储；`.usearch` 索引是可重建的
-派生缓存，缺失或损坏时初始化会从 SQLite 恢复。源码数据应备份/审查
-`data/content/`，不应手工编辑 `data/memoria/` 或 `data/tdb/`。
-
-### 嵌入 Provider
-
-| 字段             | 默认值                          | 说明                               |
-| ---------------- | ------------------------------- | ---------------------------------- |
-| `apiUrl`         | `''`                            | 嵌入 API 基础地址（OpenAI 兼容用） |
-| `apiKey`         | `''`                            | Bearer 密钥                        |
-| `model`          | `'google/gemini-embedding-001'` | 主嵌入模型                         |
-| `modelSig`       | `'gemini-embedding-2-preview'`  | 模型签名（缓存失效用）             |
-| `fallbackModels` | `[]`                            | OpenAI 兼容路径的失败回退链        |
-| `maxBatchItems`  | `32`                            | 每请求最大条目数                   |
-| `maxToken`       | `8000`                          | 单文本 token 上限（超限跳弃）      |
-| `concurrency`    | `5`                             | 并行请求 worker 数                 |
-
-### 向量存储
-
-| 字段                | 默认值   | 说明                           |
-| ------------------- | -------- | ------------------------------ |
-| `dimension`         | `3072`   | 向量维度（Vexus 索引构造维度） |
-| `tagIndexCapacity`  | `50000`  | 新建索引默认容量               |
-| `indexSaveDelay`    | `120000` | 日记索引延迟保存（ms）         |
-| `tagIndexSaveDelay` | `300000` | 标签索引延迟保存（ms）         |
-| `persistTagIndex`   | `false`  | 是否持久化 global_tags 索引    |
-
-### SQLite 元数据
-
-| 字段             | 默认值  | 说明                      |
-| ---------------- | ------- | ------------------------- |
-| `busyTimeout`    | `10000` | SQLite busy_timeout（ms） |
-| `busyRetryDelay` | `100`   | 忙重试间隔（ms）          |
-
-### 摄入（chunking / 标签）
-
-| 字段                                         | 默认值  | 说明                       |
-| -------------------------------------------- | ------- | -------------------------- |
-| `chunkMaxTokens`（别名 `maxTokens`）         | `600`   | 单块 token 上限            |
-| `chunkOverlapTokens`（别名 `overlapTokens`） | `96`    | 相邻块重叠 token           |
-| `tagBlacklist`                               | `[]`    | 标签黑名单（完全匹配剔除） |
-| `tagBlacklistSuper`                          | `[]`    | 超集黑名单（正则删除）     |
-| `maxTagsPerFile`                             | `50`    | 每文件最大标签数           |
-| `cooccurrenceRebuild`                        | `false` | 摄入时触发共现矩阵重建     |
-| `checkpoint`                                 | `false` | 是否写入 kv_store 检查点   |
-| `checkpointInterval`                         | `1`     | 每 N 个文件写一次检查点    |
-
-### 检索门（闸门）
-
-| 字段                                           | 默认值  | 说明             |
-| ---------------------------------------------- | ------- | ---------------- |
-| `epaProjectionEnabled`                         | `true`  | EPA 语义深度信号 |
-| `residualPyramidEnabled`                       | `true`  | 残差金字塔分解   |
-| `tagMemoV9Enabled`                             | `false` | V9 波传播激活    |
-| `tagMemoV10Enabled`                            | `false` | V10 双尺度场扩散 |
-| `riverMemoEnabled`                             | `false` | 河流状态累计重排 |
-| `tagExpansionEnabled`                          | `false` | 标签驱动候选扩展 |
-| `vectorReshapeEnabled`                         | `false` | 余弦向量重排     |
-| `geodesicRerankEnabled`                        | `false` | TagMemo 能量场测地线重排 |
-| `geodesicAlpha`                                 | `0.3`   | 原始分数与归一化测地线分数的混合权重 |
-| `geodesicMinGeoSamples`                        | `4`     | 候选进入测地线计算的最小命中标签数 |
-| `associatorEnabled`                             | `false` | 标签共现 + 向量邻居关联发现 |
-| `externalRerankEnabled`（别名 `useLLMRerank`） | `false` | LLM/外部重排     |
-| `timeDecayEnabled`                             | `false` | 时效衰减         |
-| `truncateEnabled`                              | `false` | 结果截断         |
-| `expansionEnabled`                             | `false` | 同文件关联块扩展 |
-
-### 检索旋钮（topK / 权重 / 融合）
-
-| 字段                               | 默认值          | 说明                                         |
-| ---------------------------------- | --------------- | -------------------------------------------- |
-| `topK`                             | `5`             | 最终返回数（融合后截断）                     |
-| `perIndexK`                        | `null`          | 每索引候选数（缺省用 topK）                  |
-| `indexNames`                       | `null`          | 显式索引名清单（优先于 diaryNames）          |
-| `searchAllIndices`                 | `false`         | 搜索全部日记索引                             |
-| `tagSearchEnabled`                 | `false`         | 标签索引查询 + 展开命中文件                  |
-| `tagIndexName`                     | `'global_tags'` | 标签索引名                                   |
-| `tagK`                             | `10`            | 标签索引每查询命中数                         |
-| `queryExpansion`                   | `1`             | 查询文本变体数（>1 需 `rephraserFn`）        |
-| `queryEpsilon`（别名 `epsilon`）   | `null`          | 查询向量近零掩码阈值                         |
-| `rephraserFn` / `queryRephraserFn` | `null`          | 查询改述注入函数（库自身不调用 LLM）         |
-| `stopWords`                        | `[]`            | BM25 停用词                                  |
-| `tokenizer`                        | `null`          | 自定义分词器（默认 whitespace + CJK 二元组） |
-| `bm25K1`                           | `1.5`           | BM25 词频饱和                                |
-| `bm25B`                            | `0.75`          | BM25 长度归一化                              |
-| `bm25PoolK`                        | `50`            | BM25 最多返回数                              |
-| `minScore`                         | `0`             | 融合后最低保留分                             |
-| `vectorWeight`                     | `0.7`           | 向量源权重（候选融合）                       |
-| `bm25Weight`                       | `0.3`           | BM25 源权重                                  |
-| `hybridAlpha` / `hybridBeta`       | `0.7` / `0.3`   | 融合权重别名（TDB 命名）                     |
-
-说明：`candidateMerger` 内部取 `vectorWeight` 优先，未设置时回退 `hybridAlpha`，
-再回退 0.6；`bm25Weight` 同理最后回退为 `1 - vectorWeight`。融合分 =
-`vectorWeight × (vectorScore/向量源max) + bm25Weight × (bm25Score/BM25源max)`。
-
-### 后处理
-
-| 字段                                    | 默认值  | 说明                                  |
-| --------------------------------------- | ------- | ------------------------------------- |
-| `dedupeEnabled`                         | `true`  | 去重总门（stage 内部执行）            |
-| `dedupeSemantic`                        | `true`  | 语义去重开关                          |
-| `semanticThreshold`                     | `0.92`  | 语义近重复余弦阈值                    |
-| `dedupeMaxResults`（别名 `maxResults`） | `1000`  | 去重后最大保留数                      |
-| `minSemanticCandidates`                 | `2`     | 触发语义去重的候选下限                |
-| `sourcePriority`                        | 见下    | 代表项选择来源优先级                  |
-| `reranker`                              | `null`  | 外部排序器函数（externalReranker 用） |
-| `timeDecayHalfLife`                     | `90`    | 分数半衰期（天）                      |
-| `timeDecayNow`                          | `null`  | 时钟覆盖（测试确定性）                |
-| `timeDecayUpperBound`                   | `null`  | 时间窗口上限（天）                    |
-| `maxContentLength`                      | `800`   | 截断时内容长度上限（字符）            |
-| `truncateEllipsis`                      | `false` | 截断追加 `…`                          |
-| `expandCount`                           | `2`     | 扩展种子数                            |
-| `expansionBoost`                        | `1.15`  | 扩展相似块分数倍率                    |
-| `associateCount`                        | `10`    | 关联阶段最多新增块数                  |
-| `associatorSeeds`                       | `3`     | 关联阶段使用的头部 seed 数             |
-| `associatorTagBoost`                    | `0.45`  | 标签共现 proposal 分数倍率             |
-| `associatorVecK`                        | `5`     | 每个内容索引的向量邻居召回数            |
-| `associatorVecBoost`                    | `0.3`   | 向量 proposal 分数倍率                  |
-| `associatorUseVector`                   | `true`  | 是否执行向量关联通道                    |
-
-`sourcePriority` 默认值：`{ rag: 50, time: 45, bm25_body: 40, bm25_tag: 40,
-continuity: 35, associate: 10, unknown: 0 }`（组合来源优先级，硬去重选代表用）。
-
-启用后，搜索 envelope 会额外携带 `geodesic` 或 `associatorStats` 观测对象；
-这些字段不改变既有 `SearchResult` 公共字段。关联向量只查询本次
-`resolvedIndexNames` 中的内容 diary 索引，并排除 `global_tags`。
-
-### EPA / 金字塔 / V9 / V10 / River 专项
-
-| 字段                                                                   | 默认值          | 说明                                                                |
-| ---------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------- |
-| `epaClusterCount`                                                      | `64`            | 基构建聚类数                                                        |
-| `epaMaxBasisDim`                                                       | `64`            | 基最大维数                                                          |
-| `epaPerCandidateAnalysis`                                              | `false`         | 逐候选 EPA 分析                                                     |
-| `strictOrthogonalization`                                              | `true`          | 严格正交化（幂法）                                                  |
-| `pyramidMaxLevels`（别名 `maxLevels`）                                 | `3` / `3`       | 残差金字塔层数上限                                                  |
-| `pyramidTopK`                                                          | `5`             | 每层标签检索数                                                      |
-| `pyramidMinEnergyRatio`（别名 `minEnergyRatio`）                       | `0.1`           | 残差能量比停止阈值                                                  |
-| `maxSafeHops`                                                          | `4`             | 波传播最大跳数                                                      |
-| `baseMomentum`（别名 `momentum`）                                      | `2.0` / `2.0`   | 基础动量                                                            |
-| `firingThreshold`                                                      | `0.1`           | 发放阈值                                                            |
-| `baseDecay`                                                            | `0.25`          | 每跳基础衰减                                                        |
-| `wormholeDecay`                                                        | `0.7`           | 虫洞（共振）边衰减                                                  |
-| `tensionThreshold`                                                     | `1.0`           | 虫洞判定张力阈值                                                    |
-| `maxNeighborsPerNode`（别名 `branchLimit`）                            | `20` / `20`     | 每节点最多分支                                                      |
-| `returnFlowFactor`                                                     | `0.15`          | 回传流量抑止系数                                                    |
-| `firGamma`                                                             | `0.6`           | FIR 读出头脉冲响应 gamma                                            |
-| `maxPropagationStates`（别名 `stateLimit`）                            | `2000` / `2000` | 传播状态上限                                                        |
-| `pruneAbove`                                                           | `0`             | 按峰值比例剪枝（0=关）                                              |
-| `localAlpha`                                                           | `0.15`          | V10 局部尺度 α                                                      |
-| `transferAlpha`                                                        | `0.55`          | V10 迁移尺度 α                                                      |
-| `localMaxIterations` / `transferMaxIterations` / `solverMaxIterations` | `200`           | 求解迭代上限                                                        |
-| `solverTolerance`                                                      | `1e-9`          | 固定点收敛容差                                                      |
-| `supportMethod`                                                        | `'mass_ratio'`  | 有效支撑方法（mass_ratio/shannon/participation_ratio/spectral_gap） |
-| `localMassRatio` / `transferMassRatio`                                 | `0.8` / `0.9`   | 支撑保留质量比                                                      |
-| `pruneByEnergy` / `minFieldEnergy`                                     | `false` / `0`   | 弱场条目剪枝                                                        |
-| `riverDecay`                                                           | `1.0`           | 河流流逐 tick 衰减                                                  |
-| `riverTopologyCap`                                                     | `0.08`          | 拓扑加成上限                                                        |
-
-### TDB 冷知识库
-
-| 字段                    | 默认值                           | 说明                   |
-| ----------------------- | -------------------------------- | ---------------------- |
-| `tdbEnabled`            | `false`                          | TDB 引擎总开关         |
-| `tdbRootPath`           | `<cwd>/data/knowledge`            | TDB 源文件根目录       |
-| `tdbStorePath`          | `<cwd>/data/tdb/indexes`          | TDB 向量索引目录       |
-| `tdbDbPath`             | `<cwd>/data/tdb/knowledge.sqlite` | TDB 元数据 SQLite      |
-| `tdbModel`              | `'google/gemini-embedding-001'`  | TDB 嵌入模型           |
-| `tdbDimension`          | `3072`                           | TDB 向量维度           |
-| `tdbEmbeddingBatchSize` | `16`                             | TDB 嵌入分批           |
-| `tdbExtensions`         | `['.md','.mdx','.txt','.json','.html']` | 支持的扩展名清单 |
-| `tdbExcludeFolders`     | `['TDBdocs']`                    | 排除目录               |
-| `tdbSyncMode`           | `'normal'`                       | 本地适配器同步模式参数 |
-| `tdbForceQuery`         | `null`                           | 强制查询模式（可留空） |
-| `tdbHybridAlpha`        | `0.7`                            | TDB 融合向量权重       |
-| `tdbTopK`               | `10`                             | TDB 默认 topK          |
-| `tdbMinScore`           | `0.1`                            | TDB 最小得分           |
-| `tdbExpandDepth`        | `1`                              | TDB 关键词扩展深度     |
-| `tdbTimeDecayEnabled`   | `false`                          | TDB 时间衰减开关       |
-
-TDB 搜索同样遵循 scope precedence：`libraries` 显式范围优先；未指定时检索所有
-authoritative libraries。`chunks.vector` 是 SQLite authority 的持久向量列，旧库
-缺失该列会幂等迁移；旧行缺向量时初始化执行一次完整性校验后的 backfill，失败会
-保持 dirty 并使初始化失败。
-
-## 4. 检索参数（search 调用面）
-
-`engine.search(query, options)` 的 `options` 会扁平展开进查询载荷，常用：
-
-- `topK` — 最终结果数
-- `indexNames` / `diaryNames` / `diaryName` — 显式限定索引范围；vector、BM25 与 hydration 共用
-- `indexNames` / `searchAllIndices` — 精细控制索引选择
-- `tagSearchEnabled`、`tagK` — 标签召回
-- 权重类（`vectorWeight` / `bm25Weight` / `hybridAlpha` / `hybridBeta`）、
-  `minScore`、`timeDecayHalfLife` 等会话参数可直接覆盖
-
-Scope precedence：显式 scope → 该 scope；无显式 scope → SQLite authority 发现的全部
-内容索引；只有 scope discovery 不可用时才回退到 `Root`。无 scope 时不再默认只查
-`Root`。`timeDecay` 的唯一执行者是 `TimeDecayStage`：`timeDecayEnabled=false`
-执行零次，启用时执行一次。
-
-返回信封：
-
-```ts
-{
-  query, queries: [{ text, vector }],
-  vectorResults, bm25Results, mergedCandidates,
-  epa?, pyramid?, tagMemo?, riverMemo?,          // 记忆信号（开相应门时出现）
-  results: [ { id, chunkId, content, path, sourceFile, fileId,
-               diaryName, score, similarity, updatedAt, mtime,
-               tags, matchedTags, memoScore?, source, decay?, rerankScore? } ],
-  resultCount
-}
-```
-
-`content` 缺省为完整块文本；`sourceFile` 为 basename，`path` 为存储的相对路径。
-
-## 5. 删除 / 清空语义
-
-- `handleDelete({ path })` / `engine.deleteFile(filePath)`：删除**单文件**
-  文件行 + 块行（FK 级联）+ 该日记索引中的块向量；**标签行与 global_tags 索引
-  不受影响**（标签跨文件共享）。幂等：未知路径返回 `{ deleted: false }`。
-- 返回信封：`{ deleted, fileId, removedChunkIds }`。
-- 全量清空：无一次性 API——遍历历史文件逐个 `handleDelete`，然后删除
-  `storePath` 目录中的持久化索引与 SQLite 文件（或直接换新 storePath/dbPath）。
-
-## 6. 指标（getStats 真实字段）
-
-```ts
-const stats = await engine.getStats();
-// {
-//   files:        number,        // files 表行数（无原始表时按 chunk 去重估算）
-//   chunks:       number,        // chunk 行数
-//   tags:         number,        // 标签行数
-//   diaries:      string[],      // 去重后的日记名列表
-//   lastIndexed:  number|null,   // 最近一次入库时间（毫秒；无则 null）
-//   vectorStats:  { totalVectors, indices, dimension },  // 向量总数/索引数/维度
-//   healthy:      { healthy, issues[] },   // SQLite 健康探针
-//   initialized:  boolean
-// }
-```
-
-注意 `vectorStats.totalVectors` = 所有日记索引 + global_tags 的向量总数
-（块向量 + 标签向量都会计入）。
-
-## 7. 常见场景：更换 Provider 与维度同步
-
-1. **维度必须一致**：`config.dimension` 必须等于
-   `embeddingProvider.getDimension()`；Mismatch 时 DashScope 组会整条丢弃
-   （`_asToFloat32Array` 校验），去重器也会丢弃长度不符的向量。
-2. **换 Provider / 改维度后**：旧库无法复用——使用新 storePath 与新的
-   SQLite 文件（或删旧文件），然后对全部文档重新 `flushBatch`。
-3. `close()` 后再启动：懒加载索引从磁盘恢复；维度不匹配的持久化索引在 load
-   时即报错并重建为新空间。
-
-验证视角：`tests/engine/test-engine.test.ts` 覆盖生命周期与删除语义；
-`tests/providers/` 覆盖存储与嵌入 Provider；`tests/integration/verify.ts`
-是 KBM 组合冒烟（离线 4 维）。
+- 看 [CONFIGURATION.md](CONFIGURATION.md) 调整参数；
+- 看 [PERSISTENCE.md](PERSISTENCE.md) 了解备份、恢复和索引重建；
+- 看 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 处理运行故障；
+- 看 [TESTING.md](TESTING.md) 运行完整验证。

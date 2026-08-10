@@ -22,17 +22,17 @@ Copy-Item examples/real-embed/.env.example examples/real-embed/.env
 编辑 `examples/real-embed/.env`，至少填写真实的 `EMBED_API_KEY`。`.env` 已被
 Git 忽略，不能提交。可选环境变量如下：
 
-| 变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `EMBED_API_KEY` | 无，必填 | DashScope embedding key |
-| `EMBED_MODEL` | `qwen3.7-text-embedding` | embedding 模型 |
-| `EMBED_DIMENSION` | `1024` | 向量维度 |
-| `EMBED_API_URL` | DashScope 默认 endpoint | 覆盖 embedding endpoint |
-| `EMBED_CONCURRENCY` | `4` | embedding 请求并发 |
-| `RERANK_API_URL` | 无 | `--external-rerank` 时必填的完整 Chat API URL |
-| `RERANK_API_KEY` | 无 | `--external-rerank` 时必填 |
-| `RERANK_MODEL` | 无 | `--external-rerank` 时必填 |
-| `RERANK_TIMEOUT_MS` | `30000` | 外部 reranker 超时 |
+| 变量                | 默认值                   | 用途                                          |
+| ------------------- | ------------------------ | --------------------------------------------- |
+| `EMBED_API_KEY`     | 无，必填                 | DashScope embedding key                       |
+| `EMBED_MODEL`       | `qwen3.7-text-embedding` | embedding 模型                                |
+| `EMBED_DIMENSION`   | `1024`                   | 向量维度                                      |
+| `EMBED_API_URL`     | DashScope 默认 endpoint  | 覆盖 embedding endpoint                       |
+| `EMBED_CONCURRENCY` | `4`                      | embedding 请求并发                            |
+| `RERANK_API_URL`    | 无                       | `--external-rerank` 时必填的完整 Chat API URL |
+| `RERANK_API_KEY`    | 无                       | `--external-rerank` 时必填                    |
+| `RERANK_MODEL`      | 无                       | `--external-rerank` 时必填                    |
+| `RERANK_TIMEOUT_MS` | `30000`                  | 外部 reranker 超时                            |
 
 ## 运行
 
@@ -76,14 +76,14 @@ corepack pnpm demo:real-embed -- --external-rerank --top-k 5
 
 ## CLI 参数
 
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `--reset` | 关闭 | 删除并重建固定运行时目录 |
-| `--limit <1..50>` | `50` | smoke test 文档数 |
-| `--top-k <number>` | `5` | 每条查询输出和评估使用的候选数 |
-| `--query <text>` | 无 | 只运行一条查询，不计算 qrels 指标 |
-| `--external-rerank` | 关闭 | 启用 external pipeline 和第三方 Chat API |
-| `--json <path>` | `data/memoria/recall-demo/results.json` | 覆盖结果 JSON 路径 |
+| 参数                | 默认值                                  | 说明                                     |
+| ------------------- | --------------------------------------- | ---------------------------------------- |
+| `--reset`           | 关闭                                    | 删除并重建固定运行时目录                 |
+| `--limit <1..50>`   | `50`                                    | smoke test 文档数                        |
+| `--top-k <number>`  | `5`                                     | 每条查询输出和评估使用的候选数           |
+| `--query <text>`    | 无                                      | 只运行一条查询，不计算 qrels 指标        |
+| `--external-rerank` | 关闭                                    | 启用 external pipeline 和第三方 Chat API |
+| `--json <path>`     | `data/memoria/recall-demo/results.json` | 覆盖结果 JSON 路径                       |
 
 ## 语料和结果
 

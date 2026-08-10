@@ -6,7 +6,8 @@
 ## 按读者开始
 
 - 普通用户：先看仓库根目录的 [README](../README.md)，再按需要阅读
-  [快速上手](GUIDE.md)、[配置参考](CONFIGURATION.md) 和 [公开 API](API.md)。
+  [快速上手](GUIDE.md)、[配置参考](CONFIGURATION.md)、[检索能力矩阵](RETRIEVAL_FEATURES.md)
+  和 [公开 API](API.md)。
 - 高级用户和贡献者：先看 [开发与维护](DEVELOPMENT.md) 和
   [测试与验证](TESTING.md)，再查看架构、持久化、嵌入、算法和发布文档。
 - AI Agent：先读仓库根目录的 [AGENTS.md](../AGENTS.md)，再读本目录的
@@ -16,14 +17,15 @@
 
 重要事实只在一个地方完整维护，其他页面只保留必要摘要并链接回去：
 
-| 事实                     | 规范文档                                               |
-| ------------------------ | ------------------------------------------------------ |
-| 第一次使用和最短成功路径 | [README](../README.md)、[快速上手](GUIDE.md)           |
-| 配置、默认值和环境变量   | [配置参考](CONFIGURATION.md)                           |
-| 公开导出、子路径和类型   | [API](API.md) 与 `package.json`/公开类型               |
-| 生命周期、数据权威和恢复 | [架构总览](ARCHITECTURE.md)、[持久化](PERSISTENCE.md)  |
-| 测试命令、CI 和跳过条件  | [测试与验证](TESTING.md) 与 `.github/workflows/ci.yml` |
-| 当前故障和诊断路径       | [常见问题排查](TROUBLESHOOTING.md)                     |
+| 事实                       | 规范文档                                               |
+| -------------------------- | ------------------------------------------------------ |
+| 第一次使用和最短成功路径   | [README](../README.md)、[快速上手](GUIDE.md)           |
+| 配置、默认值和环境变量     | [配置参考](CONFIGURATION.md)                           |
+| 公开导出、子路径和类型     | [API](API.md) 与 `package.json`/公开类型               |
+| 检索能力、开关、依赖和诊断 | [检索能力矩阵](RETRIEVAL_FEATURES.md)                  |
+| 生命周期、数据权威和恢复   | [架构总览](ARCHITECTURE.md)、[持久化](PERSISTENCE.md)  |
+| 测试命令、CI 和跳过条件    | [测试与验证](TESTING.md) 与 `.github/workflows/ci.yml` |
+| 当前故障和诊断路径         | [常见问题排查](TROUBLESHOOTING.md)                     |
 
 源码、测试、配置、包清单和 CI 优先于文档；如果当前实现无法确认某项行为，文档必须
 明确写出限制，不用推测补全。

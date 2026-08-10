@@ -21,10 +21,7 @@ test("evaluateRecall computes recall@1/3/5 and MRR with multiple gold paths", ()
       id: "multi",
       category: "multi-hop",
       query: "multi",
-      relevantPaths: [
-        "finance/monthly-budget.mdx",
-        "finance/emergency-fund.mdx",
-      ],
+      relevantPaths: ["finance/monthly-budget.mdx", "finance/emergency-fund.mdx"],
     },
     {
       id: "miss",
@@ -103,7 +100,10 @@ test("QueryEmbeddingCache keys by text type and ordered text list", async () => 
   const differentOrder = await cache.embedBatch(["two", "one"], "query");
 
   assert.equal(calls.length, 3);
-  assert.deepEqual(calls.map((call) => call.textType), ["query", "document", "query"]);
+  assert.deepEqual(
+    calls.map((call) => call.textType),
+    ["query", "document", "query"],
+  );
   assert.deepEqual([...first[0]!], [1, 10]);
   assert.deepEqual([...second[1]!], [2, 10]);
   assert.deepEqual([...differentType[0]!], [1, 10]);
@@ -123,7 +123,10 @@ test("QueryEmbeddingCache removes a failed request so a retry can succeed", asyn
     return [new Float32Array([1])];
   });
 
-  await assert.rejects(cache.embedBatch(["retry"], "query"), /temporary embedding failure/);
+  await assert.rejects(
+    cache.embedBatch(["retry"], "query"),
+    /temporary embedding failure/,
+  );
   const retried = await cache.embedBatch(["retry"], "query");
 
   assert.equal(attempts, 2);

@@ -12,11 +12,7 @@ export interface OpenAICompatibleRerankerOptions {
 }
 
 export type OpenAICompatibleRerankerErrorCode =
-  | "CONFIGURATION"
-  | "HTTP"
-  | "TIMEOUT"
-  | "INVALID_RESPONSE"
-  | "NETWORK";
+  "CONFIGURATION" | "HTTP" | "TIMEOUT" | "INVALID_RESPONSE" | "NETWORK";
 
 export class OpenAICompatibleRerankerError extends Error {
   override readonly name = "OpenAICompatibleRerankerError";
@@ -48,7 +44,11 @@ function configurationError(message: string): OpenAICompatibleRerankerError {
   return new OpenAICompatibleRerankerError("CONFIGURATION", message);
 }
 
-function asPositiveInteger(value: number | undefined, fallback: number, label: string): number {
+function asPositiveInteger(
+  value: number | undefined,
+  fallback: number,
+  label: string,
+): number {
   const parsed = value === undefined ? fallback : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw configurationError(`${label} must be a positive integer`);
@@ -98,7 +98,9 @@ function candidateTags(candidate: ChunkCandidate): string[] {
   const metadata = readMetadata(candidate);
   const values = candidate.tags ?? candidate.matchedTags ?? metadata.tags;
   if (!Array.isArray(values)) return [];
-  return [...new Set(values.filter((value): value is string => typeof value === "string"))];
+  return [
+    ...new Set(values.filter((value): value is string => typeof value === "string")),
+  ];
 }
 
 function candidatePayload(
@@ -159,10 +161,18 @@ export function createOpenAICompatibleReranker(
   if (!apiKey) throw configurationError("RERANK_API_KEY is required");
   if (!model) throw configurationError("RERANK_MODEL is required");
 
-  const timeoutMs = asPositiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs");
+  const timeoutMs = asPositiveInteger(
+    options.timeoutMs,
+    DEFAULT_TIMEOUT_MS,
+    "timeoutMs",
+  );
   const candidateLimit = Math.min(
     20,
-    asPositiveInteger(options.candidateLimit, DEFAULT_CANDIDATE_LIMIT, "candidateLimit"),
+    asPositiveInteger(
+      options.candidateLimit,
+      DEFAULT_CANDIDATE_LIMIT,
+      "candidateLimit",
+    ),
   );
   const maxContentChars = asPositiveInteger(
     options.maxContentChars,

@@ -73,13 +73,43 @@ extractTags
 会检查这两个清单是否发生漂移。如需核对构建产物，可重新运行上方的
 `Object.keys` 示例。下列分组按 `src/index.ts` 注释划分。
 
+## 0.1 检索相关公共类型
+
+除上面的运行时导出外，根入口还提供以下类型导出。它们不会出现在
+`Object.keys(import("memoria"))` 中，但会出现在 `dist/index.d.ts`，可用于声明检索
+增强 hook、查询向量和结果诊断：
+
+```text
+ExternalReranker
+QueryRephraser
+Tokenizer
+QueryVector
+EpaEnvelope
+EpaQueryAnalysis
+EpaDominantAxis
+PyramidData
+PyramidFeatures
+PyramidLevel
+PyramidTag
+TagMemoData
+TagExpansionData
+VectorReshapeData
+RiverMemoData
+DedupeStats
+TruncationStats
+ExpansionStats
+```
+
+完整的开关、依赖、跳过条件和 Demo 入口由
+[检索能力矩阵](RETRIEVAL_FEATURES.md) 维护。
+
 ## 1. Core
 
-| 符号              | 签名                                                                                                                                              | 说明                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `Pipeline`        | `Pipeline<Input, Output>`；`new Pipeline(stages = [])`；`run(initialInput, ctx) → Promise<Output>`；`pipe(stage)`；`replace(stageName, newStage)` | 阶段串行编排器。每个 stage 的输出作为下一个的输入                                                 |
-| `Stage`           | `Stage<Input, Output>`；子类实现 `async process(input, ctx)`                                                                                      | 所有阶段基类；未实现 `process` 抛错                                                               |
-| `PipelineContext` | `new PipelineContext({config, embeddingProvider, vectorStore, metadataStore, vexusIndex?, epa?, riverStateStore?, tagGraph?})`                    | 跨阶段共享的 DI 容器；`vexusIndex` 为 Rust N-API 句柄、`epa` 预构建 EPA 基、`tagGraph` 标签共现图 |
+| 符号              | 签名                                                                                                                                              | 说明                                                                                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `Pipeline`        | `Pipeline<Input, Output>`；`new Pipeline(stages = [])`；`run(initialInput, ctx) → Promise<Output>`；`pipe(stage)`；`replace(stageName, newStage)` | 阶段串行编排器。每个 stage 的输出作为下一个的输入                                                                                       |
+| `Stage`           | `Stage<Input, Output>`；子类实现 `async process(input, ctx)`                                                                                      | 所有阶段基类；未实现 `process` 抛错                                                                                                     |
+| `PipelineContext` | `new PipelineContext({config, embeddingProvider, vectorStore, metadataStore, vexusIndex?, epa?, riverStateStore?, tagGraph?, reranker?})`         | 跨阶段共享的 DI 容器；`vexusIndex` 为 Rust N-API 句柄、`epa` 预构建 EPA 基、`tagGraph` 标签共现图，`reranker` 为可选 `ExternalReranker` |
 
 ## 2. 引擎工厂 + 配置加载
 
@@ -136,7 +166,11 @@ message, options?)` 会为未知错误保留原始 `cause`，已有 `MemoriaErro
 （`indexNames` / `diaryNames` / `diaryName` / `libraries`）→ 配置默认值 → SQLite
 authority discovery → `Root` compatibility fallback。显式空数组表示空 scope，不会
 回退；vector、BM25、标签扩展与结果 hydration 共享同一 scope。`timeDecay` 只由
-`TimeDecayStage` 执行。
+`TimeDecayStage` 执行。搜索结果 envelope 还会保留 `vectorResults`、`bm25Results`、
+`tagExpansion`、`vectorReshape`、`tagMemo`、`riverMemo`、`geodesic`、`epa`、
+`pyramid`、`associatorStats`、`dedupeStats`、`truncationStats`、`expansionStats` 以及
+`reranked`/`rerankSkipped`/`rerankError` 等诊断字段；字段可能因开关或依赖未满足而
+缺省。详见 [检索能力矩阵](RETRIEVAL_FEATURES.md)。
 
 **KnowledgeBaseAdapter 方法面**：`initialize / shutdown / flush / flushBatch /
 handleDelete / deleteFile / getStats / close / removeDocument / search /

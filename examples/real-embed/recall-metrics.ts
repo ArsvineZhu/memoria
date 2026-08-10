@@ -30,7 +30,10 @@ export function normalizeRecallPath(value: string): string {
   for (const marker of markers) {
     const markerIndex = lower.lastIndexOf(marker);
     if (markerIndex >= 0) {
-      return normalized.slice(markerIndex + marker.length).replace(/^\/+/, "").toLowerCase();
+      return normalized
+        .slice(markerIndex + marker.length)
+        .replace(/^\/+/, "")
+        .toLowerCase();
     }
   }
 
@@ -130,7 +133,10 @@ export class QueryEmbeddingCache {
     const pending = Promise.resolve()
       .then(() => this.embedder(normalizedTexts, String(textType)))
       .then((embeddings) => {
-        if (!Array.isArray(embeddings) || embeddings.length !== normalizedTexts.length) {
+        if (
+          !Array.isArray(embeddings) ||
+          embeddings.length !== normalizedTexts.length
+        ) {
           throw new Error(
             `Query embedding provider returned ${embeddings?.length ?? 0} vectors for ${normalizedTexts.length} texts`,
           );

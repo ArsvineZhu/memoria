@@ -5,6 +5,9 @@
 `mergeConfig` 会复制默认值；显式传入 `undefined` 不会覆盖默认值；普通对象（例如
 `sourcePriority`）会合并，数组和普通值会整体替换。
 
+检索开关、依赖、跳过条件和结果诊断字段的完整对应关系由
+[检索能力矩阵](RETRIEVAL_FEATURES.md) 维护；本文保留可直接查配置值的参考表。
+
 ## 如何传入配置
 
 ```ts
@@ -104,6 +107,10 @@ front matter。
 其他相关默认值：`geodesicAlpha: 0.3`、`geodesicMinGeoSamples: 4`、
 `epaClusterCount: 64`、`epaMaxBasisDim: 64`、`epaPerCandidateAnalysis: false`、
 `strictOrthogonalization: true`。
+
+开关为 `true` 只表示 stage 会加入 pipeline。没有候选、标签图、向量、scope 或注入
+依赖时，stage 仍可能跳过；请用 [检索能力矩阵](RETRIEVAL_FEATURES.md) 中的诊断字段
+确认本次查询是否实际产生信号。
 
 ## 检索和融合
 
@@ -215,10 +222,22 @@ front matter。
 
 ## 环境变量
 
-库源码不会自动加载 `.env`。当前只有以下两个测试/示例自行读取
-`EMBED_API_KEY`：
+库源码不会自动加载 `.env`。测试和真实嵌入示例会自行读取环境变量；其中测试读取
+仓库根目录 `.env`，召回 Demo 读取 `examples/real-embed/.env`。召回 Demo 支持：
 
-- `tests/integration/real-dashscope.test.ts` 读取仓库根目录 `.env`；
-- `examples/real-embed/demo-recall.ts` 读取 `examples/real-embed/.env`。
+| 变量                | 默认值                   | 作用                                          |
+| ------------------- | ------------------------ | --------------------------------------------- |
+| `EMBED_API_KEY`     | 无，必填                 | DashScope embedding 密钥                      |
+| `EMBED_MODEL`       | `qwen3.7-text-embedding` | embedding 模型                                |
+| `EMBED_DIMENSION`   | `1024`                   | embedding 向量维度                            |
+| `EMBED_API_URL`     | DashScope 默认 endpoint  | 覆盖 embedding endpoint                       |
+| `EMBED_CONCURRENCY` | `4`                      | embedding 请求并发数                          |
+| `RERANK_API_URL`    | 无                       | `--external-rerank` 时必填的完整 Chat API URL |
+| `RERANK_API_KEY`    | 无                       | `--external-rerank` 时必填                    |
+| `RERANK_MODEL`      | 无                       | `--external-rerank` 时必填                    |
+| `RERANK_TIMEOUT_MS` | `30000`                  | 外部 reranker 超时时间                        |
 
-密钥必须保留在本地，不能提交。库级配置应通过 Provider 构造参数传入 `apiKey`。
+`EMBED_API_KEY` 缺失时真实 Demo 会在创建数据库前明确失败；三个 `RERANK_*` 必填项
+只在显式传入 `--external-rerank` 时校验。密钥必须保留在本地，不能提交。库级配置
+应通过 Provider 构造参数传入 `apiKey`。运行命令和外部正文发送提示见
+[real-embed 示例](../examples/real-embed/README.md)。

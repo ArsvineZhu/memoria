@@ -8,6 +8,7 @@
 
 - 用关键词和语义一起搜索，减少“换一种说法就找不到”的情况；
 - 自动从文档提取标签，并按标签扩展相关记忆；
+- 按需启用 EPA、residual pyramid、TagMemo、RiverMemo、关联候选和多种重排阶段；
 - 保存并恢复 SQLite 元数据和向量索引；
 - 直接提交一段文字，也可以让文件适配器读取 Markdown/MDX；
 - 按需使用 DashScope、OpenAI 兼容接口或离线的确定性嵌入；
@@ -24,7 +25,7 @@ node dist-test/examples/demo/main.js
 ```
 
 演示会读取 `data/content/` 中的三篇 MDX 文件，执行初始化、摄入、搜索、删除和
-关闭六个步骤，并把演示用的数据库和索引写入 `data/memoria/demo/`。源文件不会被
+关闭流程，并把演示用的数据库和索引写入 `data/memoria/demo/`。源文件不会被
 覆盖。详细说明见 [examples/demo/README.md](examples/demo/README.md)。
 
 ## 最小接入示例
@@ -102,32 +103,34 @@ front matter。只改标题或标签时，系统会尽量复用正文向量，�
 ## 使用真实嵌入
 
 真实嵌入是可选的。把 `EMBED_API_KEY=...` 写入
-`examples/real-embed/.env`，然后运行：
+`examples/real-embed/.env`，然后运行 50 文件召回演示：
 
 ```powershell
-corepack pnpm build:test
-node dist-test/examples/real-embed/demo-recall.js
+corepack pnpm demo:real-embed -- --reset --limit 50 --top-k 5
 ```
 
-这个示例使用 DashScope 的 `qwen3.7-text-embedding`，维度为 1024。它会读取
-测试资料并打印六组查询的召回结果。完整前提和无密钥行为见
-[examples/real-embed/README.md](examples/real-embed/README.md)。
+这个示例使用 DashScope 的 `qwen3.7-text-embedding`，默认维度为 1024，读取
+`data/content/recall-demo/` 中正好 50 篇标准 MDX，并按 24 条 qrels 比较 baseline
+和完整本地增强链。外部 rerank 只有显式传入 `--external-rerank` 才会调用。完整
+前提、输出字段和能力开关见 [examples/real-embed/README.md](examples/real-embed/README.md)
+及 [检索能力矩阵](docs/RETRIEVAL_FEATURES.md)。
 
 ## 文档入口
 
-| 需要了解的内容         | 文档                                               |
-| ---------------------- | -------------------------------------------------- |
-| 所有项目入口和目录边界 | [INDEX.md](INDEX.md)                               |
-| 了解文档体系和阅读路径 | [docs/README.md](docs/README.md)                   |
-| 第一次接入             | [docs/GUIDE.md](docs/GUIDE.md)                     |
-| 配置和默认值           | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)     |
-| 公开 API 和类型        | [docs/API.md](docs/API.md)                         |
-| 架构和生命周期         | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)       |
-| 持久化、恢复和备份     | [docs/PERSISTENCE.md](docs/PERSISTENCE.md)         |
-| 测试和验证             | [docs/TESTING.md](docs/TESTING.md)                 |
-| 常见故障               | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
-| 全部专题文档           | [docs/INDEX.md](docs/INDEX.md)                     |
-| 参与开发               | [CONTRIBUTING.md](CONTRIBUTING.md)                 |
+| 需要了解的内容           | 文档                                                     |
+| ------------------------ | -------------------------------------------------------- |
+| 所有项目入口和目录边界   | [INDEX.md](INDEX.md)                                     |
+| 了解文档体系和阅读路径   | [docs/README.md](docs/README.md)                         |
+| 第一次接入               | [docs/GUIDE.md](docs/GUIDE.md)                           |
+| 配置和默认值             | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)           |
+| 公开 API 和类型          | [docs/API.md](docs/API.md)                               |
+| 检索能力、开关和诊断字段 | [docs/RETRIEVAL_FEATURES.md](docs/RETRIEVAL_FEATURES.md) |
+| 架构和生命周期           | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)             |
+| 持久化、恢复和备份       | [docs/PERSISTENCE.md](docs/PERSISTENCE.md)               |
+| 测试和验证               | [docs/TESTING.md](docs/TESTING.md)                       |
+| 常见故障                 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)       |
+| 全部专题文档             | [docs/INDEX.md](docs/INDEX.md)                           |
+| 参与开发                 | [CONTRIBUTING.md](CONTRIBUTING.md)                       |
 
 ## 运行检查
 

@@ -199,13 +199,14 @@ fallback。MetadataStore 仍可用逐行 authority 读取作为旧兼容路径�
 revision 或 content 改变时替换同一 files 行及其 chunks。`remove(documentId)` 不依赖
 原始文件路径。
 
-## 6. 索引加载边界（getOrCreateIndex 与 clean restore）
+## 6. 索引加载边界（写入创建与 clean restore）
 
-`getOrCreateIndex(indexName)` 只服务于写入时创建/取得一个内存索引；它仍可在
-兼容写路径发现旧文件时尝试 `VexusIndex.load()`，失败则创建新空索引。它不是
-initialize 的 recovery authority，也不是 search 的隐式加载机制。`search()` 只查
-已在 `VexusVectorStore.indices` 中的 index；clean initialize 已通过 restore
-把它们注册，rebuild 则从 SQLite 重新生成。
+`getOrCreateIndex(indexName)` 只服务于写入时创建/取得一个内存索引；兼容写路径可以
+尝试加载已有文件，必要时为当前写入创建新索引。它不是 initialize 的 recovery
+authority，也不是 search 的隐式加载机制。`search()` 只查已在
+`VexusVectorStore.indices` 中的 index；clean initialize 已通过 restore 把它们注册，
+rebuild 则从 SQLite 重新生成。恢复阶段缺少严格的 reconciliation 能力时会失败并
+保持 dirty，不会以逐项 `add` 把状态错误标记为 clean。
 
 `restorePersistedIndexes()` 在 `indexLoadEnabled=false` 时直接返回 false，确保
 系统改走 SQLite rebuild。验证采用临时 Map，任一 index 失败都不会提交该轮临时
@@ -234,9 +235,10 @@ initialize 的 recovery authority，也不是 search 的隐式加载机制。`se
 定时保存会记录错误；生命周期 `flushPendingSaves()` 会重新尝试所有已加载索引，
 并把失败传给 Engine，阻止 clean mark 与成功 close。
 
-## 8. 真实页面布局示例
+## 8. 本地演示和真实召回布局
 
-离线演示读取 `data/content/**/*.mdx`，生成状态位于 `data/memoria/demo/`：
+离线演示读取 `data/content/` 中的三篇 MDX，生成状态位于
+`data/memoria/demo/`：
 
 ```
 data/
@@ -256,6 +258,22 @@ data/
   `data/memoria/memory.sqlite`；
 - 向量 + 元数据重启恢复的完整验证路径：`tests/integration/real-dashscope.test.ts:253`
   （真实嵌入下的落盘 + 重开搜索）。
+
+50 文件真实召回演示使用独立的 canonical 语料和运行时目录：
+
+```text
+data/
+├─ content/recall-demo/       # 正好 50 篇标准 .mdx，属于源文件
+└─ memoria/recall-demo/       # 运行时输出，不属于备份或提交
+   ├─ memory.sqlite
+   ├─ indexes/
+   └─ results.json
+```
+
+运行命令和结果字段见 [检索能力矩阵](RETRIEVAL_FEATURES.md) 与
+[real-embed 示例](../examples/real-embed/README.md)。`--reset` 只允许删除
+`data/memoria/recall-demo/`，不会删除源语料；SQLite、`.usearch`、River state 和
+结果 JSON 均由 Git 忽略。
 
 ## 9. 清理注意事项
 

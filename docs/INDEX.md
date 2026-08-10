@@ -11,6 +11,7 @@
 | 安装并运行最小示例                | [GUIDE.md](GUIDE.md)                                                               |
 | 配置路径、模型、检索和 TDB        | [CONFIGURATION.md](CONFIGURATION.md)                                               |
 | 使用公开软件包接口                | [API.md](API.md)                                                                   |
+| 查检索能力、开关、依赖和诊断字段  | [RETRIEVAL_FEATURES.md](RETRIEVAL_FEATURES.md)                                     |
 | 理解生命周期和管线                | [ARCHITECTURE.md](ARCHITECTURE.md)                                                 |
 | 理解功能行为和选项                | [FUNCTIONS.md](FUNCTIONS.md)                                                       |
 | 理解嵌入和维度要求                | [EMBEDDING.md](EMBEDDING.md)                                                       |
@@ -57,6 +58,7 @@
 - `GUIDE.md`：第一次接入和最小生命周期示例。
 - `CONFIGURATION.md`：完整配置和环境变量说明。
 - `API.md`：公开导出、子路径、方法、返回信封和类型。
+- `RETRIEVAL_FEATURES.md`：检索增强能力矩阵、实际信号、外部 rerank 契约和真实 Demo。
 - `ARCHITECTURE.md`：系统边界、生命周期和管线顺序。
 - `FUNCTIONS.md`：功能行为和选项语义。
 - `PERSISTENCE.md`：数据权威、生成状态、恢复和备份。

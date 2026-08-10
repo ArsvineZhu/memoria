@@ -194,7 +194,10 @@ export const RECALL_CASES: readonly RecallCase[] = [
     id: "q19",
     category: "multi-hop",
     query: "为家人安排聚会和礼物时，之前记录过哪些偏好？",
-    relevantPaths: ["relationships/family-gathering.mdx", "relationships/gift-ideas.mdx"],
+    relevantPaths: [
+      "relationships/family-gathering.mdx",
+      "relationships/gift-ideas.mdx",
+    ],
     expectedTags: ["家庭", "礼物"],
   },
   {

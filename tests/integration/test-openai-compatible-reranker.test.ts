@@ -57,9 +57,7 @@ test("OpenAI-compatible reranker sends the fixed Chat API contract", async () =>
 
   const results = await reranker(
     "查找事故复盘",
-    Array.from({ length: 25 }, (_, index) =>
-      candidate(index + 1, "正文超过限制"),
-    ),
+    Array.from({ length: 25 }, (_, index) => candidate(index + 1, "正文超过限制")),
   );
 
   assert.equal(requestedUrl, "https://rerank.example.test/v1/chat/completions");
@@ -91,7 +89,7 @@ test("OpenAI-compatible reranker sends the fixed Chat API contract", async () =>
 test("OpenAI-compatible reranker accepts plain and fenced JSON responses", async () => {
   const payloads = [
     JSON.stringify([{ chunkId: 1, score: 0.25 }]),
-    "```json\n[{\"chunkId\":1,\"score\":0.75}]\n```",
+    '```json\n[{"chunkId":1,"score":0.75}]\n```',
   ];
 
   for (const content of payloads) {
@@ -99,12 +97,13 @@ test("OpenAI-compatible reranker accepts plain and fenced JSON responses", async
       apiUrl: "https://rerank.example.test/score",
       apiKey: "key",
       model: "model",
-      fetchImpl: async () =>
-        response({ choices: [{ message: { content } }] }),
+      fetchImpl: async () => response({ choices: [{ message: { content } }] }),
     });
 
     const results = await reranker("query", [candidate(1)]);
-    assert.deepEqual(results, [{ chunkId: 1, score: content.includes("0.75") ? 0.75 : 0.25 }]);
+    assert.deepEqual(results, [
+      { chunkId: 1, score: content.includes("0.75") ? 0.75 : 0.25 },
+    ]);
   }
 });
 
@@ -151,23 +150,23 @@ test("OpenAI-compatible reranker clamps scores and rejects an empty valid respon
         ],
       }),
   });
-  assert.deepEqual(await clamped("query", [candidate(1)]), [
-    { chunkId: 1, score: 0 },
-  ]);
+  assert.deepEqual(await clamped("query", [candidate(1)]), [{ chunkId: 1, score: 0 }]);
 
   const empty = createOpenAICompatibleReranker({
     apiUrl: "https://rerank.example.test/score",
     apiKey: "key",
     model: "model",
-    fetchImpl: async () =>
-      response({ choices: [{ message: { content: "[]" } }] }),
+    fetchImpl: async () => response({ choices: [{ message: { content: "[]" } }] }),
   });
-  await assert.rejects(async () => await empty("query", [candidate(1)]), (error: unknown) => {
-    return (
-      error instanceof OpenAICompatibleRerankerError &&
-      error.code === "INVALID_RESPONSE"
-    );
-  });
+  await assert.rejects(
+    async () => await empty("query", [candidate(1)]),
+    (error: unknown) => {
+      return (
+        error instanceof OpenAICompatibleRerankerError &&
+        error.code === "INVALID_RESPONSE"
+      );
+    },
+  );
 });
 
 test("OpenAI-compatible reranker reports HTTP and timeout errors", async () => {
@@ -180,11 +179,11 @@ test("OpenAI-compatible reranker reports HTTP and timeout errors", async () => {
   await assert.rejects(
     async () => await httpFailure("query", [candidate(1)]),
     (error: unknown) => {
-    return (
-      error instanceof OpenAICompatibleRerankerError &&
-      error.code === "HTTP" &&
-      error.status === 503
-    );
+      return (
+        error instanceof OpenAICompatibleRerankerError &&
+        error.code === "HTTP" &&
+        error.status === 503
+      );
     },
   );
 
@@ -205,7 +204,7 @@ test("OpenAI-compatible reranker reports HTTP and timeout errors", async () => {
   await assert.rejects(
     async () => await timeoutFailure("query", [candidate(1)]),
     (error: unknown) => {
-    return error instanceof OpenAICompatibleRerankerError && error.code === "TIMEOUT";
+      return error instanceof OpenAICompatibleRerankerError && error.code === "TIMEOUT";
     },
   );
 });
@@ -225,13 +224,16 @@ test("OpenAI-compatible reranker rejects a response body that cannot be decoded 
       }) as unknown as Response,
   });
 
-  await assert.rejects(async () => await reranker("query", [candidate(1)]), (error: unknown) => {
-    return (
-      error instanceof OpenAICompatibleRerankerError &&
-      error.code === "INVALID_RESPONSE" &&
-      !error.message.includes("private-key")
-    );
-  });
+  await assert.rejects(
+    async () => await reranker("query", [candidate(1)]),
+    (error: unknown) => {
+      return (
+        error instanceof OpenAICompatibleRerankerError &&
+        error.code === "INVALID_RESPONSE" &&
+        !error.message.includes("private-key")
+      );
+    },
+  );
 });
 
 test("OpenAI-compatible reranker validates required configuration", () => {

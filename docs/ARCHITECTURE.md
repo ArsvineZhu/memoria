@@ -103,14 +103,16 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
 3. **摄入时序（单文档/单文件）**：逻辑文档由引擎生成确定性内部路径并带上
    `documentId`、`revision`、source 与 metadata；文件快照由 `FilesystemIngestionAdapter`
    在交给引擎前读取并做稳定性检查。随后按源码注册顺序执行摄入阶段，最后
-   `CooccurrenceBuilderStage`（默认 no-op）。**双写盘次序**：内置
+   `CooccurrenceBuilderStage`（默认有意跳过派生图重建，开启
+   `cooccurrenceRebuild` 或由调用方注入 `ctx.tagGraph` 时才提供共现图）。**双写盘次序**：内置
    `SqliteMetadataStore` 的 `MetadataWriterStage` 通过单事务
    `replaceDocumentState()` 原子替换 file/chunks/tags/file_tags，并增加 metadata
    generation、置 `vector_dirty=1`；标签-only 更新使用
    `replaceDocumentTags()` 原子改写 metadata/tags/file_tags 并保留 chunks，缺少
    该能力时在写入前失败。第三方旧 store 才走兼容 CRUD 路径。随后
    `VectorIndexerStage` 更新向量（先删遗留向量再 upsert，日记索引 + global_tags
-   标签索引），并触发 `scheduleIndexSave`（延迟落盘）。
+   标签索引），并触发 `scheduleIndexSave`（延迟落盘）。检索增强阶段的开关、依赖和
+   实际诊断字段见 [检索能力矩阵](RETRIEVAL_FEATURES.md)。
 4. **shutdown**：`close()` 等待 keyed mutation queue，flush 全部内存向量索引；
    只有 flush 成功且 vector state 完整时才把 generation 标记 clean，之后关闭内置
    SQLite。任一步 flush/close failure 都会形成 lifecycle failure；若资源仍可重试，

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {
   DemoConfigurationError,
   buildModeConfig,
+  getDemoRepositoryRoot,
   getPipelineStageNames,
   parseDemoArgs,
   validateDemoEnvironment,
@@ -31,6 +32,10 @@ test("real embed runner rejects a missing embedding key before initialization", 
     (error: unknown) =>
       error instanceof DemoConfigurationError && error.code === "EMBED_API_KEY",
   );
+});
+
+test("real embed runner resolves the repository root from compiled output", () => {
+  assert.equal(getDemoRepositoryRoot(), process.cwd());
 });
 
 test("real embed runner requires all three external reranker settings", () => {

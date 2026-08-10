@@ -24,10 +24,7 @@ import type {
 import DashScopeEmbeddingProvider from "../../src/providers/dashscope-embedding-provider.js";
 import SearchPipeline from "../../src/pipelines/search-pipeline.js";
 import { parseMdxDocument } from "../../src/utils/mdx-document.js";
-import {
-  RECALL_CASES,
-  type RecallCase,
-} from "./recall-cases.js";
+import { RECALL_CASES, type RecallCase } from "./recall-cases.js";
 import {
   QueryEmbeddingCache,
   evaluateRecall,
@@ -38,7 +35,10 @@ import {
   type OpenAICompatibleRerankerOptions,
 } from "./openai-compatible-reranker.js";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const MODULE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const REPO_ROOT = ["dist", "dist-test"].includes(path.basename(MODULE_ROOT))
+  ? path.resolve(MODULE_ROOT, "..")
+  : MODULE_ROOT;
 const CORPUS_ROOT = path.join(REPO_ROOT, "data", "content", "recall-demo");
 const RUNTIME_ROOT = path.join(REPO_ROOT, "data", "memoria", "recall-demo");
 const DB_PATH = path.join(RUNTIME_ROOT, "memory.sqlite");
@@ -51,6 +51,10 @@ const DEFAULT_RERANK_TIMEOUT_MS = 30_000;
 const DEMO_TIME_DECAY_NOW = Date.parse("2026-08-10T00:00:00-06:00");
 
 export type DemoMode = "baseline" | "enhanced" | "external";
+
+export function getDemoRepositoryRoot(): string {
+  return REPO_ROOT;
+}
 
 export interface DemoCliOptions {
   reset: boolean;
@@ -97,9 +101,16 @@ function parsePositiveInteger(value: string, flag: string, max?: number): number
     throw new DemoConfigurationError("CLI", `${flag} must be a positive integer`);
   }
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0 || (max !== undefined && parsed > max)) {
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed <= 0 ||
+    (max !== undefined && parsed > max)
+  ) {
     const suffix = max === undefined ? "" : ` between 1 and ${max}`;
-    throw new DemoConfigurationError("CLI", `${flag} must be a positive integer${suffix}`);
+    throw new DemoConfigurationError(
+      "CLI",
+      `${flag} must be a positive integer${suffix}`,
+    );
   }
   return parsed;
 }
@@ -176,7 +187,10 @@ function environmentInteger(
   const raw = environmentValue(environment, dotEnv, name);
   if (raw === undefined || raw === "") return fallback;
   if (!/^\d+$/.test(raw) || Number(raw) <= 0 || !Number.isSafeInteger(Number(raw))) {
-    throw new DemoConfigurationError("ENVIRONMENT", `${name} must be a positive integer`);
+    throw new DemoConfigurationError(
+      "ENVIRONMENT",
+      `${name} must be a positive integer`,
+    );
   }
   return Number(raw);
 }
@@ -227,8 +241,14 @@ export function validateDemoEnvironment(
   if (!environment.embedModel.trim()) {
     throw new DemoConfigurationError("EMBED_MODEL", "EMBED_MODEL must not be empty");
   }
-  if (!Number.isSafeInteger(environment.embedDimension) || environment.embedDimension <= 0) {
-    throw new DemoConfigurationError("EMBED_DIMENSION", "EMBED_DIMENSION must be positive");
+  if (
+    !Number.isSafeInteger(environment.embedDimension) ||
+    environment.embedDimension <= 0
+  ) {
+    throw new DemoConfigurationError(
+      "EMBED_DIMENSION",
+      "EMBED_DIMENSION must be positive",
+    );
   }
   if (
     !Number.isSafeInteger(environment.embedConcurrency) ||
@@ -241,16 +261,31 @@ export function validateDemoEnvironment(
   }
   if (!externalRerank) return;
   if (!environment.rerankApiUrl?.trim()) {
-    throw new DemoConfigurationError("rerankApiUrl", "RERANK_API_URL is required with --external-rerank");
+    throw new DemoConfigurationError(
+      "rerankApiUrl",
+      "RERANK_API_URL is required with --external-rerank",
+    );
   }
   if (!environment.rerankApiKey?.trim()) {
-    throw new DemoConfigurationError("rerankApiKey", "RERANK_API_KEY is required with --external-rerank");
+    throw new DemoConfigurationError(
+      "rerankApiKey",
+      "RERANK_API_KEY is required with --external-rerank",
+    );
   }
   if (!environment.rerankModel?.trim()) {
-    throw new DemoConfigurationError("rerankModel", "RERANK_MODEL is required with --external-rerank");
+    throw new DemoConfigurationError(
+      "rerankModel",
+      "RERANK_MODEL is required with --external-rerank",
+    );
   }
-  if (!Number.isSafeInteger(environment.rerankTimeoutMs) || environment.rerankTimeoutMs <= 0) {
-    throw new DemoConfigurationError("RERANK_TIMEOUT_MS", "RERANK_TIMEOUT_MS must be positive");
+  if (
+    !Number.isSafeInteger(environment.rerankTimeoutMs) ||
+    environment.rerankTimeoutMs <= 0
+  ) {
+    throw new DemoConfigurationError(
+      "RERANK_TIMEOUT_MS",
+      "RERANK_TIMEOUT_MS must be positive",
+    );
   }
 }
 
@@ -310,9 +345,11 @@ function collectMdxFiles(rootPath: string): string[] {
   };
   visit(rootPath);
   return files.sort((left, right) =>
-    path.relative(rootPath, left).split(path.sep).join("/").localeCompare(
-      path.relative(rootPath, right).split(path.sep).join("/"),
-    ),
+    path
+      .relative(rootPath, left)
+      .split(path.sep)
+      .join("/")
+      .localeCompare(path.relative(rootPath, right).split(path.sep).join("/")),
   );
 }
 
@@ -369,7 +406,9 @@ function stringValue(value: unknown): string {
 
 function resultPath(result: SearchResult): string {
   return normalizeRecallPath(
-    stringValue(result.path) || stringValue(result.sourceFile) || stringValue(result.relPath),
+    stringValue(result.path) ||
+      stringValue(result.sourceFile) ||
+      stringValue(result.relPath),
   );
 }
 
@@ -377,7 +416,12 @@ function resultTitle(result: SearchResult): string {
   const metadata = result.metadata;
   if (metadata && typeof metadata.title === "string") return metadata.title;
   const relativePath = resultPath(result);
-  return relativePath.split("/").at(-1)?.replace(/\.[^.]+$/, "") || "未命名文档";
+  return (
+    relativePath
+      .split("/")
+      .at(-1)
+      ?.replace(/\.[^.]+$/, "") || "未命名文档"
+  );
 }
 
 function formatResult(result: SearchResult): Record<string, unknown> {
@@ -442,12 +486,13 @@ function summarizeTrace(output: SearchEnvelope): Record<string, unknown> {
       : output.riverSkipped
         ? { skipped: true }
         : null,
-    tagExpansion: output.tagExpansion ?? (output.tagExpansionSkipped ? { skipped: true } : null),
+    tagExpansion:
+      output.tagExpansion ?? (output.tagExpansionSkipped ? { skipped: true } : null),
     vectorReshape:
       output.vectorReshape ?? (output.vectorReshapeSkipped ? { skipped: true } : null),
-    geodesic:
-      output.geodesic ?? (output.geodesicSkipped ? { skipped: true } : null),
-    associatorStats: output.associatorStats ?? (output.associatorSkipped ? { skipped: true } : null),
+    geodesic: output.geodesic ?? (output.geodesicSkipped ? { skipped: true } : null),
+    associatorStats:
+      output.associatorStats ?? (output.associatorSkipped ? { skipped: true } : null),
     dedupeStats: output.dedupeStats ?? null,
     truncationStats: output.truncationStats ?? null,
     expansionStats: output.expansionStats ?? null,
@@ -589,7 +634,10 @@ export async function runDemo(
   if (options.reset) {
     const fixedTarget = path.resolve(REPO_ROOT, "data", "memoria", "recall-demo");
     if (path.resolve(RUNTIME_ROOT) !== fixedTarget) {
-      throw new DemoConfigurationError("RUNTIME_ROOT", "Refusing to reset an unexpected runtime path");
+      throw new DemoConfigurationError(
+        "RUNTIME_ROOT",
+        "Refusing to reset an unexpected runtime path",
+      );
     }
     fs.rmSync(fixedTarget, { recursive: true, force: true });
   }
@@ -730,7 +778,11 @@ export async function runDemo(
       ? path.resolve(process.cwd(), options.jsonPath)
       : DEFAULT_RESULT_PATH;
     fs.mkdirSync(path.dirname(resultPathOverride), { recursive: true });
-    fs.writeFileSync(resultPathOverride, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+    fs.writeFileSync(
+      resultPathOverride,
+      `${JSON.stringify(artifact, null, 2)}\n`,
+      "utf8",
+    );
     console.log(`◈ results written to ${path.relative(REPO_ROOT, resultPathOverride)}`);
     return artifact;
   } finally {

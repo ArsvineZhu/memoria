@@ -120,6 +120,7 @@ const compatibleMetadataStore: MetadataStoreContract = legacyMetadataStore;
 const compatibilityContext: PipelineContextOptions = {
   config: {},
   vexusIndex: { nativeCompatibilityEscape: true },
+  reranker,
 };
 const compatibilityConfig: MemoryConfigOverrides = {
   vexusIndex: { nativeCompatibilityEscape: true },

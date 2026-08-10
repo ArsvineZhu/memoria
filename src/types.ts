@@ -922,6 +922,7 @@ export interface PipelineContextOptions {
   epa?: EpaLike;
   riverStateStore?: RiverStateStore;
   tagGraph?: Map<number, Map<number, number>>;
+  reranker?: ExternalReranker;
 }
 
 export interface Stage<Input = PipelineData, Output = PipelineData> {

@@ -24,10 +24,16 @@
 核心是一个**算子级 stage 编排管线**（`Pipeline` / `Stage` / `PipelineContext`），
 三大管线（ingest / search / delete）由可插拔 stage 串联；记忆侧算法
 （TagMemo / RiverMemo / EPA / 残差金字塔）以阶段产物注入检索结果；
-底层由 SQLite 元数据存储与 Rust N-API 向量索引双持久化支撑。
+底层由 SQLite 元数据存储与 Rust N-API 向量索引双持久化支撑；默认由
+`data/` 统一管理 MDX 原始数据和可重建运行状态。
 
 ```text
 memoria/
+├── data/
+│   ├── content/               # MDX 原始源文件（默认 rootPath）
+│   ├── knowledge/             # TDB 原始源文件
+│   ├── memoria/               # 主 SQLite + indexes（Git 忽略）
+│   └── tdb/                   # TDB SQLite + indexes（Git 忽略）
 ├── src/index.ts                 # TypeScript ESM 源入口
 ├── dist/index.js                # 编译后的 ESM 库入口
 ├── dist/index.cjs              # 既有 require('memoria') 兼容 facade
@@ -48,11 +54,16 @@ memoria/
 │   ├── demo/                    # 离线章节演示（零配置：main.ts + fake-embedding.ts）
 │   └── real-embed/              # 真实嵌入记忆召回演示（demo-recall.ts）
 ├── docs/                        # 文档导航见下表
-├── knowledge/                   # TDB 运行期知识目录（运行时 I/O）
-├── VectorStoreTDB/              # TDB 向量库运行目录（运行时 I/O）
 ├── LICENSE                      # MIT © 2026 Arsvine Zhu
 └── CHANGELOG.md
 ```
+
+默认文件数据布局：`data/content/**/*.mdx` 是应备份和版本控制的原始来源；
+`data/memoria/memory.sqlite` 保存主引擎文件、块、标签和持久向量 BLOB，
+`data/memoria/indexes/` 是可从 SQLite 重建的 `.usearch` 派生缓存；TDB 对应
+`data/knowledge/`、`data/tdb/knowledge.sqlite` 和 `data/tdb/indexes/`。
+MDX front matter 的 `tags` 进入标签管线，其他字段进入文件 metadata；正文才会
+被分块和嵌入，MDX/JSX 不会执行。
 
 ## 快速开始
 
@@ -79,13 +90,13 @@ import { FakeEmbeddingProvider } from "./examples/demo/fake-embedding.js";
 const engine = createMemoryEngine({
   config: {
     dimension: 128,
-    storePath: "./indices",
+    // 未指定时默认使用 ./data/memoria/indexes
     topK: 3,
     tagMemoV9Enabled: true,
     epaProjectionEnabled: true,
     residualPyramidEnabled: true,
   },
-  dbPath: "./memory.sqlite",
+  // 未指定时默认使用 ./data/memoria/memory.sqlite
   embeddingProvider: new FakeEmbeddingProvider(128),
 });
 
@@ -124,11 +135,11 @@ import { createMemoryEngine } from "memoria";
 import FilesystemIngestionAdapter from "memoria/adapters/filesystem";
 
 const engine = createMemoryEngine({
-  config: { rootPath: "./notes", storePath: "./indices" },
+  config: { rootPath: "./data/content" },
 });
 const files = new FilesystemIngestionAdapter(engine, {
-  rootPath: "./notes",
-  extensions: [".md"],
+  rootPath: "./data/content",
+  extensions: [".mdx", ".md"],
 });
 
 await engine.initialize();
@@ -159,8 +170,8 @@ import { createMemoryEngine } from "memoria";
 import DashScopeEmbeddingProvider from "memoria/providers/dashscope";
 // OpenAI 兼容 provider：import OpenAIEmbeddingProvider from "memoria/providers/openai";
 
-const rootPath = join(process.cwd(), "notes");
-const storePath = join(process.cwd(), "indices");
+const rootPath = join(process.cwd(), "data", "content");
+const storePath = join(process.cwd(), "data", "memoria", "indexes");
 
 const engine = createMemoryEngine({
   config: {
@@ -170,7 +181,7 @@ const engine = createMemoryEngine({
     chunkMaxTokens: 600,
     chunkOverlapTokens: 96,
   },
-  dbPath: join(storePath, "memory.sqlite"),
+  dbPath: join(process.cwd(), "data", "memoria", "memory.sqlite"),
   embeddingProvider: new DashScopeEmbeddingProvider({
     apiKey: process.env.EMBED_API_KEY ?? "",
     model: "qwen3.7-text-embedding",

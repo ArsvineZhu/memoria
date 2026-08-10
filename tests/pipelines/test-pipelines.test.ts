@@ -179,6 +179,8 @@ test("SearchPipeline enables memo and postprocess stages when gated", () => {
     riverMemoEnabled: true,
     tagExpansionEnabled: true,
     vectorReshapeEnabled: true,
+    geodesicRerankEnabled: true,
+    associatorEnabled: true,
     externalRerankEnabled: true,
     timeDecayEnabled: true,
     truncateEnabled: true,
@@ -199,11 +201,13 @@ test("SearchPipeline enables memo and postprocess stages when gated", () => {
     "riverMemo",
     "tagExpander",
     "vectorReshaper",
+    "geodesicReranker",
     "resultDeduplicator",
     "externalReranker",
     "timeDecay",
     "truncator",
     "expander",
+    "associator",
     "resultFormatter",
   ]);
 });

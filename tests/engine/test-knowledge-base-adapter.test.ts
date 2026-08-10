@@ -43,6 +43,7 @@ function makeAdapter() {
   const root = makeTmpDir();
   const engine = createMemoryEngine({
     config: { dimension: DIM, rootPath: root, storePath: makeTmpDir() },
+    dbPath: ":memory:",
     embeddingProvider: makeFakeEmbeddingProvider(DIM),
   });
   const adapter = new KnowledgeBaseAdapter({ engine });

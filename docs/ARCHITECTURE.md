@@ -10,7 +10,8 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
 读配置、取 Provider。主 ingest 契约是无路径的 `MemoryDocumentInput`；文件读取、
 扫描与 watcher 位于独立的 `FilesystemIngestionAdapter`。SQLite 元数据与内容是权威
 状态，Rust N-API 向量索引（VexusIndex，日记维度索引 + 共享标签索引）是可重建的派生
-状态。
+状态。文件系统源默认位于托管的 `data/content/`，推荐使用带 YAML front matter
+的 MDX；摄取时只解析 front matter，正文和 MDX/JSX 语法仍作为纯文本。
 
 ```
                     ┌────────────────────────────────────────────┐
@@ -21,17 +22,38 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
                             ▼                            ▼
               ┌────────────────────┐          ┌────────────────────┐
               │   IngestPipeline   │          │ SearchPipeline     │
-              │   8 阶段固定串行    │          │ 5 检索 + 7 记忆 +   │
-              │   read→tags→chunk  │          │ 5 后处理 +1 输出     │
+              │   8 阶段固定串行    │          │ 5 检索 + 8 记忆 +   │
+              │   read→tags→chunk  │          │ 6 后处理 +1 输出     │
               │   →embed→write→vec │          └────────────────────┘
               └───────┬────┬──────┘
                       ▼    ▼
           ┌────────────────────┐
           │ SqliteMetadataStore│   VexusVectorStore（Rust N-API）
-          │  files/chunks/tags │   diary 索引 + global_tags 索引
+          │  files/chunks/tags │   data/memoria/indexes/
           │  file_tags/kv_store│
           └────────────────────┘
 ```
+
+### 托管数据边界
+
+默认 `dataPath` 是 `<cwd>/data`，路径契约如下：
+
+```text
+data/
+├─ content/                  # MDX 原始源文件（权威、可版本控制）
+├─ knowledge/                # 可选 TDB 原始源文件
+├─ memoria/
+│  ├─ memory.sqlite           # 主引擎 SQLite 权威状态
+│  └─ indexes/                # 主引擎可重建向量索引
+└─ tdb/
+   ├─ knowledge.sqlite        # TDB SQLite 权威状态
+   └─ indexes/                # TDB 可重建向量索引
+```
+
+`data/content/**/*.mdx` 是推荐的原始数据标准。front matter 的 `tags` 进入标签
+管线，其他键进入现有 `files.metadata_json`；front matter 不参与 chunk/embedding，
+因此只改元数据可以复用正文向量。SQLite 保存文件、块、标签和持久向量 BLOB，
+`.usearch` 仅是派生缓存，缺失或损坏时由 SQLite authority 重建。
 
 ## 2. MemoryEngine 生命周期
 
@@ -119,7 +141,7 @@ TDB 的 `chunks.vector` 列通过幂等 migration 加入旧库。旧行没有可
 | Interfaces | `src/interfaces/` | 三方契约（抽象类）   | `EmbeddingProvider` / `VectorStore` / `MetadataStore`                                                        |
 | Algorithms | `src/algorithms/` | 纯数学算法（零 I/O） | EPA、ResidualPyramid、ResultDeduplicator + gram-schmidt / svd / wave + topology/                             |
 | TDB        | `src/tdb/`        | 冷知识库引擎         | `TDBEngine` / `TDBSearchPipeline` / `TDBStore` / `TriviumDBAdapter`                                          |
-| Utils      | `src/utils/`      | 通用工具             | `text-chunker`（tiktoken 智能分块）、`text-preprocessor`（清洗 + 标签提取）、`vector-codec`（BLOB 编解码）   |
+| Utils      | `src/utils/`      | 通用工具             | `mdx-document`（YAML front matter）、`text-chunker`（tiktoken 智能分块）、`text-preprocessor`（清洗 + 标签提取）、`vector-codec`（BLOB 编解码）   |
 
 ## 4. 检索主链路（SearchPipeline，真实阶段名）
 
@@ -142,17 +164,20 @@ search(query, options)
   ├─[12] tagExpander         标签驱动候选扩展                  [配置门]
   ├─[13] vectorReshaper      余弦向量重排                      [配置门]
   │
-  ├─[14] resultDeduplicator  ● 硬去重 + 语义去重（阈值 0.92）
-  ├─[15] externalReranker    LLM/外部排序器                    [配置门]
-  ├─[16] timeDecay           时效衰减 0.5^(age/半衰期)          [配置门]
-  ├─[17] truncator           topK / 内容长度截断               [配置门]
-  ├─[18] expander            同文件关联块扩展                  [配置门]
+  ├─[14] geodesicReranker    TagMemo 能量场测地线重排          [配置门]
+  ├─[15] resultDeduplicator  ● 硬去重 + 语义去重（阈值 0.92）
+  ├─[16] externalReranker    LLM/外部排序器                    [配置门]
+  ├─[17] timeDecay           时效衰减 0.5^(age/半衰期)          [配置门]
+  ├─[18] truncator           topK / 内容长度截断               [配置门]
+  ├─[19] expander            同文件关联块扩展                  [配置门]
   │
-  └─[19] resultFormatter     结果信封（格式化 + 元数据补全）→ results/resultCount
+  ├─[20] associator          标签共现 + 向量邻居关联            [配置门]
+  └─[21] resultFormatter     结果信封（格式化 + 元数据补全）→ results/resultCount
 ```
 
 - ● = 默认开启（`epaProjectionEnabled=true`、`residualPyramidEnabled=true`、
-  `dedupeEnabled=true`）；其余以对应 `*Enabled` 门为假值关闭。
+  `dedupeEnabled=true`）；geodesic 与 associator 以及其余增强阶段默认关闭，
+  以对应配置门开启。
 - 即使 `dedupeEnabled=false`，去重阶段仍在链中（内部自行决定跳过）；`resultFormatter`
   恒为末阶段。
 
@@ -162,6 +187,11 @@ search(query, options)
 
 ```text
 memoria/
+├── data/
+│   ├── content/               # MDX 原始源文件（默认 rootPath）
+│   ├── knowledge/             # TDB 原始源文件
+│   ├── memoria/               # 主 SQLite + indexes 派生状态（Git 忽略）
+│   └── tdb/                   # TDB SQLite + indexes 派生状态（Git 忽略）
 ├── src/index.ts                 # TypeScript ESM 源入口（根运行时导出保持 41 个）
 ├── src/index.cts                # 兼容 require('memoria') 的 CJS facade
 ├── dist/index.js                # 编译后的 ESM 库入口
@@ -174,7 +204,7 @@ memoria/
 │   │   └── rag-params-loader.ts # rag_params.json 热调参加载
 │   ├── pipelines/
 │   │   ├── ingest-pipeline.ts   # 8 阶段固定链
-│   │   ├── search-pipeline.ts   # 18 步混合检索链
+│   │   ├── search-pipeline.ts   # 21 步混合检索链（按 gate 裁剪）
 │   │   └── delete-pipeline.ts   # 单阶段（file-deleter）
 │   ├── stages/
 │   │   ├── ingestion/           # file-reader, tag-extractor, text-chunker,
@@ -183,9 +213,10 @@ memoria/
 │   │   ├── retrieval/           # query-embedder, vector-searcher, bm25-searcher,
 │   │   │                        # candidate-merger   （search 主链 5~12）
 │   │   ├── memo/                # epa-projector, residual-pyramid, tagmemo-v9,
-│   │   │                        # tagmemo-v10, rivermemo, tag-expander, vector-reshaper
+│   │   │                        # tagmemo-v10, rivermemo, tag-expander, vector-reshaper,
+│   │   │                        # geodesic-reranker
 │   │   ├── postprocess/         # result-deduplicator, external-reranker, time-decay,
-│   │   │                        # truncator, expander
+│   │   │                        # truncator, expander, associator
 │   │   ├── output/              # result-formatter（search 结果格式化）
 │   │   └── tdb/                 # query-normalizer, result-formatter（TDB 专用）
 │   ├── algorithms/
@@ -226,7 +257,7 @@ memoria/
 | 构造             | 三个管道 + 全部 stage 注册      | 只保存配置/注入项，不创建默认 backend 或 native addon                               |
 | initialize       | Provider lazy-create + recovery | clean generation 验证并注册 persisted indexes；dirty/stale 先 reset 再 bulk rebuild |
 | 摄入             | `flushBatch` 串行执行           | 双写盘：SQLite 先行 → Rust 向量索引；`scheduleIndexSave` 延迟落盘（延迟见 config）  |
-| 检索（每次查询） | `search()`                      | 18 阶段（按门裁剪）；去重阶段恒在链中                                               |
+| 检索（每次查询） | `search()`                      | 21 阶段（按门裁剪）；去重阶段恒在链中                                               |
 | 删除             | `handleDelete`                  | FK 级联删块，向量 Remove + 触发延迟落盘                                             |
 | 关闭             | `close()`                       | queue drain → flush → mark clean → SQLite close；失败抛 lifecycle 并可重试          |
 

@@ -73,6 +73,7 @@ function makeEngine(): {
   const root = mkdtempSync(join(tmpdir(), "memoria-logical-"));
   const options: MemoryEngineOptions = {
     config: { dimension: DIMENSION, storePath: root },
+    dbPath: ":memory:",
     embeddingProvider: makeEmbeddingProvider(),
   };
   return {
@@ -236,6 +237,7 @@ test("logical metadata-only update avoids re-embedding and vector mutation", asy
     tagIndexSaveDelay: 60000,
   });
   const engine = createMemoryEngine({
+    dbPath: ":memory:",
     config: { dimension: DIMENSION, storePath: root },
     embeddingProvider,
     vectorStore,
@@ -302,6 +304,7 @@ test("unscoped logical search discovers the Logical vector index", async () => {
     },
   };
   const engine = createMemoryEngine({
+    dbPath: ":memory:",
     config: { dimension: DIMENSION, storePath: root },
     embeddingProvider,
   });
@@ -332,6 +335,7 @@ test("partial logical embedding fails before any metadata row is committed", asy
     },
   };
   const engine = createMemoryEngine({
+    dbPath: ":memory:",
     config: {
       dimension: DIMENSION,
       storePath: root,

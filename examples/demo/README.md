@@ -3,7 +3,7 @@
 这是 memoria 的命令行章节演示，共 6 个章节，覆盖记忆库完整生命周期：
 
 1. **初始化** —— `createMemoryEngine` + 注入 Fake 嵌入 Provider
-2. **摄入** —— 写 3 篇演示日记 → `flushBatch` → `getStats`
+2. **摄入** —— 读取 3 篇 MDX 演示日记 → `flushBatch` → `getStats`
 3. **基础检索** —— 混合检索（向量 + BM25）展示格式化结果
 4. **高级检索** —— TagMemo 浪潮 + EPA 投影 + 残差金字塔痕迹
 5. **删除** —— `handleDelete` → 再查询确认消失
@@ -26,7 +26,8 @@ node ../../dist-test/examples/demo/main.js
 | ------------------- | ------------------------------------------------------------------------------------ |
 | `main.ts`           | TypeScript ESM 章节式演示主脚本，导入仓库根的 memoria 入口                           |
 | `fake-embedding.ts` | 离线确定性伪嵌入（128 维），与 `EmbeddingProvider` 接口兼容                          |
-| `demo-data/`        | 运行期自动生成的演示数据（日记、SQLite、向量索引），已被 `.gitignore` 排除，无需提交 |
+| `../../data/content/` | 仓库维护的 MDX 演示源文件；运行时只读取，不覆盖源文件                  |
+| `../../data/memoria/demo/` | 运行期生成的 demo SQLite、向量索引与 sidecar，已被 `.gitignore` 排除 |
 
 ## 目录结构
 
@@ -34,5 +35,12 @@ node ../../dist-test/examples/demo/main.js
 examples/demo/
 |- main.ts            # 演示主流程（6 章节）
 |- fake-embedding.ts  # 离线确定性嵌入 Provider
-`- demo-data/         # 自动生成：notes/ 演示日记 + indices/ + memory.sqlite
+`- （数据见仓库根 data/）
+
+data/
+├─ content/{life,memory,quantum}/*.mdx  # canonical source
+└─ memoria/demo/                         # generated demo state
 ```
+
+MDX front matter 中的 `tags` 会进入标签管线，其他字段进入文件 metadata；正文
+才会参与分块和嵌入。演示不会递归清空 `data/`，也不会执行 MDX。

@@ -30,8 +30,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIM = 128;
 const TOP_K = 3;
 
-const DEMO_DIR = path.join(__dirname, "demo-data");
-const NOTES_DIR = path.join(DEMO_DIR, "notes");
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+const DATA_DIR = path.join(REPO_ROOT, "data");
+const NOTES_DIR = path.join(DATA_DIR, "content");
+const DEMO_STATE_DIR = path.join(DATA_DIR, "memoria", "demo");
+const DEMO_INDEX_DIR = path.join(DEMO_STATE_DIR, "indexes");
+const DEMO_DB_PATH = path.join(DEMO_STATE_DIR, "memory.sqlite");
 
 /* ---------------- 彩色日志 ---------------- */
 
@@ -70,49 +74,20 @@ function snippet(text: unknown, max = 80): string {
 
 /* ---------------- 演示日记 ---------------- */
 
-const NOTES = [
-  {
-    file: "quantum/qubit.md",
-    content: `量子计算使用量子比特（qubit）进行计算，与经典比特不同，
-量子叠加与纠缠让并行计算成为可能，量子纠错是当前的重大挑战。
-我在调研近期量子芯片的进展。
-
-Tag: 量子计算, 科技前沿
-`,
-  },
-  {
-    file: "memory/cold-knowledge.md",
-    content: `memoria 记忆系统使用冷知识库与波形算法处理长期记忆：
-冷知识有较高的记忆滞留率，配合遗忘曲线做周期复习效果更好。
-EPA 投影把向量映射到正交语义空间，残差金字塔逐层解释查询能量。
-
-Tag: 记忆系统, 算法笔记
-`,
-  },
-  {
-    file: "life/coffee.md",
-    content: `今天手冲咖啡：水温 18F（注：应为 93 度左右），粉水比 1:15，
-浅烘焙的豆子香气明亮。记录一下萃取参数，下次调到 1:16。
-
-Tag: 咖啡, 生活记录
-`,
-  },
-];
+const NOTES = ["quantum/qubit.mdx", "memory/cold-knowledge.mdx", "life/coffee.mdx"];
 
 /* ---------------- 引擎初始化 ---------------- */
 
 async function initEngine() {
-  fs.rmSync(DEMO_DIR, { recursive: true, force: true });
   fs.mkdirSync(NOTES_DIR, { recursive: true });
-
-  fs.mkdirSync(path.join(DEMO_DIR, "indices"), { recursive: true });
+  fs.mkdirSync(DEMO_INDEX_DIR, { recursive: true });
 
   const engine = createMemoryEngine({
     config: {
       dimension: DIM,
       rootPath: NOTES_DIR,
       topK: TOP_K,
-      storePath: path.join(DEMO_DIR, "indices"),
+      storePath: DEMO_INDEX_DIR,
       // 高级记忆能力：
       tagMemoV9Enabled: true, // TagMemo 浪潮
       epaProjectionEnabled: true, // EPA 语义投影
@@ -120,7 +95,7 @@ async function initEngine() {
       tagExpansionEnabled: false, // 标签扩展（默认关）
       timeDecayEnabled: false, // 时间衰减（默认关）
     },
-    dbPath: path.join(DEMO_DIR, "memory.sqlite"),
+    dbPath: DEMO_DB_PATH,
     embeddingProvider: new FakeEmbeddingProvider(DIM),
   });
 
@@ -135,20 +110,20 @@ async function chapter1(engine: MemoryEngine): Promise<void> {
   info(`嵌入维度: ${engine.embeddingProvider.getDimension()} (Fake 确定性嵌入)`);
   info(`向量存储: ${engine.vectorStore.constructor.name} (Rust N-API)`);
   info(`元数据存储: ${engine.metadataStore.constructor.name} (SQLite)`);
-  info(`数据目录: ${DEMO_DIR}`);
+  info(`源数据目录: ${NOTES_DIR}`);
+  info(`演示状态目录: ${DEMO_STATE_DIR}`);
   done("初始化完成，引擎就绪");
 }
 
 async function chapter2(engine: MemoryEngine): Promise<void> {
   for (const note of NOTES) {
-    const abs = path.join(NOTES_DIR, note.file);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, note.content, "utf-8");
-    info(`写入 ${note.file} (${note.content.length} 字符)`);
+    const abs = path.join(NOTES_DIR, note);
+    const stat = fs.statSync(abs);
+    info(`读取 ${note} (${stat.size} 字节)`);
   }
 
   const envelopes = await engine.flushBatch(
-    NOTES.map((n) => ({ path: path.join(NOTES_DIR, n.file) })),
+    NOTES.map((note) => ({ path: path.join(NOTES_DIR, note) })),
   );
   const stats = await engine.getStats();
   const errors = envelopes
@@ -250,7 +225,7 @@ async function chapter4(engine: MemoryEngine): Promise<void> {
 
 async function chapter5(engine: MemoryEngine): Promise<void> {
   console.log("");
-  const target = path.join(NOTES_DIR, "life/coffee.md");
+  const target = path.join(NOTES_DIR, "life/coffee.mdx");
   await engine.handleDelete({ path: target });
   const stats = await engine.getStats();
   info(

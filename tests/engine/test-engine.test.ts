@@ -63,7 +63,12 @@ function makeEngine(opts: MemoryEngineOptions = {}) {
   const tmp = makeTmpDir();
   const { config: extraConfig, ...rest } = opts;
   const engine = createMemoryEngine({
-    config: { dimension: DIM, storePath: tmp, ...(extraConfig || {}) },
+    config: {
+      dimension: DIM,
+      dbPath: ":memory:",
+      storePath: tmp,
+      ...(extraConfig || {}),
+    },
     embeddingProvider: makeFakeEmbeddingProvider(DIM),
     ...rest,
   });
@@ -87,6 +92,7 @@ const NOTE_CONTENT = [
 
 test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
   const required = [
+    "dataPath",
     "dimension",
     "rootPath",
     "storePath",
@@ -138,6 +144,16 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
     "riverMemoEnabled",
     "tagExpansionEnabled",
     "vectorReshapeEnabled",
+    "geodesicRerankEnabled",
+    "geodesicAlpha",
+    "geodesicMinGeoSamples",
+    "associatorEnabled",
+    "associateCount",
+    "associatorSeeds",
+    "associatorTagBoost",
+    "associatorVecK",
+    "associatorVecBoost",
+    "associatorUseVector",
     "externalRerankEnabled",
     "timeDecayEnabled",
     "truncateEnabled",
@@ -147,8 +163,44 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
     assert.ok(key in DEFAULT_CONFIG, `DEFAULT_CONFIG must include "${key}"`);
   }
   assert.strictEqual(DEFAULT_CONFIG.dimension, 3072);
+  assert.strictEqual(DEFAULT_CONFIG.dataPath, path.join(process.cwd(), "data"));
+  assert.strictEqual(
+    DEFAULT_CONFIG.rootPath,
+    path.join(DEFAULT_CONFIG.dataPath, "content"),
+  );
+  assert.strictEqual(
+    DEFAULT_CONFIG.storePath,
+    path.join(DEFAULT_CONFIG.dataPath, "memoria", "indexes"),
+  );
+  assert.strictEqual(
+    DEFAULT_CONFIG.dbPath,
+    path.join(DEFAULT_CONFIG.dataPath, "memoria", "memory.sqlite"),
+  );
+  assert.strictEqual(
+    DEFAULT_CONFIG.tdbRootPath,
+    path.join(DEFAULT_CONFIG.dataPath, "knowledge"),
+  );
+  assert.strictEqual(
+    DEFAULT_CONFIG.tdbStorePath,
+    path.join(DEFAULT_CONFIG.dataPath, "tdb", "indexes"),
+  );
+  assert.strictEqual(
+    DEFAULT_CONFIG.tdbDbPath,
+    path.join(DEFAULT_CONFIG.dataPath, "tdb", "knowledge.sqlite"),
+  );
   assert.strictEqual(DEFAULT_CONFIG.maxTagsPerFile, 50);
   assert.strictEqual(DEFAULT_CONFIG.tagIndexCapacity, 50000);
+  assert.strictEqual(DEFAULT_CONFIG.geodesicRerankEnabled, false);
+  assert.strictEqual(DEFAULT_CONFIG.geodesicAlpha, 0.3);
+  assert.strictEqual(DEFAULT_CONFIG.geodesicMinGeoSamples, 4);
+  assert.strictEqual(DEFAULT_CONFIG.associatorEnabled, false);
+  assert.strictEqual(DEFAULT_CONFIG.associateCount, 10);
+  assert.strictEqual(DEFAULT_CONFIG.associatorSeeds, 3);
+  assert.strictEqual(DEFAULT_CONFIG.associatorTagBoost, 0.45);
+  assert.strictEqual(DEFAULT_CONFIG.associatorVecK, 5);
+  assert.strictEqual(DEFAULT_CONFIG.associatorVecBoost, 0.3);
+  assert.strictEqual(DEFAULT_CONFIG.associatorUseVector, true);
+  assert.strictEqual(DEFAULT_CONFIG.sourcePriority.associate, 10);
   assert.ok(
     DEFAULT_CONFIG.sourcePriority.rag! > DEFAULT_CONFIG.sourcePriority.unknown!,
   );
@@ -169,6 +221,45 @@ test("mergeConfig deep-merges over DEFAULT_CONFIG and tolerates null/undefined",
   const base = mergeConfig({});
   assert.notStrictEqual(base, DEFAULT_CONFIG);
   assert.strictEqual(base.dimension, DEFAULT_CONFIG.dimension);
+});
+
+test("mergeConfig derives managed paths from dataPath without overriding explicit paths", () => {
+  const dataPath = path.join(makeTmpDir(), "custom-data");
+  const merged = mergeConfig({ dataPath });
+  assert.strictEqual(merged.rootPath, path.join(dataPath, "content"));
+  assert.strictEqual(merged.storePath, path.join(dataPath, "memoria", "indexes"));
+  assert.strictEqual(merged.dbPath, path.join(dataPath, "memoria", "memory.sqlite"));
+  assert.strictEqual(merged.tdbRootPath, path.join(dataPath, "knowledge"));
+  assert.strictEqual(merged.tdbStorePath, path.join(dataPath, "tdb", "indexes"));
+  assert.strictEqual(merged.tdbDbPath, path.join(dataPath, "tdb", "knowledge.sqlite"));
+
+  const legacy = mergeConfig({
+    dataPath,
+    rootPath: "legacy-root",
+    dbPath: ":memory:",
+  });
+  assert.strictEqual(legacy.rootPath, "legacy-root");
+  assert.strictEqual(legacy.dbPath, ":memory:");
+  assert.strictEqual(legacy.storePath, path.join(dataPath, "memoria", "indexes"));
+});
+
+test("SqliteMetadataStore creates parent directories for file-backed databases", () => {
+  const root = makeTmpDir();
+  const dbPath = path.join(root, "nested", "state", "memory.sqlite");
+  const store = new SqliteMetadataStore({ dbPath, dimension: DIM });
+  assert.equal(fs.existsSync(dbPath), true);
+  store.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("top-level dbPath overrides the managed default database path", () => {
+  const root = makeTmpDir();
+  const dbPath = path.join(root, "override.sqlite");
+  const engine = createMemoryEngine({
+    config: { dimension: DIM },
+    dbPath,
+  });
+  assert.strictEqual(engine.config.dbPath, dbPath);
 });
 
 test("loadRagParams: missing path returns {} and overrides are merged", async () => {
@@ -236,7 +327,9 @@ test("loadRagParams rejects malformed roots", async () => {
 // ── Engine factory & wiring ──────────────────────────────────────────
 
 test("createMemoryEngine defers default wiring until initialize", async () => {
-  const engine = createMemoryEngine({ config: { dimension: DIM } });
+  const engine = createMemoryEngine({
+    config: { dimension: DIM, dbPath: ":memory:", storePath: makeTmpDir() },
+  });
   assert.ok(engine instanceof MemoryEngine);
   assert.strictEqual(engine.name, "memoryEngine");
   assert.strictEqual(
@@ -437,7 +530,12 @@ test("injected fake embedding provider is used instead of the network provider",
   const root = makeTmpDir();
   const abs = writeNoteFile(root, "diaryA/note.md", NOTE_CONTENT);
   const engine = createMemoryEngine({
-    config: { dimension: DIM, rootPath: root },
+    config: {
+      dimension: DIM,
+      rootPath: root,
+      dbPath: ":memory:",
+      storePath: path.join(root, "indices"),
+    },
     embeddingProvider: fake,
   });
 

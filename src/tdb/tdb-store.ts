@@ -1,6 +1,8 @@
 "use strict";
 
 import { createRequire } from "node:module";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type BetterSqlite3 from "better-sqlite3";
 import type {
   HealthStatus,
@@ -132,6 +134,9 @@ class TDBStore implements TdbStoreContract {
     this.busyTimeout = config.busyTimeout || 10000;
     this._closed = false;
 
+    if (this.dbPath !== ":memory:" && !this.dbPath.startsWith("file:")) {
+      mkdirSync(dirname(this.dbPath), { recursive: true });
+    }
     this.db = new Database(this.dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");

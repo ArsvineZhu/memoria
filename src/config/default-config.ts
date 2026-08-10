@@ -3,6 +3,10 @@
 import * as path from "node:path";
 import type { MemoryConfig, MemoryConfigOverrides } from "../types.js";
 
+const DEFAULT_DATA_PATH = path.join(process.cwd(), "data");
+const DEFAULT_MEMORIA_DATA_PATH = path.join(DEFAULT_DATA_PATH, "memoria");
+const DEFAULT_TDB_DATA_PATH = path.join(DEFAULT_DATA_PATH, "tdb");
+
 /**
  * Default configuration for the memoria engine.
  *
@@ -22,9 +26,10 @@ import type { MemoryConfig, MemoryConfigOverrides } from "../types.js";
  */
 const DEFAULT_CONFIG: MemoryConfig = {
   // ── Paths ─────────────────────────────────────────────────────────
-  rootPath: process.cwd(),
-  storePath: path.join(process.cwd(), "VectorStore"),
-  dbPath: ":memory:",
+  dataPath: DEFAULT_DATA_PATH,
+  rootPath: path.join(DEFAULT_DATA_PATH, "content"),
+  storePath: path.join(DEFAULT_MEMORIA_DATA_PATH, "indexes"),
+  dbPath: path.join(DEFAULT_MEMORIA_DATA_PATH, "memory.sqlite"),
 
   // ── Embedding provider ────────────────────────────────────────────
   apiUrl: "",
@@ -67,6 +72,10 @@ const DEFAULT_CONFIG: MemoryConfig = {
   riverMemoEnabled: false,
   tagExpansionEnabled: false,
   vectorReshapeEnabled: false,
+  geodesicRerankEnabled: false,
+  geodesicAlpha: 0.3,
+  geodesicMinGeoSamples: 4,
+  associatorEnabled: false,
   externalRerankEnabled: false,
   useLLMRerank: false,
   timeDecayEnabled: false,
@@ -121,6 +130,12 @@ const DEFAULT_CONFIG: MemoryConfig = {
   truncateEllipsis: false,
   expandCount: 2,
   expansionBoost: 1.15,
+  associateCount: 10,
+  associatorSeeds: 3,
+  associatorTagBoost: 0.45,
+  associatorVecK: 5,
+  associatorVecBoost: 0.3,
+  associatorUseVector: true,
 
   // ── Memo: EPA projection ──────────────────────────────────────────
   epaClusterCount: 64,
@@ -180,13 +195,13 @@ const DEFAULT_CONFIG: MemoryConfig = {
   //   TDB_KNOWLEDGE_EXCLUDE_FOLDERS      -> tdbExcludeFolders
   //   TDB_KNOWLEDGE_SYNC_MODE            -> tdbSyncMode
   tdbEnabled: false,
-  tdbRootPath: path.join(process.cwd(), "knowledge"),
-  tdbStorePath: path.join(process.cwd(), "VectorStoreTDB"),
-  tdbDbPath: ":memory:",
+  tdbRootPath: path.join(DEFAULT_DATA_PATH, "knowledge"),
+  tdbStorePath: path.join(DEFAULT_TDB_DATA_PATH, "indexes"),
+  tdbDbPath: path.join(DEFAULT_TDB_DATA_PATH, "knowledge.sqlite"),
   tdbModel: "google/gemini-embedding-001",
   tdbDimension: 3072,
   tdbEmbeddingBatchSize: 16,
-  tdbExtensions: [".md", ".txt", ".json", ".html"],
+  tdbExtensions: [".md", ".mdx", ".txt", ".json", ".html"],
   tdbExcludeFolders: ["TDBdocs"],
   tdbSyncMode: "normal",
   tdbForceQuery: null,
@@ -225,6 +240,23 @@ function mergeConfig(userConfig?: MemoryConfigOverrides | null): MemoryConfig {
       merged[key] = { ...base, ...value };
     } else {
       merged[key] = value;
+    }
+  }
+
+  if (typeof userConfig.dataPath === "string" && userConfig.dataPath.length > 0) {
+    const dataPath = userConfig.dataPath;
+    const derivedPaths: Record<string, string> = {
+      rootPath: path.join(dataPath, "content"),
+      storePath: path.join(dataPath, "memoria", "indexes"),
+      dbPath: path.join(dataPath, "memoria", "memory.sqlite"),
+      tdbRootPath: path.join(dataPath, "knowledge"),
+      tdbStorePath: path.join(dataPath, "tdb", "indexes"),
+      tdbDbPath: path.join(dataPath, "tdb", "knowledge.sqlite"),
+    };
+    for (const [key, value] of Object.entries(derivedPaths)) {
+      if (userConfig[key] === undefined) {
+        merged[key] = value;
+      }
     }
   }
   return merged;

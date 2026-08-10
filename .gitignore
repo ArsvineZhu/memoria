@@ -12,3 +12,8 @@ examples/real-embed/.env
 Thumbs.db
 *.sqlite
 *.usearch
+*.sqlite-wal
+*.sqlite-shm
+*.usearch.meta.json
+data/memoria/
+data/tdb/

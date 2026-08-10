@@ -24,8 +24,16 @@ class TagExtractorStage extends Stage {
     }
 
     const config = ctx.config || {};
+    const metadataTags = fileInfo.documentMetadata?.tags;
+    const extraTags =
+      typeof metadataTags === "string"
+        ? [metadataTags]
+        : Array.isArray(metadataTags)
+          ? metadataTags
+          : [];
     const tags = extractTags(fileInfo.content, config, {
       maxTags: config.maxTagsPerFile || 50,
+      extraTags,
     });
 
     return { ...fileInfo, tags };

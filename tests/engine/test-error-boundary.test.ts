@@ -450,6 +450,7 @@ test("close wraps non-Memoria failures as lifecycle errors", async () => {
 test("SQLite metadata close failure remains retryable through the engine", async () => {
   const cause = new Error("metadata close failure");
   const engine = createMemoryEngine({
+    dbPath: ":memory:",
     config: { dimension: DIMENSION },
     vectorStore: makeVectorStore(),
     embeddingProvider: makeEmbeddingProvider(),

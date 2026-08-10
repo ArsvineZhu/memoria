@@ -7,7 +7,7 @@
 
 - **Node.js ≥ 24.18.1 < 25**（当前 LTS；`fetch` / `AbortController` 为全局可用）
 - **TypeScript 7.0.2**（源码构建与类型检查；发布包优先使用 `dist/` 的 ESM）
-- **pnpm 11.20.0**（通过 Corepack 启用；依赖：`better-sqlite3`、`@dqbd/tiktoken`、`chokidar`）
+- **pnpm 11.20.0**（通过 Corepack 启用；依赖：`better-sqlite3`、`@dqbd/tiktoken`、`chokidar`、`yaml`）
 - `corepack pnpm install --frozen-lockfile`（安装锁定依赖）
 - `pnpm typecheck && pnpm build`（严格类型检查并生成 `dist/`）
 - **Rust 向量引擎二进制**：`rust-vexus-lite/*.node` 随仓库分发（当前平台预编译），
@@ -33,11 +33,9 @@ const root = process.cwd();
 const engine = createMemoryEngine({
   config: {
     dimension: 128, // 必须与 Provider 维度一致
-    rootPath: join(root, "notes"), // filesystem adapter 的扫描根目录
-    storePath: join(root, "indices"),
+    dataPath: join(root, "data"), // 派生 data/content 与 data/memoria/*
     topK: 3,
   },
-  dbPath: join(root, "memory.sqlite"),
   embeddingProvider: new FakeEmbeddingProvider(128), // 离线确定性伪嵌入
 });
 
@@ -69,16 +67,32 @@ void main().catch((error) => {
 });
 ```
 
-写好的文本文件示例（`notes/life/coffee.md`）：
+文件系统摄入的默认数据根是 `data/content/`，推荐把一篇记忆保存为
+`data/content/life/coffee.mdx`：
 
-```md
+```mdx
+---
+title: 手冲咖啡
+tags:
+  - 咖啡
+  - 生活记录
+recordedAt: 2026-08-08T09:30:00-06:00
+source: personal-journal
+---
+
+# 正文
+
 今天手冲咖啡：水温 93 度左右，粉水比 1:15，浅烘焙豆子香气明亮。
-
-Tag: 咖啡, 生活记录 ← 文末连续 Tag: 行才会被提取（extractTags 规则）
 ```
 
-零网络运行 `pnpm build:test && node dist-test/examples/demo/main.js` 可看 6 章节完整生命周期演示；本文等价链路
-已实测通过（1 文件 → 1 块 / 2 标签 / 3 向量，检索与删除均生效）。
+`tags` 会进入既有标签抽取/向量链路；其他 front matter 键写入
+`files.metadata_json`，并在结果 hydration 后出现在 `metadata`。front matter 不参与
+分块和嵌入，MDX 的 JSX/import/export 只按文本处理，不会执行。只修改 front matter
+时会复用正文向量并执行 metadata-only 更新。没有 front matter 的 `.md` 仍兼容，文末
+连续 `Tag:` 行也仍可使用。
+
+零网络运行 `pnpm build:test && node dist-test/examples/demo/main.js` 可看 6 章节完整生命周期演示；示例读取
+仓库的 `data/content/**/*.mdx`，只在 `data/memoria/demo/` 写入 SQLite 与向量索引。
 
 ### 真实嵌入（DashScope / OpenAI 兼容）
 
@@ -105,11 +119,18 @@ const engine = createMemoryEngine({
 
 ### 路径类
 
-| 字段        | 默认值              | 说明                                              |
-| ----------- | ------------------- | ------------------------------------------------- |
-| `rootPath`  | `process.cwd()`     | 相对路径基准；文件相对此目录计算并入库            |
-| `storePath` | `<cwd>/VectorStore` | 向量索引持久化目录                                |
-| `dbPath`    | `':memory:'`        | SQLite 元数据路径；构造时 `options.dbPath` 可覆盖 |
+| 字段        | 默认值                         | 说明                                                     |
+| ----------- | ------------------------------ | -------------------------------------------------------- |
+| `dataPath`  | `<cwd>/data`                   | 托管源文件与运行期状态的总目录                           |
+| `rootPath`  | `<cwd>/data/content`           | 文件系统摄入根；相对路径按此目录计算并入库               |
+| `storePath` | `<cwd>/data/memoria/indexes`  | 主引擎向量索引持久化目录                                 |
+| `dbPath`    | `<cwd>/data/memoria/memory.sqlite` | SQLite 元数据路径；构造时 `options.dbPath` 可覆盖     |
+
+`dataPath` 会派生上述主引擎路径以及 TDB 的 `knowledge`、`tdb/indexes`、
+`tdb/knowledge.sqlite`；显式传入的旧 `rootPath` / `storePath` / `dbPath` 仍优先。
+SQLite 是元数据、块正文和持久向量 BLOB 的权威存储；`.usearch` 索引是可重建的
+派生缓存，缺失或损坏时初始化会从 SQLite 恢复。源码数据应备份/审查
+`data/content/`，不应手工编辑 `data/memoria/` 或 `data/tdb/`。
 
 ### 嵌入 Provider
 
@@ -165,6 +186,10 @@ const engine = createMemoryEngine({
 | `riverMemoEnabled`                             | `false` | 河流状态累计重排 |
 | `tagExpansionEnabled`                          | `false` | 标签驱动候选扩展 |
 | `vectorReshapeEnabled`                         | `false` | 余弦向量重排     |
+| `geodesicRerankEnabled`                        | `false` | TagMemo 能量场测地线重排 |
+| `geodesicAlpha`                                 | `0.3`   | 原始分数与归一化测地线分数的混合权重 |
+| `geodesicMinGeoSamples`                        | `4`     | 候选进入测地线计算的最小命中标签数 |
+| `associatorEnabled`                             | `false` | 标签共现 + 向量邻居关联发现 |
 | `externalRerankEnabled`（别名 `useLLMRerank`） | `false` | LLM/外部重排     |
 | `timeDecayEnabled`                             | `false` | 时效衰减         |
 | `truncateEnabled`                              | `false` | 结果截断         |
@@ -216,9 +241,19 @@ const engine = createMemoryEngine({
 | `truncateEllipsis`                      | `false` | 截断追加 `…`                          |
 | `expandCount`                           | `2`     | 扩展种子数                            |
 | `expansionBoost`                        | `1.15`  | 扩展相似块分数倍率                    |
+| `associateCount`                        | `10`    | 关联阶段最多新增块数                  |
+| `associatorSeeds`                       | `3`     | 关联阶段使用的头部 seed 数             |
+| `associatorTagBoost`                    | `0.45`  | 标签共现 proposal 分数倍率             |
+| `associatorVecK`                        | `5`     | 每个内容索引的向量邻居召回数            |
+| `associatorVecBoost`                    | `0.3`   | 向量 proposal 分数倍率                  |
+| `associatorUseVector`                   | `true`  | 是否执行向量关联通道                    |
 
 `sourcePriority` 默认值：`{ rag: 50, time: 45, bm25_body: 40, bm25_tag: 40,
 continuity: 35, associate: 10, unknown: 0 }`（组合来源优先级，硬去重选代表用）。
+
+启用后，搜索 envelope 会额外携带 `geodesic` 或 `associatorStats` 观测对象；
+这些字段不改变既有 `SearchResult` 公共字段。关联向量只查询本次
+`resolvedIndexNames` 中的内容 diary 索引，并排除 `global_tags`。
 
 ### EPA / 金字塔 / V9 / V10 / River 专项
 
@@ -257,13 +292,13 @@ continuity: 35, associate: 10, unknown: 0 }`（组合来源优先级，硬去重
 | 字段                    | 默认值                           | 说明                   |
 | ----------------------- | -------------------------------- | ---------------------- |
 | `tdbEnabled`            | `false`                          | TDB 引擎总开关         |
-| `tdbRootPath`           | `<cwd>/knowledge`                | 库解析根目录           |
-| `tdbStorePath`          | `<cwd>/VectorStoreTDB`           | TDB 向量索引目录       |
-| `tdbDbPath`             | `':memory:'`                     | TDB 元数据 SQLite      |
+| `tdbRootPath`           | `<cwd>/data/knowledge`            | TDB 源文件根目录       |
+| `tdbStorePath`          | `<cwd>/data/tdb/indexes`          | TDB 向量索引目录       |
+| `tdbDbPath`             | `<cwd>/data/tdb/knowledge.sqlite` | TDB 元数据 SQLite      |
 | `tdbModel`              | `'google/gemini-embedding-001'`  | TDB 嵌入模型           |
 | `tdbDimension`          | `3072`                           | TDB 向量维度           |
 | `tdbEmbeddingBatchSize` | `16`                             | TDB 嵌入分批           |
-| `tdbExtensions`         | `['.md','.txt','.json','.html']` | 支持的扩展名清单       |
+| `tdbExtensions`         | `['.md','.mdx','.txt','.json','.html']` | 支持的扩展名清单 |
 | `tdbExcludeFolders`     | `['TDBdocs']`                    | 排除目录               |
 | `tdbSyncMode`           | `'normal'`                       | 本地适配器同步模式参数 |
 | `tdbForceQuery`         | `null`                           | 强制查询模式（可留空） |

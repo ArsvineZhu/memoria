@@ -178,6 +178,108 @@ test("FileReaderStage falls back to basename/root when rootPath is missing", asy
   assert.strictEqual(out.diaryName, "Root");
 });
 
+test("FileReaderStage strips MDX front matter and preserves structured metadata", async () => {
+  const raw =
+    "---\n" +
+    "title: Demo note\n" +
+    "tags:\n" +
+    "  - alpha\n" +
+    "  - beta\n" +
+    "context:\n" +
+    "  project: memoria\n" +
+    "---\n" +
+    "\n" +
+    "Body text\n\nimport Demo from './Demo.tsx';";
+  const body = "Body text\n\nimport Demo from './Demo.tsx';";
+
+  const out = await new FileReaderStage().process(
+    {
+      path: "C:\\virtual\\journal\\demo.mdx",
+      relPath: "journal/demo.mdx",
+      content: raw,
+      mtime: 100,
+      size: Buffer.byteLength(raw),
+    },
+    makeCtx({ rootPath: "C:\\virtual" }),
+  );
+
+  assert.equal(out.content, body);
+  assert.equal(out.checksum, md5(body));
+  assert.deepEqual(out.documentMetadata, {
+    title: "Demo note",
+    tags: ["alpha", "beta"],
+    context: { project: "memoria" },
+  });
+});
+
+test("FileReaderStage reuses embeddings when only MDX front matter changes", async () => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: 3 });
+  const stage = new FileReaderStage();
+  const ctx = makeCtx({ rootPath: "C:\\virtual" }, { metadataStore });
+  const firstRaw = "---\ntitle: First\n---\n\nSame body";
+  const secondRaw = "---\ntitle: Second\nstatus: active\n---\n\nSame body";
+
+  const first = await stage.process(
+    {
+      path: "C:\\virtual\\journal\\note.mdx",
+      relPath: "journal/note.mdx",
+      content: firstRaw,
+      mtime: 100,
+      size: Buffer.byteLength(firstRaw),
+    },
+    ctx,
+  );
+  await metadataStore.upsertFile({
+    path: first.relPath,
+    diaryName: first.diaryName,
+    checksum: first.checksum,
+    mtime: first.mtime,
+    size: first.size,
+    metadataJson: JSON.stringify(first.documentMetadata),
+  });
+
+  const second = await stage.process(
+    {
+      path: "C:\\virtual\\journal\\note.mdx",
+      relPath: "journal/note.mdx",
+      content: secondRaw,
+      mtime: 101,
+      size: Buffer.byteLength(secondRaw),
+    },
+    ctx,
+  );
+
+  assert.equal(second.content, "Same body");
+  assert.equal(second.checksum, first.checksum);
+  assert.equal(second.needsEmbedding, false);
+  assert.equal(second.needsMetadataWrite, true);
+  assert.deepEqual(second.documentMetadata, {
+    title: "Second",
+    status: "active",
+  });
+  metadataStore.close();
+});
+
+test("FileReaderStage wraps malformed MDX front matter as an ingestion error", async () => {
+  await assert.rejects(
+    () =>
+      new FileReaderStage().process(
+        {
+          path: "C:\\virtual\\journal\\broken.mdx",
+          relPath: "journal/broken.mdx",
+          content: "---\ntitle: [unterminated\n---\nBody",
+          mtime: 100,
+          size: 40,
+        },
+        makeCtx({ rootPath: "C:\\virtual" }),
+      ),
+    (error: unknown) =>
+      error instanceof MemoriaError &&
+      error.code === "ingestion" &&
+      error.message.includes("broken.mdx"),
+  );
+});
+
 // ── TagExtractorStage ──────────────────────────────────────────
 
 test("TagExtractorStage extracts tags from Tag lines", async () => {
@@ -191,6 +293,19 @@ test("TagExtractorStage extracts tags from Tag lines", async () => {
   );
 
   assert.deepStrictEqual(out.tags, ["alpha", "beta", "gamma"]);
+});
+
+test("TagExtractorStage includes structured MDX front matter tags", async () => {
+  const stage = new TagExtractorStage();
+  const out = await stage.process(
+    {
+      content: "Body without terminal tags",
+      documentMetadata: { tags: ["front alpha", "front beta"] },
+    },
+    makeCtx({}),
+  );
+
+  assert.deepStrictEqual(out.tags, ["front alpha", "front beta"]);
 });
 
 test("TagExtractorStage respects tagBlacklist config", async () => {

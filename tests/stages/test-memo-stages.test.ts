@@ -22,6 +22,7 @@ import EPAProjectorStage from "../../src/stages/memo/epa-projector.js";
 import ResidualPyramidStage from "../../src/stages/memo/residual-pyramid.js";
 import TagExpanderStage from "../../src/stages/memo/tag-expander.js";
 import VectorReshaperStage from "../../src/stages/memo/vector-reshaper.js";
+import GeodesicRerankerStage from "../../src/stages/memo/geodesic-reranker.js";
 import CandidateMergerStage from "../../src/stages/retrieval/candidate-merger.js";
 
 const dim = 4;
@@ -543,6 +544,109 @@ test("VectorReshaperStage: disabled is a passthrough", async () => {
 
   assert.strictEqual(out.vectorReshapeSkipped, true);
   assert.deepStrictEqual(out.mergedCandidates, input.mergedCandidates);
+});
+
+// ── GeodesicRerankerStage ──────────────────────────────────────────────
+
+async function seedGeodesicStore() {
+  const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const file = (await store.upsertFile({
+    path: "geo.md",
+    diaryName: "geo",
+    checksum: "geo",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const [c1, c2, c3] = await store.insertChunks(file, [
+    { chunkIndex: 0, content: "one" },
+    { chunkIndex: 1, content: "two" },
+    { chunkIndex: 2, content: "three" },
+  ]);
+  const tagRows = await store.upsertTags([
+    { name: "alpha", vector: null },
+    { name: "beta", vector: null },
+    { name: "gamma", vector: null },
+    { name: "delta", vector: null },
+  ]);
+  await store.setFileTags(file, tagRows);
+  return { store, c1, c2, c3, tagRows };
+}
+
+test("GeodesicRerankerStage applies the normalized energy formula stably", async () => {
+  const stage = new GeodesicRerankerStage();
+  assert.strictEqual(stage.name, "geodesicReranker");
+  const { store, c1, c2 } = await seedGeodesicStore();
+  const [alpha, beta, gamma, delta] = [1, 2, 3, 4];
+  const input = {
+    mergedCandidates: [
+      { chunkId: c2, score: 0.3, tags: ["gamma", "delta"] },
+      { chunkId: c1, score: 0.2, tags: ["alpha", "beta"] },
+      { chunkId: 999, score: 0.1, tags: ["alpha"] },
+    ],
+    tagMemo: { activations: new Map([[alpha, 8], [beta, 4], [gamma, 1], [delta, 1]]) },
+  };
+  const ctx = new PipelineContext({
+    config: {
+      geodesicRerankEnabled: true,
+      geodesicAlpha: 0.3,
+      geodesicMinGeoSamples: 2,
+    },
+    metadataStore: store,
+  });
+
+  const out = await stage.process(input, ctx);
+  assert.strictEqual(out.mergedCandidates.length, 3, "rerank must not truncate");
+  assert.strictEqual(out.mergedCandidates[0].chunkId, c1);
+  assert.strictEqual(out.mergedCandidates[1].chunkId, c2);
+  assert.strictEqual(out.mergedCandidates[2].chunkId, 999);
+  const c1Score = out.mergedCandidates.find((c) => c.chunkId === c1)!.score;
+  assert.ok(Math.abs(c1Score - 0.44) < 1e-9);
+  assert.strictEqual(
+    out.mergedCandidates.find((c) => c.chunkId === 999)!.score,
+    0.1,
+    "low-sample candidate keeps its original score",
+  );
+  assert.strictEqual(out.geodesic!.version, "ts-v1");
+  assert.strictEqual(out.geodesic!.appliedCount, 2);
+  assert.strictEqual(out.geodesic!.degradedCount, 1);
+  assert.strictEqual(out.geodesic!.scores.length, 3);
+});
+
+test("GeodesicRerankerStage uses stored file tags and passes through empty fields", async () => {
+  const stage = new GeodesicRerankerStage();
+  const { store, c1 } = await seedGeodesicStore();
+  const candidates = [
+    { chunkId: c1, score: 0.3 },
+    { chunkId: c1 + 1, score: 0.2 },
+  ];
+  const ctx = new PipelineContext({
+    config: { geodesicRerankEnabled: true, geodesicMinGeoSamples: 5 },
+    metadataStore: store,
+  });
+
+  const noField = await stage.process({ mergedCandidates: candidates }, ctx);
+  assert.strictEqual(noField.mergedCandidates, candidates);
+  assert.strictEqual(noField.geodesicSkipped, true);
+
+  const lowSample = await stage.process(
+    {
+      mergedCandidates: [{ chunkId: c1, score: 0.3 }],
+      tagMemo: { activations: new Map([[1, 8], [2, 4], [3, 1], [4, 1]]) },
+    },
+    ctx,
+  );
+  assert.strictEqual(lowSample.mergedCandidates[0].score, 0.3);
+  assert.strictEqual(lowSample.geodesic!.degradedCount, 1);
+
+  const allZero = await stage.process(
+    {
+      mergedCandidates: [{ chunkId: c1, score: 0.3, tags: ["alpha", "beta"] }],
+      tagMemo: { activations: new Map([[1, 0], [2, 0]]) },
+    },
+    ctx,
+  );
+  assert.strictEqual(allZero.mergedCandidates[0].score, 0.3);
+  assert.strictEqual(allZero.geodesicSkipped, true);
 });
 
 // ── Cross-stage integration ─────────────────────────────────────────────

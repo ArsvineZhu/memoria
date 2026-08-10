@@ -121,6 +121,7 @@ export type { EngineState } from "./engine.js";
 
 export type {
   ChunkCandidate,
+  AssociatorStats,
   ChunkEntry,
   DeleteEnvelope,
   DocumentStateReplacement,
@@ -132,6 +133,7 @@ export type {
   FileRow,
   FileSnapshot,
   FileTagRow,
+  GeodesicData,
   IngestEnvelope,
   GenerationState,
   IndexableChunkRow,

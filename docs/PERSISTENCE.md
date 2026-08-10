@@ -14,9 +14,9 @@
 ```
 MemoryEngine（src/engine.ts；发布产物为 `dist/engine.js`）
 ├─ metadataStore: SqliteMetadataStore   （better-sqlite3，五表）
-│    dbPath 默认 ':memory:'（default-config.ts:26）；传参后落盘 memory.sqlite
+│    dbPath 默认 <cwd>/data/memoria/memory.sqlite
 └─ vectorStore: VexusVectorStore        （Rust usearch 索引）
-     storePath 默认 <cwd>/VectorStore（default-config.ts:25）
+     storePath 默认 <cwd>/data/memoria/indexes
      ├─ 每个命名索引一个文件：index_<md5(name)>.usearch
      └─ 全局标签索引命名 'global_tags'（vector-indexer.ts:6）
 ```
@@ -26,6 +26,46 @@ MemoryEngine（src/engine.ts；发布产物为 `dist/engine.js`）
 保证一致性，见 §4）。Rust 索引"无状态"（lib.rs 注释：只存向量），
 id ↔ 内容的映射关系完全由 SQLite 侧负责（`VexusIndex.load` 的 map_path
 参数已被忽略，lib.rs:294–303）。
+
+## 1.1 托管数据目录与 MDX 源文件
+
+默认运行时边界由 `dataPath=<cwd>/data` 统一管理：
+
+```text
+data/
+├─ content/                  # 用户应备份、审查、版本控制的 MDX 源文件
+├─ knowledge/                # 可选 TDB 源文件
+├─ memoria/
+│  ├─ memory.sqlite           # 主引擎 SQLite 权威状态
+│  └─ indexes/                # 主引擎派生向量索引
+└─ tdb/
+   ├─ knowledge.sqlite        # TDB SQLite 权威状态
+   └─ indexes/                # TDB 派生向量索引
+```
+
+推荐的原始文档格式是带 YAML front matter 的 `.mdx`：
+
+```mdx
+---
+title: 手冲咖啡
+tags: [咖啡, 生活记录]
+recordedAt: 2026-08-08T09:30:00-06:00
+source: personal-journal
+---
+
+# 正文
+
+正文内容。MDX/JSX 仅按 UTF-8 文本处理，不会被执行。
+```
+
+`tags` 进入现有标签流水线，其他键写入 `files.metadata_json`；front matter 在
+分块和嵌入前剥离。正文向量因此与 body checksum 绑定，只有 front matter 变化时
+可以复用已有向量并执行 metadata-only 更新。没有 front matter 的 `.md` 仍按旧
+规则工作。
+
+SQLite 是可查询的元数据、块正文、标签和持久向量 BLOB 权威；`.usearch` 文件是
+按 diary/tag 命名的派生缓存。索引可以删除或在缺失、损坏、维度不符时从 SQLite
+重建，不能把索引文件当作唯一备份。
 
 ## 2. SQLite 元数据（src/providers/sqlite-metadata-store.ts）
 
@@ -186,21 +226,24 @@ initialize 的 recovery authority，也不是 search 的隐式加载机制。`se
 
 ## 8. 真实页面布局示例
 
-离线验证产物（`examples/demo/demo-data/`，仓库内真实文件）：
+离线演示读取 `data/content/**/*.mdx`，生成状态位于 `data/memoria/demo/`：
 
 ```
-demo-data/
-├─ memory.sqlite              # SQLite 主库（WAL 模式，运行期伴生 -wal/-shm）
-└─ indices/
-   ├─ index_370757d2df51ae456bf63c165fc71817.usearch
-   ├─ index_acc943c5418181f5b95e635549047332.usearch
-   ├─ index_cd69b4957f06cd818d7bf3d61980e291.usearch
-   └─ index_e155e1bb4a9c38e3baf90637ab7865df.usearch
+data/
+├─ content/
+│  ├─ life/coffee.mdx
+│  ├─ memory/cold-knowledge.mdx
+│  └─ quantum/qubit.mdx
+└─ memoria/demo/
+   ├─ memory.sqlite              # SQLite 主库（WAL 模式，运行期伴生 -wal/-shm）
+   └─ indexes/
+      ├─ index_<md5(diary)>.usearch
+      └─ index_<md5(global_tags)>.usearch
 ```
 
 - 文件名为 `index_<md5(diaryName)>.usearch`，即 §3 的命名规则；
-- `tests/integration/verify.ts:94` 用 `path.join(storePath, 'memoria.sqlite')`
-  命名主库——库名可由宿主自定，`.usearch` 文件名才是固定规则；
+- demo 使用独立的 `data/memoria/demo/`，不会清空或覆盖宿主默认的
+  `data/memoria/memory.sqlite`；
 - 向量 + 元数据重启恢复的完整验证路径：`tests/integration/real-dashscope.test.ts:253`
   （真实嵌入下的落盘 + 重开搜索）。
 
@@ -213,10 +256,10 @@ demo-data/
   `storePath` 下匹配 `.*\.(tmp|bak)\..*` 的侧车文件（保留 `index_*.usearch`）。
 - **WAL 伴生文件**：`memory.sqlite-wal` / `-shm` 是 SQLite WAL 的正常
   组成部分，删除会丢未检查点数据；仅在主库文件完整迁移时同批带走。
-- **双写一致性**：删除 `storePath` 下的 `.usearch` 而保留 SQLite，
-  或反之，都会造成 id 空洞或搜索空结果——重灌时应成对删除
-  `dbPath` 与 `storePath` 后重新 `flushBatch`（维度更换时同理，见
-  `docs/EMBEDDING.md` §5）。
+- **双写一致性**：`.usearch` 是可重建缓存；删除 `storePath` 下的索引而保留
+  SQLite 是可恢复的维护动作，重启/初始化会从 SQLite authority 重建。若同时
+  删除 `dbPath`，才代表连同权威元数据一起清空；维度更换时应使用新
+  `storePath` 与 SQLite 文件并重新 `flushBatch`（见 `docs/EMBEDDING.md` §5）。
 - **定时器**：不调 `close()` 而直接退出进程，`scheduleIndexSave` 的
   定时器可能未到期，最后几批向量丢失。优雅停机务必走
   `engine.close()` / `adapter.shutdown()`。

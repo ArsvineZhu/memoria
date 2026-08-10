@@ -8,6 +8,7 @@ interface TagConfig {
 interface TagOptions {
   maxTags?: number;
   logPrefix?: string;
+  extraTags?: readonly unknown[];
 }
 
 const EMPTY_CONTENT = "[EMPTY_CONTENT]";
@@ -53,7 +54,7 @@ function extractTags(
     if (!match) break;
     tagContents.unshift(at(match, 1, "tag match"));
   }
-  if (tagContents.length === 0) return [];
+  if (tagContents.length === 0 && !options.extraTags?.length) return [];
 
   const allTags: string[] = [];
   for (const tagContent of tagContents) {
@@ -64,6 +65,20 @@ function extractTags(
         .filter(Boolean),
     );
   }
+  const appendExtraTags = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const nested of value) appendExtraTags(nested);
+      return;
+    }
+    if (typeof value !== "string") return;
+    allTags.push(
+      ...value
+        .split(/[,，、;|｜]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    );
+  };
+  for (const extraTag of options.extraTags || []) appendExtraTags(extraTag);
 
   let tags: string[] = allTags
     .map((tag) => prepareTextForEmbedding(tag.replace(/[。.]+$/g, "").trim()))

@@ -27,6 +27,7 @@ export type Tokenizer = (
 
 /** Fully materialised runtime configuration. */
 export interface MemoryConfig {
+  dataPath: string;
   rootPath: string;
   storePath: string;
   dbPath: string;
@@ -63,6 +64,10 @@ export interface MemoryConfig {
   riverMemoEnabled: boolean;
   tagExpansionEnabled: boolean;
   vectorReshapeEnabled: boolean;
+  geodesicRerankEnabled: boolean;
+  geodesicAlpha: number;
+  geodesicMinGeoSamples: number;
+  associatorEnabled: boolean;
   externalRerankEnabled: boolean;
   useLLMRerank: boolean;
   timeDecayEnabled: boolean;
@@ -105,6 +110,12 @@ export interface MemoryConfig {
   truncateEllipsis: boolean;
   expandCount: number;
   expansionBoost: number;
+  associateCount: number;
+  associatorSeeds: number;
+  associatorTagBoost: number;
+  associatorVecK: number;
+  associatorVecBoost: number;
+  associatorUseVector: boolean;
   epaClusterCount: number;
   epaMaxBasisDim: number;
   epaPerCandidateAnalysis: boolean;
@@ -329,6 +340,10 @@ export interface SearchEnvelope {
   results: SearchResult[];
   resultCount: number;
   tagMemo?: TagMemoData;
+  geodesic?: GeodesicData;
+  geodesicSkipped?: boolean;
+  associatorStats?: AssociatorStats;
+  associatorSkipped?: boolean;
   pyramid?: PyramidData;
   epa?: EpaEnvelope;
   failed?: boolean;
@@ -426,6 +441,29 @@ export interface TagExpansionData {
 export interface VectorReshapeData {
   enabled: boolean;
   traced: { checked: number; matched: number; skipped: number };
+}
+
+export interface GeodesicData {
+  version: "ts-v1";
+  alpha: number;
+  minGeoSamples: number;
+  appliedCount: number;
+  degradedCount: number;
+  scores: Array<{
+    chunkId: number;
+    originalScore: number;
+    geoScore: number;
+    normalizedGeoScore: number;
+    finalScore: number;
+    hitCount: number;
+  }>;
+}
+
+export interface AssociatorStats {
+  added: number;
+  fromTags: number;
+  fromVector: number;
+  skipped: number;
 }
 
 export interface DedupeStats {
@@ -529,6 +567,10 @@ export interface PipelineData extends UnknownRecord {
   pyramid?: PyramidData;
   epa?: EpaEnvelope;
   tagMemo?: TagMemoData;
+  geodesic?: GeodesicData;
+  geodesicSkipped?: boolean;
+  associatorStats?: AssociatorStats;
+  associatorSkipped?: boolean;
   riverGraph?: RiverGraph;
   vector?: EmbeddingVector;
   tagExpansion?: TagExpansionData;

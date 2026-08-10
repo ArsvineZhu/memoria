@@ -43,6 +43,7 @@ function ingestResult(input: PipelineData): PipelineData {
 function makeEngine() {
   const root = mkdtempSync(join(tmpdir(), "memoria-mutation-queue-"));
   return createMemoryEngine({
+    dbPath: ":memory:",
     config: { dimension: DIMENSION, storePath: root },
     embeddingProvider: embeddingProvider(),
   });
@@ -215,6 +216,7 @@ test("different mutation keys can run concurrently and clean their tails", async
 test("absolute and relative file mutations share one canonical queue key", async () => {
   const root = mkdtempSync(join(tmpdir(), "memoria-mutation-file-"));
   const engine = createMemoryEngine({
+    dbPath: ":memory:",
     config: {
       dimension: DIMENSION,
       rootPath: root,

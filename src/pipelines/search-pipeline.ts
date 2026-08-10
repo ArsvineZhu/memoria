@@ -14,6 +14,7 @@ import EPAProjectorStage from "../stages/memo/epa-projector.js";
 import ResidualPyramidStage from "../stages/memo/residual-pyramid.js";
 import TagExpanderStage from "../stages/memo/tag-expander.js";
 import VectorReshaperStage from "../stages/memo/vector-reshaper.js";
+import GeodesicRerankerStage from "../stages/memo/geodesic-reranker.js";
 import TagMemoV9Stage from "../stages/memo/tagmemo-v9.js";
 import TagMemoV10Stage from "../stages/memo/tagmemo-v10.js";
 import RiverMemoStage from "../stages/memo/rivermemo.js";
@@ -23,6 +24,7 @@ import ExternalRerankerStage from "../stages/postprocess/external-reranker.js";
 import TimeDecayStage from "../stages/postprocess/time-decay.js";
 import TruncatorStage from "../stages/postprocess/truncator.js";
 import ExpanderStage from "../stages/postprocess/expander.js";
+import AssociatorStage from "../stages/postprocess/associator.js";
 
 import ResultFormatterStage from "../stages/output/result-formatter.js";
 import type {
@@ -46,6 +48,8 @@ const DEFAULT_SEARCH_GATES = {
   epaProjectionEnabled: true,
   residualPyramidEnabled: true,
   dedupeEnabled: true,
+  geodesicRerankEnabled: false,
+  associatorEnabled: false,
 };
 
 /**
@@ -105,28 +109,32 @@ function mergeConfig(
  *
  *   1. queryEmbedder      embed the raw query (+ optional expansion)
  *   2. queryVectorBridge   derive queryVector for the memo layers
- *   3. vectorSearcher      per-diary vector retrieval
- *   4. bm25Searcher        sparse keyword retrieval
- *   5. candidateMerger     hybrid fusion (vector + BM25)
- *   6. epaProjector        ● semantic depth analysis of the query
- *   7. residualPyramid     ● tag-subspace decomposition of the query
- *   8. tagMemoV9           wave propagation over tagGraph        [gate]
- *   9. tagMemoV10          dual scaled-field diffusion          [gate]
- *  10. riverMemo           persistent river accumulation        [gate]
- *  11. tagExpander         tag-driven candidate expansion       [gate]
- *  12. vectorReshaper      cosine re-ranking of candidates      [gate]
- *  13. resultDeduplicator  ● exact + semantic dedupe
- *  14. externalReranker    LLM/external rerank                  [gate]
- *  15. timeDecay           recency decay                        [gate]
- *  16. truncator           topK/content caps                    [gate]
- *  17. expander            same-file sibling expansion          [gate]
- *  18. resultFormatter     hydrated result envelope
+ *   3. searchScopeResolver  resolve one authoritative diary scope
+ *   4. vectorSearcher       per-diary vector retrieval
+ *   5. bm25Searcher         sparse keyword retrieval
+ *   6. candidateMerger      hybrid fusion (vector + BM25)
+ *   7. epaProjector         ● semantic depth analysis of the query
+ *   8. residualPyramid      ● tag-subspace decomposition of the query
+ *   9. tagMemoV9            wave propagation over tagGraph        [gate]
+ *  10. tagMemoV10           dual scaled-field diffusion          [gate]
+ *  11. riverMemo            persistent river accumulation        [gate]
+ *  12. tagExpander          tag-driven candidate expansion       [gate]
+ *  13. vectorReshaper       cosine re-ranking of candidates      [gate]
+ *  14. geodesicReranker     tag-energy reranking                 [gate]
+ *  15. resultDeduplicator   ● exact + semantic dedupe
+ *  16. externalReranker     LLM/external rerank                  [gate]
+ *  17. timeDecay            recency decay                        [gate]
+ *  18. truncator            topK/content caps                    [gate]
+ *  19. expander             same-file sibling expansion          [gate]
+ *  20. associator           tag/vector related chunks            [gate]
+ *  21. resultFormatter      hydrated result envelope
  *
  * Gates (config keys): epaProjectionEnabled (default true),
  * residualPyramidEnabled (default true), tagMemoV9Enabled,
  * tagMemoV10Enabled, riverMemoEnabled, tagExpansionEnabled,
  * vectorReshapeEnabled, externalRerankEnabled (alias useLLMRerank),
- * timeDecayEnabled, truncateEnabled, expansionEnabled.
+ * geodesicRerankEnabled, timeDecayEnabled, truncateEnabled,
+ * expansionEnabled, associatorEnabled.
  * dedupeEnabled is honored inside the stage itself (it lives in the
  * chain regardless so the envelope stays complete).
  *
@@ -138,8 +146,8 @@ function mergeConfig(
  *   );
  *
  * Result envelope: { … inputs, queries, vectorResults, bm25Results,
- * mergedCandidates, epa?, pyramid?, tagMemo?, riverMemo?,
- * results: [ …hydrated chunks], resultCount }.
+ * mergedCandidates, epa?, pyramid?, tagMemo?, geodesic?, riverMemo?,
+ * associatorStats?, results: [ …hydrated chunks], resultCount }.
  */
 class SearchPipeline extends Pipeline {
   config: MemoryConfigOverrides;
@@ -184,6 +192,8 @@ class SearchPipeline extends Pipeline {
 
     if (config.tagExpansionEnabled === true) stages.push(new TagExpanderStage());
     if (config.vectorReshapeEnabled === true) stages.push(new VectorReshaperStage());
+    if (config.geodesicRerankEnabled === true)
+      stages.push(new GeodesicRerankerStage());
 
     stages.push(new ResultDeduplicatorStage());
 
@@ -192,6 +202,7 @@ class SearchPipeline extends Pipeline {
     if (config.timeDecayEnabled === true) stages.push(new TimeDecayStage());
     if (config.truncateEnabled === true) stages.push(new TruncatorStage());
     if (config.expansionEnabled === true) stages.push(new ExpanderStage());
+    if (config.associatorEnabled === true) stages.push(new AssociatorStage());
 
     stages.push(new ResultFormatterStage());
     return stages;

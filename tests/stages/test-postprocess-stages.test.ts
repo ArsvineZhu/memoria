@@ -13,8 +13,9 @@ import ExternalRerankerStage from "../../src/stages/postprocess/external-reranke
 import TimeDecayStage from "../../src/stages/postprocess/time-decay.js";
 import TruncatorStage from "../../src/stages/postprocess/truncator.js";
 import ExpanderStage from "../../src/stages/postprocess/expander.js";
+import AssociatorStage from "../../src/stages/postprocess/associator.js";
 import ResultFormatterStage from "../../src/stages/output/result-formatter.js";
-import type { ChunkCandidate } from "../../src/types.js";
+import type { ChunkCandidate, VectorStoreContract } from "../../src/types.js";
 import { encodeVectorBlob } from "../../src/utils/vector-codec.js";
 
 const dim = 4;
@@ -476,6 +477,156 @@ test("ExpanderStage is gated off by default", async () => {
   assert.strictEqual(out.expansionStats!.added, 0);
 });
 
+// ── AssociatorStage ─────────────────────────────────────────────────────
+
+async function seedAssociatorStore() {
+  const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const makeFile = (path: string, diaryName: string, checksum: string) =>
+    store.upsertFile({ path, diaryName, checksum, mtime: 1, size: 1 });
+  const seedFile = (await makeFile("seed.md", "diary1", "seed"))!;
+  const tagFile = (await makeFile("tag.md", "diary2", "tag"))!;
+  const outsideFile = (await makeFile("outside.md", "diary3", "outside"))!;
+  const vectorFile = (await makeFile("vector.md", "diary2", "vector"))!;
+  const [seedChunk] = await store.insertChunks(seedFile, [
+    { chunkIndex: 0, content: "seed", vector: encodeVectorBlob(new Float32Array([1, 0, 0, 0])) },
+  ]);
+  const [tagChunk] = await store.insertChunks(tagFile, [
+    { chunkIndex: 0, content: "tag match", vector: encodeVectorBlob(new Float32Array([0, 1, 0, 0])) },
+  ]);
+  const [outsideChunk] = await store.insertChunks(outsideFile, [
+    { chunkIndex: 0, content: "outside", vector: encodeVectorBlob(new Float32Array([0, 0, 1, 0])) },
+  ]);
+  const [vectorChunk] = await store.insertChunks(vectorFile, [
+    { chunkIndex: 0, content: "vector match", vector: encodeVectorBlob(new Float32Array([0, 0, 0, 1])) },
+  ]);
+  const [seedTag, neighborTag] = await store.upsertTags([
+    { name: "seed-tag", vector: null },
+    { name: "neighbor-tag", vector: null },
+  ]);
+  await store.setFileTags(seedFile, [seedTag, neighborTag]);
+  await store.setFileTags(tagFile, [neighborTag]);
+  await store.setFileTags(outsideFile, [neighborTag]);
+  return { store, seedChunk, tagChunk, outsideChunk, vectorChunk };
+}
+
+test("AssociatorStage adds scoped tag and vector neighbors with deterministic merge rules", async () => {
+  const stage = new AssociatorStage();
+  assert.strictEqual(stage.name, "associator");
+  const { store, seedChunk, tagChunk, outsideChunk, vectorChunk } =
+    await seedAssociatorStore();
+  const searchedIndexes: string[] = [];
+  const vectorStore: VectorStoreContract = {
+    search: async (indexName, _queryVector, _k) => {
+      searchedIndexes.push(indexName);
+      if (indexName === "diary1") {
+        return [
+          { id: seedChunk, score: 0.99 },
+          { id: vectorChunk, score: 0.6 },
+          { id: outsideChunk, score: 0.95 },
+        ];
+      }
+      return [
+        { id: tagChunk, score: 0.8 },
+        { id: vectorChunk, score: 0.6 },
+      ];
+    },
+  } as VectorStoreContract;
+  const ctx = new PipelineContext({
+    config: {
+      associatorEnabled: true,
+      associatorSeeds: 1,
+      associateCount: 2,
+      associatorTagBoost: 0.45,
+      associatorVecK: 5,
+      associatorVecBoost: 0.3,
+      associatorUseVector: true,
+      dimension: dim,
+    },
+    metadataStore: store,
+    vectorStore,
+  });
+
+  const out = await stage.process(
+    {
+      resolvedIndexNames: ["diary1", "diary2", "global_tags"],
+      mergedCandidates: [{ chunkId: seedChunk, score: 0.9 }],
+    },
+    ctx,
+  );
+
+  assert.deepStrictEqual(out.mergedCandidates.map((candidate) => candidate.chunkId), [
+    seedChunk,
+    tagChunk,
+    vectorChunk,
+  ]);
+  const added = out.mergedCandidates[1];
+  assert.strictEqual(added.source, "associate");
+  assert.strictEqual(added.associationChannel, "tag");
+  assert.strictEqual(added.score, 0.405);
+  assert.strictEqual(out.associatorStats!.added, 2);
+  assert.strictEqual(out.associatorStats!.fromTags, 1);
+  assert.strictEqual(out.associatorStats!.fromVector, 1);
+  assert.deepStrictEqual(searchedIndexes.sort(), ["diary1", "diary2"]);
+});
+
+test("AssociatorStage keeps vector-only candidates, excludes existing chunks, and honors the cap", async () => {
+  const stage = new AssociatorStage();
+  const { store, seedChunk, tagChunk, vectorChunk } = await seedAssociatorStore();
+  const vectorStore: VectorStoreContract = {
+    search: async (_indexName, _queryVector, _k) => [
+      { id: seedChunk, score: 0.99 },
+      { id: tagChunk, score: 0.8 },
+      { id: vectorChunk, score: 0.6 },
+    ],
+  } as VectorStoreContract;
+  const ctx = new PipelineContext({
+    config: {
+      associatorEnabled: true,
+      associatorSeeds: 1,
+      associateCount: 2,
+      associatorTagBoost: 0.45,
+      associatorVecK: 5,
+      associatorVecBoost: 0.3,
+      associatorUseVector: true,
+      dimension: dim,
+    },
+    metadataStore: store,
+    vectorStore,
+  });
+  const out = await stage.process(
+    {
+      resolvedIndexNames: ["diary1", "diary2"],
+      mergedCandidates: [
+        { chunkId: seedChunk, score: 0.9 },
+        { chunkId: tagChunk, score: 0.8 },
+      ],
+    },
+    ctx,
+  );
+
+  assert.strictEqual(out.mergedCandidates.length, 3);
+  assert.ok(out.mergedCandidates.some((candidate) => candidate.chunkId === vectorChunk));
+  assert.strictEqual(
+    out.mergedCandidates.filter((candidate) => candidate.chunkId === seedChunk).length,
+    1,
+    "the seed was already present and must not be replaced",
+  );
+  assert.strictEqual(out.associatorStats!.added, 1);
+});
+
+test("AssociatorStage reports unavailable channel attempts without hiding provider errors", async () => {
+  const stage = new AssociatorStage();
+  const out = await stage.process(
+    { mergedCandidates: [{ chunkId: 1, score: 0.5 }] },
+    new PipelineContext({
+      config: { associatorEnabled: true, associatorUseVector: true },
+    }),
+  );
+  assert.deepStrictEqual(out.mergedCandidates, [{ chunkId: 1, score: 0.5 }]);
+  assert.strictEqual(out.associatorStats!.skipped, 2);
+  assert.strictEqual(out.associatorStats!.added, 0);
+});
+
 // ── ResultFormatterStage ────────────────────────────────────────────────
 
 test("ResultFormatterStage hydrates partial candidates into full result rows", async () => {
@@ -496,7 +647,14 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
     {
       query: "记忆",
       tagMemo: tagMemoTrace,
-      mergedCandidates: [{ chunkId: newChunk, score: 0.77, source: "vector" }],
+      mergedCandidates: [
+        {
+          chunkId: newChunk,
+          score: 0.77,
+          source: "associate",
+          associationChannel: "tag",
+        },
+      ],
     },
     ctx,
   );
@@ -511,6 +669,8 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
   assert.strictEqual(row.fileId, newFile);
   assert.strictEqual(row.diaryName, "diary1");
   assert.strictEqual(row.score, 0.77);
+  assert.strictEqual(row.source, "associate");
+  assert.ok(!("associationChannel" in row));
   assert.strictEqual(row.similarity, 0.77);
   assert.ok(Number.isFinite(row.updatedAt));
   assert.deepStrictEqual(row.tags, ["重要"]);

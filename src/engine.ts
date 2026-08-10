@@ -153,7 +153,7 @@ class MemoryEngine {
 
     // 1. Merged configuration (providers read from here).
     this.config = mergeConfig(options.config);
-    if (options.dbPath !== undefined && this.config.dbPath === ":memory:") {
+    if (options.dbPath !== undefined) {
       this.config.dbPath = options.dbPath;
     }
 

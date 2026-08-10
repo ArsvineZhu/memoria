@@ -344,6 +344,7 @@ test("search reconciles authoritative SQLite state after a same-session vector f
     tagIndexSaveDelay: 60_000,
   });
   const engine = createMemoryEngine({
+    dbPath: ":memory:",
     config: { dimension: DIMENSION, storePath },
     embeddingProvider: embeddingProvider(),
     vectorStore,
@@ -544,6 +545,7 @@ test("dirty and generation-mismatched reopen rebuilds and marks vector state cle
 test("reconciliation uses one bulk indexable-chunk query instead of N+1 file lookups", async () => {
   const root = mkdtempSync(join(tmpdir(), "memoria-recovery-bulk-"));
   const engine = createMemoryEngine({
+    dbPath: ":memory:",
     config: { dimension: DIMENSION, storePath: root },
     embeddingProvider: embeddingProvider(),
   });

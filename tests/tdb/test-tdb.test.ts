@@ -80,6 +80,7 @@ const FACT_GAMMA = "gamma 冷知识：老虎的皮肤也有条纹。";
 function baseConfig(overrides: MemoryConfigOverrides = {}) {
   return mergeConfig({
     tdbEnabled: true,
+    tdbDbPath: ":memory:",
     ...overrides,
   });
 }
@@ -118,6 +119,14 @@ test("TDBStore upserts files, chunks and survives reopen", async (t) => {
   assert.strictEqual(all.length, 2);
   assert.strictEqual(all[0].content, FACT_ALPHA);
   await store2.close();
+});
+
+test("TDBStore creates parent directories for file-backed databases", (t) => {
+  const dir = makeTempDir(t);
+  const dbPath = path.join(dir, "nested", "state", "knowledge.sqlite");
+  const store = new TDBStore({ dbPath });
+  assert.equal(fs.existsSync(dbPath), true);
+  store.close();
 });
 
 test("TDBStore getFileByChunkId / getChunkById resolve file context", async (t) => {
@@ -482,6 +491,7 @@ test("default config exposes the TDB mirror keys", () => {
   assert.strictEqual(DEFAULT_CONFIG.tdbHybridAlpha, 0.7);
   assert.ok(Number.isFinite(DEFAULT_CONFIG.tdbDimension));
   assert.ok(Array.isArray(DEFAULT_CONFIG.tdbExtensions));
+  assert.ok(DEFAULT_CONFIG.tdbExtensions.includes(".mdx"));
 });
 
 test("TDB result formatting surfaces metadata provider failures", async () => {

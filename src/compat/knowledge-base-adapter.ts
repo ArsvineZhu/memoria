@@ -103,14 +103,14 @@ type ChunkQueryRow = {
  * The TagMemoEngine-only surface (requestRustWriteLease, checkpoint...,
  * getTagMemoArtifactSnapshot, Tag consistency previews, ...) is NOT
  * provided: every call site guards with `typeof x === 'function'` and
- * falls back gracefully when the method is absent. Tag boost / geodesic
- * rerank return honest passthrough envelopes (no boost signal, unchanged
+ * falls back gracefully when the method is absent. Legacy tag-boost calls
+ * still return honest passthrough envelopes (no boost signal, unchanged
  * candidate order) so callers keep their documented fall backs.
  *
  * The legacy search(diaryName, vec, k, tagBoost) vector path is a plain
- * per-index KNN + hydration pass; TagMemo rerank / geodesic rerank are
- * outside the standalone library's scope. Text queries (`search(str)`)
- * delegate to the MemoryEngine search pipeline.
+ * per-index KNN + hydration pass. Text queries (`search(str)`) delegate to
+ * the MemoryEngine search pipeline, whose optional geodesic reranking and
+ * associator stages are controlled by the normal config gates.
  */
 class KnowledgeBaseAdapter {
   name: string;

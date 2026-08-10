@@ -20,10 +20,9 @@ import { decodeVectorBlob } from "../../utils/vector-codec.js";
  * candidate pool by that signal (`embeddingSim`), overriding whichever
  * score ordering the fused candidate list came in with.
  *
- * The original KBM search flow does not re-rank candidates by chunk
- * vector cosine after retrieval (geodesic reranking is a separate
- * TagMemo graph feature), so the stage is gated by
- * `vectorReshapeEnabled` and OFF by default.
+ * The optional geodesic reranker follows this stage and consumes the
+ * TagMemo activation field as a separate signal. Both stages remain
+ * independently gated, and this stage is OFF by default.
  *
  * Input:  { queryVector, mergedCandidates: [{ chunkId, score, ... }] }
  * Config (ctx.config):

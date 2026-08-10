@@ -409,6 +409,7 @@ test("initialization cleanup does not reuse an owned provider closed before a si
   const firstVectorStores: unknown[] = [];
   let failReady = true;
   const engine = createMemoryEngine({
+    dbPath: ":memory:",
     config: { dimension: DIM },
     onReady: async (value) => {
       const readyEngine = value as ReturnType<typeof createMemoryEngine>;

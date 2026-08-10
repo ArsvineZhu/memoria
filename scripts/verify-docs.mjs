@@ -22,9 +22,12 @@ const maintainedDocumentRoots = [
   "CHANGELOG.md",
   "docs",
   "data/README.md",
-  "examples/demo/README.md",
-  "examples/real-embed/README.md",
-  "rust-vexus-lite/AGENTS.md",
+  "data/AGENTS.md",
+  "examples",
+  "scripts",
+  "tests/README.md",
+  "tests/AGENTS.md",
+  "rust-vexus-lite",
 ];
 
 function isExcludedPath(filePath) {

@@ -1,6 +1,6 @@
 # 文档目录
 
-本目录是面向人的文档。仓库范围内的 AI Agent 规则在
+本目录是面向人的文档。文档体系说明见 [README.md](README.md)，仓库范围内的 AI Agent 规则在
 [../AGENTS.md](../AGENTS.md)，参与开发的入口在
 [../CONTRIBUTING.md](../CONTRIBUTING.md)。本页只负责导航，不重复整篇内容。
 
@@ -21,6 +21,15 @@
 | 发布软件包                        | [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md)、[NATIVE-MATRIX.md](NATIVE-MATRIX.md) |
 | 排查运行、依赖或打包故障          | [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                                           |
 | 查看版本变更                      | [../CHANGELOG.md](../CHANGELOG.md)                                                 |
+| 了解文档维护规则                  | [README.md](README.md)、[AGENTS.md](AGENTS.md)                                     |
+
+## 数据、示例和测试
+
+- [数据目录说明](../data/README.md)：源文件、MDX front matter、SQLite 和向量索引边界。
+- [示例目录](../examples/README.md)：离线演示和真实嵌入演示的选择与共同前提。
+- [测试目录](../tests/README.md)：测试分区、夹具边界和单测入口。
+- [原生向量包说明](../rust-vexus-lite/README.md)：Rust/N-API 包的本地构建和集成边界。
+- [仓库脚本](../scripts/README.md)：文档链接检查和打包消费者检查。
 
 ## 按读者查找
 
@@ -53,14 +62,17 @@
 - `PERSISTENCE.md`：数据权威、生成状态、恢复和备份。
 - `TESTING.md`：命令、CI 覆盖、跳过条件和验证解释。
 - `DEVELOPMENT.md`：源码布局、扩展点和文档维护方法。
+- `ALGORITHMS.md`、`EMBEDDING.md`：算法和嵌入 Provider 参考。
+- `NATIVE-MATRIX.md`、`RELEASE-CHECKLIST.md`：原生分发和发布检查。
 - `CHANGELOG.md`：版本历史和未发布变更。
 
 ## 工作流记录
 
-`superpowers/` 保存设计和执行记录，仅用于审计和上下文，不是当前操作指令。
+`superpowers/` 保存技术英语设计和执行记录，仅用于审计和上下文，不是当前操作指令。
 当前 Agent 规则以仓库根目录的 `AGENTS.md` 及最近的嵌套指令文件为准，记录中的
 方案和清单不能覆盖实际代码、测试或 CI 状态。详见
-[superpowers/README.md](superpowers/README.md)。
+[superpowers/README.md](superpowers/README.md) 和
+[superpowers/AGENTS.md](superpowers/AGENTS.md)。
 
 ## 范围说明
 

@@ -1,8 +1,11 @@
 # Repository instructions for AI Agents
 
-These instructions apply to the repository root. A deeper `AGENTS.md` may add
-rules for its own subtree; [rust-vexus-lite/AGENTS.md](rust-vexus-lite/AGENTS.md)
-is the current nested scope.
+These instructions apply to the repository root. Deeper `AGENTS.md` files add
+rules for their own scopes; current nested scopes include
+[docs/AGENTS.md](docs/AGENTS.md), [data/AGENTS.md](data/AGENTS.md),
+[examples/AGENTS.md](examples/AGENTS.md), [scripts/AGENTS.md](scripts/AGENTS.md),
+[tests/AGENTS.md](tests/AGENTS.md), [rust-vexus-lite/AGENTS.md](rust-vexus-lite/AGENTS.md),
+and [docs/superpowers/AGENTS.md](docs/superpowers/AGENTS.md).
 
 ## Mission and boundaries
 

@@ -117,6 +117,7 @@ node dist-test/examples/real-embed/demo-recall.js
 | 需要了解的内容         | 文档                                               |
 | ---------------------- | -------------------------------------------------- |
 | 所有项目入口和目录边界 | [INDEX.md](INDEX.md)                               |
+| 了解文档体系和阅读路径 | [docs/README.md](docs/README.md)                   |
 | 第一次接入             | [docs/GUIDE.md](docs/GUIDE.md)                     |
 | 配置和默认值           | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)     |
 | 公开 API 和类型        | [docs/API.md](docs/API.md)                         |

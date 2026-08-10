@@ -24,16 +24,27 @@ SQLite 保存正文和元数据，用 Rust 原生索引加速向量检索，并�
 ```text
 src/                  TypeScript 源码和公开入口
 tests/                测试、类型测试和测试资料
-examples/             离线演示和真实嵌入演示
-data/content/         可备份、可版本控制的 Markdown/MDX 源文件
+examples/             离线演示和真实嵌入演示，入口见 examples/README.md
+data/                 可备份的 Markdown/MDX 源文件和运行状态边界，入口见 data/README.md
 data/memoria/         主引擎生成的 SQLite 和向量索引
 data/tdb/             TDB 生成的 SQLite 和向量索引
-docs/                 面向人的架构、API、运维和开发文档
-scripts/              仓库检查脚本
-rust-vexus-lite/      Rust 原生向量包及其专属 AGENTS.md
+docs/                 面向人的架构、API、运维和开发文档，入口见 docs/README.md 和 docs/INDEX.md
+scripts/              仓库检查和打包脚本，入口见 scripts/README.md
+rust-vexus-lite/      Rust 原生向量包，入口见 rust-vexus-lite/README.md 和其专属 AGENTS.md
 .github/workflows/    CI 配置
 dist/, dist-test/     编译产物，不是源码，不要手工编辑
 ```
+
+可点击入口：
+
+| 范围     | 入口                                                                                                           |
+| -------- | -------------------------------------------------------------------------------------------------------------- |
+| 文档体系 | [docs/README.md](docs/README.md)、[docs/INDEX.md](docs/INDEX.md)                                               |
+| 数据边界 | [data/README.md](data/README.md)                                                                               |
+| 示例     | [examples/README.md](examples/README.md)                                                                       |
+| 测试     | [tests/README.md](tests/README.md)                                                                             |
+| 仓库脚本 | [scripts/README.md](scripts/README.md)                                                                         |
+| 原生包   | [rust-vexus-lite/README.md](rust-vexus-lite/README.md)、[rust-vexus-lite/AGENTS.md](rust-vexus-lite/AGENTS.md) |
 
 行为以源码和测试为准；软件包入口、命令、依赖和 Node.js 版本以
 `package.json` 为准；CI 以 `.github/workflows/ci.yml` 为准；原生构建以

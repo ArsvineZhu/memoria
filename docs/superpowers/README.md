@@ -10,14 +10,18 @@ tests, and CI take precedence over claims in these records.
 
 ## Records
 
+Current maintenance records:
+
 - `specs/2026-08-10-documentation-system-design.md` — documentation-system
   design and audience boundaries for the current maintenance task.
 - `plans/2026-08-10-documentation-system-maintenance.md` — execution plan and
   verification checklist for the same task.
-- `plans/2026-08-09-memoria-engine-remediation.md` and
-  `plans/2026-08-10-mdx-data-layout.md` — earlier implementation records.
-- `specs/2026-08-10-documentation-system-design.md` and
-  `specs/2026-08-10-mdx-data-layout-design.md` — earlier design records.
+
+Earlier implementation records:
+
+- `plans/2026-08-09-memoria-engine-remediation.md` — engine remediation plan.
+- `plans/2026-08-10-mdx-data-layout.md` — MDX and persistent-data layout plan.
+- `specs/2026-08-10-mdx-data-layout-design.md` — MDX and persistent-data design.
 
 When a plan is complete, keep it as an audit record unless the repository
 maintainer explicitly requests its removal. Do not infer unfinished work from

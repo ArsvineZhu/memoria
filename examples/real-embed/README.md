@@ -10,6 +10,12 @@
 2. 本目录放置 `.env` 文件，内容为 `EMBED_API_KEY=sk-xxxx`。`.env` 已被根
    `.gitignore` 排除，勿提交。
 
+可以先复制仓库提供的样例，再把占位值替换为真实密钥：
+
+```powershell
+Copy-Item examples/real-embed/.env.example examples/real-embed/.env
+```
+
 ## 运行
 
 ```bash

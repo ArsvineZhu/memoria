@@ -113,6 +113,72 @@ test("filesystem adapter maps files to the logical ingestion contract", async ()
   assert.deepEqual(removed, ["filesystem:notes/one.md"]);
 });
 
+test("filesystem adapter parses only case-insensitive MDX front matter and hashes raw source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-"));
+  const filePath = join(root, "notes", "one.MDX");
+  await mkdir(join(root, "notes"), { recursive: true });
+  const raw = "---\ntitle: Demo\ntags:\n  - alpha\n---\n\nBody text";
+  await writeFile(filePath, raw, "utf8");
+  const ingested: Array<
+    Parameters<NonNullable<FilesystemIngestionTarget["ingest"]>>[0]
+  > = [];
+  const target: FilesystemIngestionTarget = {
+    async ingest(document): Promise<MemoryDocumentIngestResult> {
+      ingested.push(document);
+      return {
+        path: document.id,
+        relPath: document.id,
+        content: document.content,
+        mtime: document.updatedAt ?? 0,
+        size: document.metadata?.size ?? 0,
+        diaryName: "Filesystem",
+        checksum: document.revision ?? "",
+        needsEmbedding: false,
+        unstable: false,
+        documentId: document.id,
+        revision: document.revision,
+        source: document.source,
+        metadata: document.metadata,
+        deleted: false,
+        removedChunkIds: [],
+      };
+    },
+    async remove(_documentId): Promise<MemoryDocumentDeleteResult> {
+      return { path: "", documentId: "", deleted: true, removedChunkIds: [] };
+    },
+  };
+  const adapter = new FilesystemIngestionAdapter(target, { rootPath: root });
+
+  await adapter.ingestFile(filePath);
+
+  const [document] = ingested;
+  assert.ok(document);
+  assert.equal(document.content, "Body text");
+  assert.equal(document.revision, createHash("sha256").update(raw).digest("hex"));
+  assert.deepEqual(document.metadata, {
+    title: "Demo",
+    tags: ["alpha"],
+    path: "notes/one.MDX",
+    mtime: document.updatedAt,
+    size: Buffer.byteLength(raw),
+  });
+});
+
+test("filesystem adapter keeps malformed MDX errors at the filesystem boundary", async () => {
+  const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-"));
+  const filePath = join(root, "broken.mdx");
+  await writeFile(filePath, "---\ntitle: [unterminated\n---\nBody", "utf8");
+  const adapter = new FilesystemIngestionAdapter(makeTarget(), { rootPath: root });
+
+  await assert.rejects(
+    () => adapter.ingestFile(filePath),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("MDX") &&
+      error.message.includes("broken.mdx"),
+  );
+});
+
 test("filesystem adapter scans accepted files and maps deletes", async () => {
   const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-"));
   await mkdir(join(root, "nested"), { recursive: true });

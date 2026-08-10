@@ -6,6 +6,7 @@ import * as crypto from "node:crypto";
 
 import PipelineContext from "../core/context.js";
 import ActiveOperationRegistry from "../core/active-operation-registry.js";
+import DerivedStateCoordinator from "../core/derived-state-coordinator.js";
 import TDBSearchPipeline from "./tdb-search-pipeline.js";
 import { chunkText } from "../utils/text-chunker.js";
 import { mergeConfig } from "../config/default-config.js";
@@ -28,6 +29,7 @@ import type {
   TriviumDBContract,
   TriviumSearchHit,
   VectorIndexEntry,
+  VectorReconciliationPlan,
   VectorLike,
   VectorStoreContract,
 } from "../types.js";
@@ -51,12 +53,58 @@ function safeLibraryName(name: unknown): string {
   );
 }
 
+function assertRealPathContained(rootPath: string, targetPath: string): void {
+  if (!fs.existsSync(rootPath)) return;
+
+  const realRoot = fs.realpathSync.native(rootPath);
+  let probe = targetPath;
+  const missingSuffix: string[] = [];
+  while (!fs.existsSync(probe)) {
+    const parent = path.dirname(probe);
+    if (parent === probe) return;
+    missingSuffix.unshift(path.basename(probe));
+    probe = parent;
+  }
+
+  const realProbe = fs.realpathSync.native(probe);
+  const realTarget = path.resolve(realProbe, ...missingSuffix);
+  const realRelative = path.relative(realRoot, realTarget);
+  if (
+    !realRelative ||
+    realRelative === ".." ||
+    realRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(realRelative)
+  ) {
+    throw new MemoriaError(
+      "persistence",
+      `TDB path resolves outside the configured root: ${targetPath}`,
+    );
+  }
+}
+
 function resolveLibrary(
   rootPath: string,
   absPath: string,
 ): { library: string; relPath: string } {
-  const relPath = path.relative(rootPath, absPath);
-  const parts = relPath.split(path.sep).filter(Boolean);
+  const resolvedRoot = path.resolve(rootPath);
+  const resolvedPath = path.resolve(absPath);
+  const relative = path.relative(resolvedRoot, resolvedPath);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new MemoriaError(
+      "persistence",
+      `TDB path must remain inside the configured root: ${absPath}`,
+    );
+  }
+
+  assertRealPathContained(resolvedRoot, resolvedPath);
+
+  const relPath = relative.split(path.sep).join("/");
+  const parts = relPath.split("/").filter(Boolean);
   return {
     library: safeLibraryName(parts.length > 1 ? parts[0] : "Root"),
     relPath,
@@ -93,8 +141,15 @@ class TDBEngine {
   private _ownsVectorStore = false;
   private _ownsEmbeddingProvider = false;
   private readonly _activeOperations = new ActiveOperationRegistry();
+  private readonly _vectorCoordinator = new DerivedStateCoordinator(async () => {
+    await this._reconcileUnsafe();
+  });
   private _vectorStateComplete = false;
   private _vectorMutationFailed = false;
+  private _lastReconciliation: {
+    metadataChunks: number;
+    usableVectors: number;
+  } | null = null;
 
   constructor(options: TdbEngineOptions = {}) {
     this.name = "tdbEngine";
@@ -243,6 +298,8 @@ class TDBEngine {
           storePath: this.config.tdbStorePath,
           tagIndexCapacity: this.config.tagIndexCapacity,
           indexSaveDelay: this.config.indexSaveDelay,
+          tagIndexSaveDelay: this.config.tagIndexSaveDelay,
+          persistTagIndex: this.config.persistTagIndex,
           indexLoadEnabled: this.config.indexLoadEnabled,
         });
         this._ownsVectorStore = true;
@@ -324,13 +381,14 @@ class TDBEngine {
         if (await this.vectorStore.restorePersistedIndexes(expected)) {
           this._vectorStateComplete = true;
           this._vectorMutationFailed = false;
+          this._vectorCoordinator.markClean();
           return;
         }
       } catch (_) {
         // Fall through to the SQLite rebuild plan.
       }
     }
-    await this._reconcileInternal();
+    await this._vectorCoordinator.reconcile();
   }
 
   private async _buildReconciliationPlan(): Promise<TdbReconciliationPlan> {
@@ -402,15 +460,29 @@ class TDBEngine {
 
   private async _applyReconciliationPlan(plan: TdbReconciliationPlan): Promise<void> {
     try {
-      await this.vectorStore.resetDerivedState?.();
-      for (const name of plan.expectedIndexNames) {
-        const entries = plan.indexEntries.get(name) ?? [];
-        if (typeof this.vectorStore.replaceIndex === "function") {
-          await this.vectorStore.replaceIndex(name, entries);
-        } else {
-          for (const entry of entries) {
-            await this.vectorStore.add(name, entry.id, entry.vector);
-          }
+      const rebuildPlan: VectorReconciliationPlan = {
+        indexEntries: plan.indexEntries,
+        expectedIndexNames: plan.expectedIndexNames,
+        rebuiltChunkCount: plan.usableVectors,
+        rebuiltTagCount: 0,
+        metadataChunkCount: plan.metadataChunks,
+        skippedVectorCount: Math.max(0, plan.metadataChunks - plan.usableVectors),
+      };
+      if (typeof this.vectorStore.rebuildDerivedState === "function") {
+        await this.vectorStore.rebuildDerivedState(rebuildPlan);
+      } else {
+        if (
+          typeof this.vectorStore.resetDerivedState !== "function" ||
+          typeof this.vectorStore.replaceIndex !== "function"
+        ) {
+          throw new MemoriaError(
+            "configuration",
+            "TDB vector store does not provide an atomic derived-state rebuild capability.",
+          );
+        }
+        await this.vectorStore.resetDerivedState();
+        for (const name of plan.expectedIndexNames) {
+          await this.vectorStore.replaceIndex(name, plan.indexEntries.get(name) ?? []);
         }
       }
       await this.vectorStore.flushPendingSaves?.();
@@ -418,6 +490,7 @@ class TDBEngine {
       this._vectorStateComplete = true;
       this._vectorMutationFailed = false;
     } catch (error) {
+      if (error instanceof MemoriaError) throw error;
       this._vectorStateComplete = false;
       this._vectorMutationFailed = true;
       throw new MemoriaError(
@@ -428,10 +501,14 @@ class TDBEngine {
     }
   }
 
-  private async _reconcileInternal(): Promise<void> {
-    const plan = await this._buildReconciliationPlan();
+  private async _reconcileUnsafe(): Promise<void> {
     this._vectorStateComplete = false;
     this._vectorMutationFailed = true;
+    const plan = await this._buildReconciliationPlan();
+    this._lastReconciliation = {
+      metadataChunks: plan.metadataChunks,
+      usableVectors: plan.usableVectors,
+    };
     await this._applyReconciliationPlan(plan);
   }
 
@@ -440,14 +517,8 @@ class TDBEngine {
       "reconcile",
       { metadataChunks: 0, usableVectors: 0 },
       async () => {
-        const plan = await this._buildReconciliationPlan();
-        this._vectorStateComplete = false;
-        this._vectorMutationFailed = true;
-        await this._applyReconciliationPlan(plan);
-        return {
-          metadataChunks: plan.metadataChunks,
-          usableVectors: plan.usableVectors,
-        };
+        await this._vectorCoordinator.reconcile();
+        return this._lastReconciliation ?? { metadataChunks: 0, usableVectors: 0 };
       },
     );
   }
@@ -467,6 +538,36 @@ class TDBEngine {
     if (typeof this.vectorStore.saveIndex === "function") {
       await this.vectorStore.saveIndex(safeName, "");
     }
+  }
+
+  private _mutationKey(library: string, relPath: string): string {
+    const normalizedPath = path.posix.normalize(
+      String(relPath || "").replace(/\\/g, "/"),
+    );
+    return `tdb:${safeLibraryName(library)}:${normalizedPath}`;
+  }
+
+  private _runSerializedMutation<T>(
+    library: string,
+    relPath: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return this._vectorCoordinator
+      .runMutation(this._mutationKey(library, relPath), operation)
+      .then(
+        (result) => {
+          this._vectorMutationFailed = this._vectorCoordinator.isDirty;
+          this._vectorStateComplete =
+            !this._vectorCoordinator.isDirty &&
+            this._vectorCoordinator.activeMutations === 0;
+          return result;
+        },
+        (error) => {
+          this._vectorStateComplete = false;
+          this._vectorMutationFailed = true;
+          throw error;
+        },
+      );
   }
 
   // ── Ingestion ───────────────────────────────────────────────────
@@ -556,8 +657,6 @@ class TDBEngine {
       });
     }
 
-    this._vectorStateComplete = false;
-    this._vectorMutationFailed = true;
     try {
       for (const nodeId of replacement.removedNodeIds) {
         await this.vectorStore.remove(library, nodeId);
@@ -570,8 +669,6 @@ class TDBEngine {
         );
       }
       await this._saveIndex(library);
-      this._vectorStateComplete = true;
-      this._vectorMutationFailed = false;
     } catch (error) {
       throw asMemoriaError(error, "vector_backend", "TDB vector mutation failed.", {
         retryable: true,
@@ -594,7 +691,15 @@ class TDBEngine {
     return this._runEnabledOperation(
       "upsertText",
       { skipped: true, disabled: true },
-      () => this._upsertTextInternal(text, options),
+      () => {
+        const relPath = String(options.path || "");
+        const library = safeLibraryName(
+          options.library || this._libraryFromRelPath(relPath),
+        );
+        return this._runSerializedMutation(library, relPath, () =>
+          this._upsertTextInternal(text, options),
+        );
+      },
     );
   }
 
@@ -603,6 +708,7 @@ class TDBEngine {
     options: TdbSearchOptions = {},
   ): Promise<TdbIngestEnvelope> {
     const absPath = path.resolve(filePath);
+    const resolved = resolveLibrary(this.config.tdbRootPath, absPath);
     let content: string;
     let stats: fs.Stats;
     try {
@@ -613,7 +719,6 @@ class TDBEngine {
         retryable: true,
       });
     }
-    const resolved = resolveLibrary(this.config.tdbRootPath, absPath);
     return this._upsertTextInternal(content, {
       path: options.path || resolved.relPath,
       library: options.library || resolved.library,
@@ -631,7 +736,13 @@ class TDBEngine {
     return this._runEnabledOperation(
       "upsertFile",
       { skipped: true, disabled: true },
-      () => this._upsertFileInternal(filePath, options),
+      async () => {
+        const absPath = path.resolve(filePath);
+        const resolved = resolveLibrary(this.config.tdbRootPath, absPath);
+        return this._runSerializedMutation(resolved.library, resolved.relPath, () =>
+          this._upsertFileInternal(filePath, options),
+        );
+      },
     );
   }
 
@@ -655,14 +766,10 @@ class TDBEngine {
     }
     if (!result.removed) return { removed: false, library, path: relPath };
 
-    this._vectorStateComplete = false;
-    this._vectorMutationFailed = true;
     try {
       for (const nodeId of result.nodeIds)
         await this.vectorStore.remove(library, nodeId);
       await this._saveIndex(library);
-      this._vectorStateComplete = true;
-      this._vectorMutationFailed = false;
     } catch (error) {
       throw asMemoriaError(error, "vector_backend", "TDB vector deletion failed.", {
         retryable: true,
@@ -684,7 +791,16 @@ class TDBEngine {
     return this._runEnabledOperation(
       "removeFile",
       { removed: false, disabled: true },
-      () => this._removeFileInternal(input),
+      () => {
+        const source = typeof input === "string" ? { path: input } : input || {};
+        const relPath = String(source.path || "");
+        const library = safeLibraryName(
+          source.library || this._libraryFromRelPath(relPath),
+        );
+        return this._runSerializedMutation(library, relPath, () =>
+          this._removeFileInternal(input),
+        );
+      },
     );
   }
 
@@ -694,7 +810,16 @@ class TDBEngine {
     return this._runEnabledOperation(
       "removeText",
       { removed: false, disabled: true },
-      () => this._removeFileInternal(options),
+      () => {
+        const source = typeof options === "string" ? { path: options } : options || {};
+        const relPath = String(source.path || "");
+        const library = safeLibraryName(
+          source.library || this._libraryFromRelPath(relPath),
+        );
+        return this._runSerializedMutation(library, relPath, () =>
+          this._removeFileInternal(options),
+        );
+      },
     );
   }
 
@@ -707,7 +832,10 @@ class TDBEngine {
     return this._runEnabledOperation(
       "search",
       { results: [], resultCount: 0, tdbDisabled: true },
-      () => this._searchInternal(queryText, options),
+      () =>
+        this._vectorCoordinator.runStableRead(() =>
+          this._searchInternal(queryText, options),
+        ),
     );
   }
 
@@ -719,14 +847,11 @@ class TDBEngine {
     return this._runEnabledOperation(
       "searchWithVector",
       { results: [], resultCount: 0, tdbDisabled: true },
-      () => this._searchWithVectorInternal(queryVector, queryText, options),
+      () =>
+        this._vectorCoordinator.runStableRead(() =>
+          this._searchWithVectorInternal(queryVector, queryText, options),
+        ),
     );
-  }
-
-  private async _ensureSearchState(): Promise<void> {
-    if (!this._vectorStateComplete || this._vectorMutationFailed) {
-      await this._reconcileInternal();
-    }
   }
 
   private async _searchInternal(
@@ -734,7 +859,6 @@ class TDBEngine {
     options: TdbSearchOptions,
   ): Promise<TdbSearchEnvelope> {
     try {
-      await this._ensureSearchState();
       const safeQueryText = String(queryText || "");
       let out: TdbSearchEnvelope;
       if (this.trivium) {
@@ -767,7 +891,6 @@ class TDBEngine {
   ): Promise<TdbSearchEnvelope> {
     if (!queryVector) return { results: [], resultCount: 0 };
     try {
-      await this._ensureSearchState();
       const out = this.trivium
         ? await this._searchViaTrivium(queryVector, queryText, options)
         : ((await this.searchPipeline.run(
@@ -881,9 +1004,13 @@ class TDBEngine {
         continue;
       }
       seenFiles.add(relPath);
+      const resolved = resolveLibrary(
+        this.config.tdbRootPath,
+        path.resolve(this.config.tdbRootPath, relPath),
+      );
       try {
         const full = fs.readFileSync(
-          path.join(this.config.tdbRootPath, relPath),
+          path.join(this.config.tdbRootPath, resolved.relPath),
           "utf-8",
         );
         out.push({ ...hit, text: full, _expanded: true });

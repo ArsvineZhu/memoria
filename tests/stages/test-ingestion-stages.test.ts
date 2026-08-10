@@ -178,7 +178,7 @@ test("FileReaderStage falls back to basename/root when rootPath is missing", asy
   assert.strictEqual(out.diaryName, "Root");
 });
 
-test("FileReaderStage strips MDX front matter and preserves structured metadata", async () => {
+test("FileReaderStage preserves MDX-looking content as literal text", async () => {
   const raw =
     "---\n" +
     "title: Demo note\n" +
@@ -190,8 +190,6 @@ test("FileReaderStage strips MDX front matter and preserves structured metadata"
     "---\n" +
     "\n" +
     "Body text\n\nimport Demo from './Demo.tsx';";
-  const body = "Body text\n\nimport Demo from './Demo.tsx';";
-
   const out = await new FileReaderStage().process(
     {
       path: "C:\\virtual\\journal\\demo.mdx",
@@ -203,29 +201,26 @@ test("FileReaderStage strips MDX front matter and preserves structured metadata"
     makeCtx({ rootPath: "C:\\virtual" }),
   );
 
-  assert.equal(out.content, body);
-  assert.equal(out.checksum, md5(body));
-  assert.deepEqual(out.documentMetadata, {
-    title: "Demo note",
-    tags: ["alpha", "beta"],
-    context: { project: "memoria" },
-  });
+  assert.equal(out.content, raw);
+  assert.equal(out.checksum, md5(raw));
+  assert.equal(out.documentMetadata, undefined);
 });
 
-test("FileReaderStage reuses embeddings when only MDX front matter changes", async () => {
+test("FileReaderStage reuses embeddings when caller-provided metadata changes", async () => {
   const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: 3 });
   const stage = new FileReaderStage();
   const ctx = makeCtx({ rootPath: "C:\\virtual" }, { metadataStore });
-  const firstRaw = "---\ntitle: First\n---\n\nSame body";
-  const secondRaw = "---\ntitle: Second\nstatus: active\n---\n\nSame body";
+  const body = "Same body";
 
   const first = await stage.process(
     {
       path: "C:\\virtual\\journal\\note.mdx",
       relPath: "journal/note.mdx",
-      content: firstRaw,
+      content: body,
       mtime: 100,
-      size: Buffer.byteLength(firstRaw),
+      size: Buffer.byteLength(body),
+      revision: "raw-1",
+      documentMetadata: { title: "First" },
     },
     ctx,
   );
@@ -242,14 +237,16 @@ test("FileReaderStage reuses embeddings when only MDX front matter changes", asy
     {
       path: "C:\\virtual\\journal\\note.mdx",
       relPath: "journal/note.mdx",
-      content: secondRaw,
+      content: body,
       mtime: 101,
-      size: Buffer.byteLength(secondRaw),
+      size: Buffer.byteLength(body),
+      revision: "raw-2",
+      documentMetadata: { title: "Second", status: "active" },
     },
     ctx,
   );
 
-  assert.equal(second.content, "Same body");
+  assert.equal(second.content, body);
   assert.equal(second.checksum, first.checksum);
   assert.equal(second.needsEmbedding, false);
   assert.equal(second.needsMetadataWrite, true);
@@ -260,24 +257,38 @@ test("FileReaderStage reuses embeddings when only MDX front matter changes", asy
   metadataStore.close();
 });
 
-test("FileReaderStage wraps malformed MDX front matter as an ingestion error", async () => {
-  await assert.rejects(
-    () =>
-      new FileReaderStage().process(
-        {
-          path: "C:\\virtual\\journal\\broken.mdx",
-          relPath: "journal/broken.mdx",
-          content: "---\ntitle: [unterminated\n---\nBody",
-          mtime: 100,
-          size: 40,
-        },
-        makeCtx({ rootPath: "C:\\virtual" }),
-      ),
-    (error: unknown) =>
-      error instanceof MemoriaError &&
-      error.code === "ingestion" &&
-      error.message.includes("broken.mdx"),
+test("FileReaderStage leaves malformed front matter literal for logical documents", async () => {
+  const content = "---\ntitle: [unterminated\n---\nBody";
+  const out = await new FileReaderStage().process(
+    {
+      path: "logical/document",
+      relPath: "logical/document",
+      content,
+      mtime: 100,
+      size: Buffer.byteLength(content),
+    },
+    makeCtx({ rootPath: "C:\\virtual" }),
   );
+  assert.equal(out.content, content);
+  assert.equal(out.checksum, md5(content));
+});
+
+test("FileReaderStage treats logical MDX-looking content as literal text", async () => {
+  const raw = "---\ntitle: literal\n---\nBody stays untouched";
+  const out = await new FileReaderStage().process(
+    {
+      path: "logical/document",
+      relPath: "logical/document",
+      content: raw,
+      mtime: 100,
+      size: Buffer.byteLength(raw),
+    },
+    makeCtx({ rootPath: "C:\\virtual" }),
+  );
+
+  assert.equal(out.content, raw);
+  assert.equal(out.checksum, md5(raw));
+  assert.equal(out.documentMetadata, undefined);
 });
 
 // ── TagExtractorStage ──────────────────────────────────────────
@@ -381,6 +392,31 @@ test("ChunkerStage drops empty normalized chunks", async () => {
 });
 
 // ── ChunkEmbedderStage ─────────────────────────────────────────
+
+test("ChunkEmbedderStage honors needsChunkEmbedding over the compatibility alias", async (t) => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  t.after(() => metadataStore.close());
+  let called = false;
+  const provider: EmbeddingProviderContract = {
+    getDimension: () => dim,
+    embedBatch: async () => {
+      called = true;
+      return [[0.1, 0.2, 0.3]];
+    },
+  };
+
+  const out = await new ChunkEmbedderStage().process(
+    {
+      chunks: ["already embedded"],
+      needsEmbedding: true,
+      needsChunkEmbedding: false,
+    },
+    makeCtx({}, { metadataStore, embeddingProvider: provider }),
+  );
+
+  assert.equal(called, false);
+  assert.deepEqual(out.chunkEntries, []);
+});
 
 test("ChunkEmbedderStage rejects any incomplete or invalid embedding batch", async () => {
   const stage = new ChunkEmbedderStage();
@@ -531,4 +567,28 @@ test("TagEmbedderStage passes context through", async () => {
   assert.strictEqual(out.relPath, "a.md");
   assert.strictEqual(out.tagEntries.length, 1);
   assert.strictEqual(out.tagEntries[0].name, "x");
+});
+
+test("TagEmbedderStage embeds tags when only tag associations changed", async () => {
+  let calls = 0;
+  const provider: EmbeddingProviderContract = {
+    getDimension: () => dim,
+    embedBatch: async (texts = []) => {
+      calls += 1;
+      return texts.map(() => [0.5, 0.6, 0.7]);
+    },
+  };
+  const out = await new TagEmbedderStage().process(
+    {
+      tags: ["frontmatter-tag"],
+      needsEmbedding: false,
+      needsChunkEmbedding: false,
+      needsTagUpdate: true,
+    },
+    makeCtx({}, { embeddingProvider: provider }),
+  );
+
+  assert.equal(calls, 1);
+  assert.equal(out.tagEntries.length, 1);
+  assert.equal(out.tagEntries[0]?.name, "frontmatter-tag");
 });

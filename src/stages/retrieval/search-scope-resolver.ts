@@ -16,6 +16,12 @@ function normalizeNames(value: unknown): string[] {
   return names;
 }
 
+function normalizeContentNames(value: unknown, tagIndexName: unknown): string[] {
+  const names = normalizeNames(value);
+  const tagName = String(tagIndexName || "global_tags").trim() || "global_tags";
+  return names.filter((name) => name !== tagName && name !== "global_tags");
+}
+
 /** Resolve the authoritative content scope once for all retrieval stages. */
 class SearchScopeResolverStage extends Stage {
   constructor() {
@@ -31,14 +37,29 @@ class SearchScopeResolverStage extends Stage {
   > {
     const info = input || {};
     const config = ctx.config || {};
-    const explicit = this._firstExplicit(
+    const callExplicit = this._firstExplicit(
       info.indexNames,
-      config.indexNames,
       info.diaryNames,
       info.diaryName,
       info.libraries,
     );
-    if (explicit !== null) return { ...info, resolvedIndexNames: explicit };
+    if (callExplicit !== null) {
+      return {
+        ...info,
+        resolvedIndexNames: callExplicit,
+        scopeSource: "call",
+        scopeWasExplicit: true,
+      };
+    }
+
+    if (Array.isArray(config.indexNames)) {
+      return {
+        ...info,
+        resolvedIndexNames: normalizeNames(config.indexNames),
+        scopeSource: "config",
+        scopeWasExplicit: true,
+      };
+    }
 
     const metadataStore = ctx.metadataStore;
     if (
@@ -47,7 +68,12 @@ class SearchScopeResolverStage extends Stage {
     ) {
       try {
         const names = await metadataStore.getExpectedVectorIndexNames();
-        return { ...info, resolvedIndexNames: normalizeNames(names) };
+        return {
+          ...info,
+          resolvedIndexNames: normalizeContentNames(names, config.tagIndexName),
+          scopeSource: "authority",
+          scopeWasExplicit: false,
+        };
       } catch (error) {
         throw asMemoriaError(
           error,
@@ -61,7 +87,12 @@ class SearchScopeResolverStage extends Stage {
     if (metadataStore && typeof metadataStore.getDistinctDiaryNames === "function") {
       try {
         const names = await metadataStore.getDistinctDiaryNames();
-        return { ...info, resolvedIndexNames: normalizeNames(names) };
+        return {
+          ...info,
+          resolvedIndexNames: normalizeNames(names),
+          scopeSource: "authority",
+          scopeWasExplicit: false,
+        };
       } catch (error) {
         throw asMemoriaError(
           error,
@@ -72,18 +103,21 @@ class SearchScopeResolverStage extends Stage {
       }
     }
 
-    return { ...info, resolvedIndexNames: ["Root"] };
+    return {
+      ...info,
+      resolvedIndexNames: ["Root"],
+      scopeSource: "fallback",
+      scopeWasExplicit: false,
+    };
   }
 
   private _firstExplicit(
     inputIndexNames: unknown,
-    configIndexNames: unknown,
     diaryNames: unknown,
     diaryName: unknown,
     libraries: unknown,
   ): string[] | null {
     if (Array.isArray(inputIndexNames)) return normalizeNames(inputIndexNames);
-    if (Array.isArray(configIndexNames)) return normalizeNames(configIndexNames);
     if (Array.isArray(diaryNames)) return normalizeNames(diaryNames);
     if (typeof diaryName === "string") return normalizeNames([diaryName]);
     if (Array.isArray(libraries)) return normalizeNames(libraries);

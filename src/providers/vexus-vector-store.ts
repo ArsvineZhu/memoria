@@ -118,7 +118,11 @@ class VexusVectorStore extends VectorStore {
     const VexusIndex = getVexusIndex();
     const cap = capacity ?? this.defaultCapacity;
     let index = null;
-    if (this.indexLoadEnabled && this._indexFileExists(indexName)) {
+    if (
+      this.indexLoadEnabled &&
+      (this.persistTagIndex || indexName !== "global_tags") &&
+      this._indexFileExists(indexName)
+    ) {
       try {
         index = VexusIndex.load(
           this._getIndexPath(indexName),
@@ -183,6 +187,7 @@ class VexusVectorStore extends VectorStore {
    * @param {string} indexName
    */
   scheduleIndexSave(indexName: string): void {
+    if (!this.persistTagIndex && indexName === "global_tags") return;
     if (this.saveTimers.has(indexName)) return;
     const delay =
       indexName === "global_tags" ? this.tagIndexSaveDelay : this.indexSaveDelay;
@@ -331,6 +336,7 @@ class VexusVectorStore extends VectorStore {
   }
 
   async saveIndex(indexName: string, filePath?: string): Promise<void> {
+    if (!this.persistTagIndex && indexName === "global_tags") return;
     const index = this.indices.get(indexName);
     if (!index) return;
     const resolvedPath = filePath || this._getIndexPath(indexName);
@@ -342,8 +348,14 @@ class VexusVectorStore extends VectorStore {
   async restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean> {
     if (!this.indexLoadEnabled) return false;
     const VexusIndex = getVexusIndex();
+    const requestedNames = [...indexNames];
+    const requiresTagRebuild =
+      !this.persistTagIndex && requestedNames.includes("global_tags");
+    const namesToLoad = requiresTagRebuild
+      ? requestedNames.filter((name) => name !== "global_tags")
+      : requestedNames;
     const loadedIndexes = new Map<string, VexusIndex>();
-    for (const indexName of indexNames) {
+    for (const indexName of namesToLoad) {
       const indexPath = this._getIndexPath(indexName);
       if (!this._indexFileExists(indexName)) return false;
       try {
@@ -374,7 +386,7 @@ class VexusVectorStore extends VectorStore {
     for (const [indexName, index] of loadedIndexes) {
       this.indices.set(indexName, index);
     }
-    return true;
+    return !requiresTagRebuild;
   }
 
   async getIndexStats(indexName: string): Promise<VectorStoreStats> {
@@ -417,6 +429,15 @@ class VexusVectorStore extends VectorStore {
       if (!/^index_[0-9a-f]{32}\.usearch(?:\.meta\.json)?$/.test(entry.name)) {
         continue;
       }
+      if (
+        !this.persistTagIndex &&
+        (path.resolve(this.storePath, entry.name) ===
+          path.resolve(this._getIndexPath("global_tags")) ||
+          path.resolve(this.storePath, entry.name) ===
+            path.resolve(this._getIndexMetadataPath(this._getIndexPath("global_tags"))))
+      ) {
+        continue;
+      }
       fs.unlinkSync(path.join(this.storePath, entry.name));
     }
   }
@@ -425,7 +446,17 @@ class VexusVectorStore extends VectorStore {
    * Flush all pending saves and clear timers.
    */
   flushPendingSaves(): void {
-    const toFlush = new Set([...this.saveTimers.keys(), ...this.indices.keys()]);
+    for (const [name, timer] of this.saveTimers) {
+      if (!this.persistTagIndex && name === "global_tags") {
+        clearTimeout(timer);
+        this.saveTimers.delete(name);
+      }
+    }
+    const toFlush = new Set(
+      [...this.saveTimers.keys(), ...this.indices.keys()].filter(
+        (name) => this.persistTagIndex || name !== "global_tags",
+      ),
+    );
     let firstError: unknown = null;
     for (const name of toFlush) {
       const timer = this.saveTimers.get(name);

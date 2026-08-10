@@ -10,6 +10,7 @@ import MetadataWriterStage from "../../src/stages/ingestion/metadata-writer.js";
 import VectorIndexerStage from "../../src/stages/ingestion/vector-indexer.js";
 import CooccurrenceBuilderStage from "../../src/stages/ingestion/co-occurrence-builder.js";
 import FileDeleterStage from "../../src/stages/ingestion/file-deleter.js";
+import { MemoriaError } from "../../src/errors.js";
 import { decodeVectorBlob } from "../../src/utils/vector-codec.js";
 import type {
   EmbeddingProviderContract,
@@ -40,6 +41,7 @@ function newVectorStore() {
     tagIndexCapacity: 100,
     indexSaveDelay: 60000,
     tagIndexSaveDelay: 60000,
+    persistTagIndex: true,
   });
 }
 
@@ -246,6 +248,107 @@ test("MetadataWriterStage updates only file metadata when embedding is unchanged
   const row = await store.getFileByPath(String(first.relPath));
   assert.equal(row?.revision, "r2");
   assert.deepEqual(JSON.parse(String(row?.source_json)), { type: "new" });
+});
+
+test("MetadataWriterStage atomically updates tags without replacing existing chunks", async (t) => {
+  const store = newMetadataStore();
+  t.after(() => store.close());
+  const stage = new MetadataWriterStage();
+  const ctx = makeCtx({}, { metadataStore: store });
+  const first = await stage.process(
+    fileInfo({
+      relPath: "diary1/tag-only.md",
+      diaryName: "diary1",
+      documentId: "tag-only:stage",
+      revision: "r1",
+      tags: ["old-tag"],
+      tagEntries: [tagEntry("old-tag")],
+    }),
+    ctx,
+  );
+  const originalChunkIds = (await store.getChunksByFileId(first.fileId!)).map(
+    (chunk) => chunk.id,
+  );
+  await store.markVectorStateClean();
+  const generationBefore = await store.getGenerationState();
+
+  const second = await stage.process(
+    fileInfo({
+      ...first,
+      revision: "r2",
+      documentMetadata: { title: "updated" },
+      tags: ["new-tag"],
+      tagEntries: [tagEntry("new-tag")],
+      needsEmbedding: false,
+      needsChunkEmbedding: false,
+      needsTagUpdate: true,
+      needsMetadataWrite: true,
+      chunkEntries: [],
+    }),
+    ctx,
+  );
+
+  assert.equal(second.metadataOnly, undefined);
+  assert.deepEqual(
+    (await store.getChunksByFileId(second.fileId!)).map((chunk) => chunk.id),
+    originalChunkIds,
+  );
+  assert.deepEqual(
+    (await store.getFileTags(second.fileId!)).map((tag) => tag.name),
+    ["new-tag"],
+  );
+  const generationAfter = await store.getGenerationState();
+  assert.equal(
+    generationAfter.metadataGeneration,
+    generationBefore.metadataGeneration + 1,
+  );
+  assert.equal(generationAfter.vectorDirty, true);
+});
+
+test("MetadataWriterStage refuses non-atomic tag-only updates before writing", async (t) => {
+  const store = newMetadataStore();
+  t.after(() => store.close());
+  const writer = new MetadataWriterStage();
+  const ctx = makeCtx({}, { metadataStore: store });
+  const first = await writer.process(
+    fileInfo({
+      relPath: "diary1/no-atomic-tags.md",
+      documentId: "no-atomic-tags",
+      tags: ["old-tag"],
+      tagEntries: [tagEntry("old-tag")],
+    }),
+    ctx,
+  );
+  const originalChunks = await store.getChunksByFileId(first.fileId!);
+  const compatibilityStore = new Proxy(store, {
+    get(target, property, receiver) {
+      if (property === "replaceDocumentTags") return undefined;
+      return Reflect.get(target, property, receiver);
+    },
+  }) as unknown as MetadataStoreContract;
+
+  await assert.rejects(
+    () =>
+      writer.process(
+        fileInfo({
+          ...first,
+          tags: ["new-tag"],
+          tagEntries: [tagEntry("new-tag")],
+          needsEmbedding: false,
+          needsChunkEmbedding: false,
+          needsTagUpdate: true,
+          needsMetadataWrite: true,
+          chunkEntries: [],
+        }),
+        makeCtx({}, { metadataStore: compatibilityStore }),
+      ),
+    (error: unknown) => error instanceof MemoriaError && error.code === "configuration",
+  );
+  assert.deepEqual(await store.getChunksByFileId(first.fileId!), originalChunks);
+  assert.deepEqual(
+    (await store.getFileTags(first.fileId!)).map((tag) => tag.name),
+    ["old-tag"],
+  );
 });
 
 test("MetadataWriterStage upserts tags and associates only tags with vectors", async (t) => {

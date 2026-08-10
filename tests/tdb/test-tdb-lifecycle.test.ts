@@ -99,6 +99,7 @@ test("TDBEngine close drains an active search", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-tdb-search-drain-"));
   const { engine, metadataStore } = injectedEngine(root);
   await engine.initialize();
+  metadataStore.getExpectedVectorIndexNames = async () => ["facts"];
   const original = metadataStore.getSearchCorpus.bind(metadataStore);
   let release!: () => void;
   let started!: () => void;

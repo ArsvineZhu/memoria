@@ -50,15 +50,25 @@ class AssociatorStage extends Stage {
     }
   > {
     const info = input || {};
-    const candidates = Array.isArray(info.mergedCandidates)
-      ? info.mergedCandidates
-      : [];
+    let candidates = Array.isArray(info.mergedCandidates) ? info.mergedCandidates : [];
+    const resolvedScope = Array.isArray(info.resolvedIndexNames)
+      ? new Set(info.resolvedIndexNames.map((name) => String(name)))
+      : null;
     const stats: AssociatorStats = {
       added: 0,
       fromTags: 0,
       fromVector: 0,
       skipped: 0,
     };
+
+    if (resolvedScope?.size === 0) {
+      return {
+        ...info,
+        mergedCandidates: [],
+        associatorStats: stats,
+        associatorSkipped: true,
+      };
+    }
 
     if (ctx.config?.associatorEnabled !== true || candidates.length === 0) {
       return {
@@ -80,6 +90,23 @@ class AssociatorStage extends Stage {
       DEFAULT_ASSOCIATE_COUNT,
       true,
     );
+    if (resolvedScope !== null) {
+      const scopedCandidates: ChunkCandidate[] = [];
+      for (const candidate of candidates) {
+        if (await this._chunkInScope(Number(candidate.chunkId), resolvedScope, ctx)) {
+          scopedCandidates.push(candidate);
+        }
+      }
+      candidates = scopedCandidates;
+    }
+    if (candidates.length === 0) {
+      return {
+        ...info,
+        mergedCandidates: [],
+        associatorStats: stats,
+        associatorSkipped: true,
+      };
+    }
     const seeds = candidates.slice(0, seedCount);
     if (seeds.length === 0 || associateCount === 0) {
       return {
@@ -96,10 +123,6 @@ class AssociatorStage extends Stage {
       if (Number.isFinite(chunkId)) presentIds.add(chunkId);
     }
     const proposals = new Map<number, AssociationProposal>();
-    const resolvedScope = Array.isArray(info.resolvedIndexNames)
-      ? new Set(info.resolvedIndexNames.map((name) => String(name)))
-      : null;
-
     const metadataStore = ctx.metadataStore;
     const canUseTags = this._canUseTagChannel(metadataStore);
     if (canUseTags && resolvedScope !== null) {
@@ -404,9 +427,7 @@ class AssociatorStage extends Stage {
     }
   }
 
-  private _canUseTagChannel(
-    store: PipelineContextLike["metadataStore"],
-  ): boolean {
+  private _canUseTagChannel(store: PipelineContextLike["metadataStore"]): boolean {
     return !!(
       store &&
       typeof store.buildCooccurrenceMatrix === "function" &&
@@ -440,7 +461,10 @@ class AssociatorStage extends Stage {
     }
     if (Array.isArray(raw)) {
       const dimension = this._dimension(config, raw);
-      if (raw.length !== dimension || raw.some((value) => !Number.isFinite(Number(value)))) {
+      if (
+        raw.length !== dimension ||
+        raw.some((value) => !Number.isFinite(Number(value)))
+      ) {
         return null;
       }
       return new Float32Array(raw.map(Number));
@@ -455,7 +479,12 @@ class AssociatorStage extends Stage {
     if (!Array.isArray(rows)) return [];
     const ids: number[] = [];
     for (const row of rows) {
-      const value = row as { tagId?: unknown; tag_id?: unknown; id?: unknown; name?: unknown };
+      const value = row as {
+        tagId?: unknown;
+        tag_id?: unknown;
+        id?: unknown;
+        name?: unknown;
+      };
       const direct = Number(value.tagId ?? value.tag_id ?? value.id);
       if (Number.isFinite(direct)) {
         ids.push(direct);
@@ -488,7 +517,7 @@ class AssociatorStage extends Stage {
     if (scope === null) return false;
     if (scope.size === 0) return false;
     const store = ctx.metadataStore;
-    if (!store || typeof store.getFileByChunkId !== "function") return true;
+    if (!store || typeof store.getFileByChunkId !== "function") return false;
     let file;
     try {
       file = await store.getFileByChunkId(chunkId);
@@ -525,7 +554,10 @@ class AssociatorStage extends Stage {
     }
   }
 
-  private _compareProposals(left: AssociationProposal, right: AssociationProposal): number {
+  private _compareProposals(
+    left: AssociationProposal,
+    right: AssociationProposal,
+  ): number {
     return (
       this._score(right.score) - this._score(left.score) ||
       this._channelPriority(left) - this._channelPriority(right) ||

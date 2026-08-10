@@ -7,6 +7,7 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { MemoriaError } from "../../errors.js";
 import { encodeVectorBlob } from "../../utils/vector-codec.js";
 import { serializeDocumentJson } from "../../utils/logical-document.js";
 
@@ -77,8 +78,62 @@ class MetadataWriterStage extends Stage {
     )
       throw new TypeError("MetadataWriterStage requires a complete file snapshot");
 
+    const needsChunkEmbedding = fileInfo.needsChunkEmbedding ?? fileInfo.needsEmbedding;
+    const needsTagUpdate = fileInfo.needsTagUpdate === true;
+    const sourceJson = serializeDocumentJson(fileInfo.documentSource, "source");
+    const metadataJson = serializeDocumentJson(fileInfo.documentMetadata, "metadata");
+
+    if (needsChunkEmbedding === false && needsTagUpdate) {
+      if (typeof metadataStore.replaceDocumentTags !== "function") {
+        throw new MemoriaError(
+          "configuration",
+          "Tag-only ingestion requires metadataStore.replaceDocumentTags for atomic metadata and tag updates.",
+        );
+      }
+
+      const tagEntries: TagEntry[] = Array.isArray(fileInfo.tagEntries)
+        ? fileInfo.tagEntries
+        : [];
+      const tagNames: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
+      const replacement = await metadataStore.replaceDocumentTags({
+        file: {
+          path: relPath,
+          diaryName,
+          checksum,
+          mtime,
+          size,
+          documentId: fileInfo.documentId,
+          revision: fileInfo.revision,
+          sourceJson,
+          metadataJson,
+        },
+        tags: tagEntries.map((entry) => ({
+          name: entry.name,
+          vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
+        })),
+        orderedTagNames: tagNames,
+      });
+
+      await this._maybeWriteCheckpoint(
+        fileInfo,
+        { chunkIds: [], tagIds: replacement.tagIds },
+        ctx,
+      );
+
+      return {
+        ...fileInfo,
+        fileId: replacement.fileId,
+        chunkIds: [],
+        tagIds: replacement.tagIds,
+        removedChunkIds: [],
+        skipped: false,
+        previousIndexName: replacement.previousIndexName,
+        currentIndexName: replacement.currentIndexName,
+      };
+    }
+
     // Caller-supplied skip: neither content nor persisted file metadata changed.
-    if (fileInfo.needsEmbedding === false && fileInfo.needsMetadataWrite !== true) {
+    if (needsChunkEmbedding === false && fileInfo.needsMetadataWrite !== true) {
       const existing = await metadataStore.getFileByPath(relPath);
       return {
         ...fileInfo,
@@ -90,10 +145,7 @@ class MetadataWriterStage extends Stage {
       };
     }
 
-    const sourceJson = serializeDocumentJson(fileInfo.documentSource, "source");
-    const metadataJson = serializeDocumentJson(fileInfo.documentMetadata, "metadata");
-
-    if (fileInfo.needsEmbedding === false && fileInfo.needsMetadataWrite === true) {
+    if (needsChunkEmbedding === false && fileInfo.needsMetadataWrite === true) {
       const existing = await metadataStore.getFileByPath(relPath);
       const previousIndexName =
         existing?.diary_name || existing?.diaryName || diaryName;

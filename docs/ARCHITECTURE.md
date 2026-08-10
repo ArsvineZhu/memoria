@@ -97,15 +97,18 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
    按需 dynamic import 并创建缺失 Provider → 绑定 `PipelineContext` → 读
    `rag_params.json` → `_applyRagParamsToConfig` → 读取 generation/dirty。clean
    fast path 调用 `restorePersistedIndexes()`，由 Vexus 将所有 expected index
-   原子加载并注册到内存 Map；验证失败或状态 dirty/stale 时先调用可选的
-   `resetDerivedState()`，再以 SQLite authority 的 bulk rows 重建并 flush。
+   原子加载并注册到内存 Map；验证失败或状态 dirty/stale 时以已校验的 authority
+   plan 调用 `rebuildDerivedState(plan)`，或用 `resetDerivedState()` +
+   `replaceIndex()` 重建并 flush。缺少完整能力时保持 dirty 并失败。
 3. **摄入时序（单文档/单文件）**：逻辑文档由引擎生成确定性内部路径并带上
    `documentId`、`revision`、source 与 metadata；文件快照由 `FilesystemIngestionAdapter`
    在交给引擎前读取并做稳定性检查。随后按源码注册顺序执行摄入阶段，最后
    `CooccurrenceBuilderStage`（默认 no-op）。**双写盘次序**：内置
    `SqliteMetadataStore` 的 `MetadataWriterStage` 通过单事务
    `replaceDocumentState()` 原子替换 file/chunks/tags/file_tags，并增加 metadata
-   generation、置 `vector_dirty=1`；第三方旧 store 才走兼容 CRUD 路径。随后
+   generation、置 `vector_dirty=1`；标签-only 更新使用
+   `replaceDocumentTags()` 原子改写 metadata/tags/file_tags 并保留 chunks，缺少
+   该能力时在写入前失败。第三方旧 store 才走兼容 CRUD 路径。随后
    `VectorIndexerStage` 更新向量（先删遗留向量再 upsert，日记索引 + global_tags
    标签索引），并触发 `scheduleIndexSave`（延迟落盘）。
 4. **shutdown**：`close()` 等待 keyed mutation queue，flush 全部内存向量索引；

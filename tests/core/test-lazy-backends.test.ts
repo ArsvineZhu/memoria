@@ -60,6 +60,7 @@ test("public import and custom-provider initialization do not load native defaul
       async addBatch() {},
       async search() { return []; },
       async remove() {},
+      resetDerivedState() { this.indices.clear(); },
       async replaceIndex() {},
       async getIndexStats() { return { size: 0, capacity: 0, dimension: 4 }; },
       flushPendingSaves() {},

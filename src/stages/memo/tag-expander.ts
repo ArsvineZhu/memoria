@@ -64,6 +64,17 @@ class TagExpanderStage extends Stage {
     const mergedCandidates = Array.isArray(info.mergedCandidates)
       ? info.mergedCandidates
       : [];
+    const resolvedScope = Array.isArray(info.resolvedIndexNames)
+      ? new Set(info.resolvedIndexNames.map((name) => String(name)))
+      : null;
+
+    if (resolvedScope?.size === 0) {
+      return {
+        ...info,
+        mergedCandidates: [],
+        tagExpansion: { added: [], boosted: [] },
+      };
+    }
 
     if (!config.tagExpansionEnabled) {
       return { ...info, mergedCandidates, tagExpansionSkipped: true };
@@ -84,9 +95,30 @@ class TagExpanderStage extends Stage {
     }
 
     // 1. Collect the tag set behind the candidate chunks.
+    const scopedCandidates = [];
+    for (const candidate of mergedCandidates) {
+      if (
+        await this._chunkInScope(
+          Number(candidate.chunkId),
+          resolvedScope,
+          metadataStore,
+        )
+      ) {
+        scopedCandidates.push(candidate);
+      }
+    }
+    if (scopedCandidates.length === 0) {
+      return {
+        ...info,
+        mergedCandidates: [],
+        tagExpansion: { added: [], boosted: [] },
+      };
+    }
+
     const candidateTags = await this._collectCandidateTags(
-      mergedCandidates,
+      scopedCandidates,
       metadataStore,
+      resolvedScope,
     );
     const candidateTagIds = new Set(candidateTags.map((t) => Number(t.id)));
 
@@ -131,7 +163,7 @@ class TagExpanderStage extends Stage {
     //    with a decayed score; pool members re-reached via expansion
     //    are recorded as boosted (score unchanged).
     const pool = new Map();
-    for (const candidate of mergedCandidates) {
+    for (const candidate of scopedCandidates) {
       pool.set(Number(candidate.chunkId), { ...candidate });
     }
 
@@ -168,6 +200,9 @@ class TagExpanderStage extends Stage {
         for (const chunk of chunks || []) {
           const chunkId = Number(chunk.id);
           if (!Number.isFinite(chunkId)) continue;
+          if (!(await this._chunkInScope(chunkId, resolvedScope, metadataStore))) {
+            continue;
+          }
           const previous = pool.get(chunkId);
           if (previous) {
             if (!boosted.includes(chunkId)) boosted.push(chunkId);
@@ -198,12 +233,14 @@ class TagExpanderStage extends Stage {
   async _collectCandidateTags(
     candidates: readonly ChunkCandidate[],
     metadataStore: NonNullable<PipelineContextLike["metadataStore"]>,
+    scope: Set<string> | null,
   ): Promise<Array<{ id: number; name?: string }>> {
     if (typeof metadataStore.getFileByChunkId !== "function") return [];
     const seen = new Map<number, { id: number; name?: string }>();
     for (const candidate of candidates) {
       const chunkId = Number(candidate && candidate.chunkId);
       if (!Number.isFinite(chunkId)) continue;
+      if (!(await this._chunkInScope(chunkId, scope, metadataStore))) continue;
       let file = null;
       try {
         file = await metadataStore.getFileByChunkId(chunkId);
@@ -235,6 +272,20 @@ class TagExpanderStage extends Stage {
       }
     }
     return [...seen.values()];
+  }
+
+  private async _chunkInScope(
+    chunkId: number,
+    scope: Set<string> | null,
+    metadataStore: NonNullable<PipelineContextLike["metadataStore"]>,
+  ): Promise<boolean> {
+    if (scope === null) return true;
+    if (scope.size === 0 || typeof metadataStore.getFileByChunkId !== "function") {
+      return false;
+    }
+    const file = await metadataStore.getFileByChunkId(chunkId);
+    const indexName = file?.diary_name || file?.diaryName || "Root";
+    return !!file && scope.has(indexName);
   }
 
   async _expansionVector(

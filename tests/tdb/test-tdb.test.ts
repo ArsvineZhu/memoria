@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { TDBEngine } from "../../src/tdb/tdb-engine.js";
+import { TDBEngine, resolveLibrary } from "../../src/tdb/tdb-engine.js";
 import TDBSearchPipeline from "../../src/tdb/tdb-search-pipeline.js";
 import TDBStore from "../../src/tdb/tdb-store.js";
 import TriviumDBAdapter from "../../src/tdb/triviumdb-adapter.js";
@@ -18,6 +18,7 @@ import { DEFAULT_CONFIG, mergeConfig } from "../../src/config/default-config.js"
 import type {
   EmbeddingProviderContract,
   MemoryConfigOverrides,
+  TdbSearchResult,
 } from "../../src/types.js";
 
 const DIM = 4;
@@ -129,6 +130,23 @@ test("TDBStore creates parent directories for file-backed databases", (t) => {
   store.close();
 });
 
+test("TDBStore close propagates failures and remains retryable", () => {
+  const store = new TDBStore({ dbPath: ":memory:" });
+  const actualDb = store.db;
+  store.db = {
+    close() {
+      throw new Error("tdb close failed");
+    },
+  } as unknown as typeof store.db;
+
+  assert.throws(() => store.close(), /tdb close failed/);
+  assert.equal(store._closed, false);
+
+  store.db = actualDb;
+  store.close();
+  assert.equal(store._closed, true);
+});
+
 test("TDBStore getFileByChunkId / getChunkById resolve file context", async (t) => {
   const store = new TDBStore({ dbPath: ":memory:" });
   const fileId = await store.upsertFile({
@@ -174,6 +192,72 @@ test("TDBStore deleteFile removes its chunks", async (t) => {
   await store.close();
 });
 
+test("TDBStore public CRUD preserves authority generation and dirty state", async () => {
+  const store = new TDBStore({ dbPath: ":memory:" });
+  await store.replaceDocumentState({
+    file: {
+      library: "facts",
+      path: "authority.md",
+      checksum: "v1",
+      mtime: 1,
+      size: 1,
+      updatedAt: 1,
+    },
+    chunks: [{ text: "old", checksum: "old", vector: Buffer.from([1, 2, 3, 4]) }],
+  });
+  await store.markTdbVectorStateClean();
+  const before = await store.getTdbGenerationState();
+
+  await store.upsertFile({
+    library: "facts",
+    path: "authority.md",
+    checksum: "v2",
+    mtime: 2,
+    size: 2,
+    updatedAt: 2,
+  });
+  const afterFileUpdate = await store.getTdbGenerationState();
+  assert.equal(afterFileUpdate.metadataGeneration, before.metadataGeneration + 1);
+  assert.equal(afterFileUpdate.vectorDirty, true);
+  assert.equal((await store.getChunks("facts", "authority.md")).length, 1);
+
+  await store.markTdbVectorStateClean();
+  const beforeEmpty = await store.getTdbGenerationState();
+  const inserted = await store.insertChunks("facts", "authority.md", []);
+  assert.deepEqual(inserted, []);
+  const afterEmpty = await store.getTdbGenerationState();
+  assert.equal(afterEmpty.metadataGeneration, beforeEmpty.metadataGeneration + 1);
+  assert.equal(afterEmpty.vectorDirty, true);
+  assert.deepEqual(await store.getChunks("facts", "authority.md"), []);
+  store.close();
+});
+
+test("TDBStore low-level document replacement preserves nullable vectors", async () => {
+  const store = new TDBStore({ dbPath: ":memory:" });
+  const result = await store.replaceDocumentState({
+    file: {
+      library: "facts",
+      path: "nullable.md",
+      checksum: "v1",
+      mtime: 1,
+      size: 1,
+      updatedAt: 1,
+    },
+    chunks: [{ text: "pending vector", checksum: "pending", vector: null }],
+  });
+
+  assert.equal(result.chunkIds.length, 1);
+  assert.equal((await store.getChunks("facts", "nullable.md"))[0]?.vector, null);
+  await store.markTdbVectorStateClean();
+  const before = await store.getTdbGenerationState();
+  await store.updateChunkVectors([{ chunkId: result.chunkIds[0]!, vector: null }]);
+  const after = await store.getTdbGenerationState();
+  assert.equal(after.metadataGeneration, before.metadataGeneration + 1);
+  assert.equal(after.vectorDirty, true);
+  assert.equal((await store.getChunks("facts", "nullable.md"))[0]?.vector, null);
+  await store.close();
+});
+
 // ── TDBEngine: ingestion + query ───────────────────────────────────
 
 test("TDBEngine disabled by config: initialize is a no-op and search returns []", async (t) => {
@@ -189,6 +273,88 @@ test("TDBEngine disabled by config: initialize is a no-op and search returns []"
   assert.deepStrictEqual(out.results, []);
   assert.strictEqual(out.tdbDisabled, true);
   assert.strictEqual(fs.existsSync(path.join(dir, "no.sqlite")), false);
+});
+
+test("TDB filesystem resolution rejects paths outside the configured root", async (t) => {
+  const dir = makeTempDir(t, "memoria-tdb-boundary-");
+  const root = path.join(dir, "knowledge");
+  const outside = path.join(dir, "outside.md");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(outside, "must not be ingested", "utf-8");
+  assert.throws(() => resolveLibrary(root, outside), /outside|root|managed/i);
+
+  const engine = new TDBEngine({
+    config: baseConfig({
+      tdbRootPath: root,
+      tdbDbPath: path.join(dir, "state.sqlite"),
+    }),
+    embeddingProvider: fakeEmbeddingProvider,
+    vectorStore: newVectorStore(path.join(dir, "vectors")),
+  });
+  await engine.initialize();
+  await assert.rejects(
+    () => engine.upsertFile(outside),
+    (error: unknown) => error instanceof MemoriaError && error.code === "persistence",
+  );
+  await engine.close();
+});
+
+test("TDB filesystem resolution rejects symlink escapes", (t) => {
+  const dir = makeTempDir(t, "memoria-tdb-symlink-");
+  const root = path.join(dir, "knowledge");
+  const outside = path.join(dir, "outside");
+  const linked = path.join(root, "linked");
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, "escape.md"), "outside", "utf-8");
+
+  try {
+    fs.symlinkSync(outside, linked, "junction");
+  } catch (error) {
+    t.skip(
+      `junction creation unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+
+  assert.throws(
+    () => resolveLibrary(root, path.join(linked, "escape.md")),
+    /outside|root|managed/i,
+  );
+  assert.throws(
+    () => resolveLibrary(root, path.join(linked, "new.md")),
+    /outside|root|managed/i,
+  );
+});
+
+test("TDB result expansion rejects an authority path outside the root", async (t) => {
+  const dir = makeTempDir(t, "memoria-tdb-expand-boundary-");
+  const root = path.join(dir, "knowledge");
+  const outside = path.join(dir, "outside.md");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(outside, "must not be expanded", "utf-8");
+
+  const engine = new TDBEngine({
+    config: baseConfig({
+      tdbRootPath: root,
+      tdbDbPath: path.join(dir, "state.sqlite"),
+    }),
+    embeddingProvider: fakeEmbeddingProvider,
+    vectorStore: newVectorStore(path.join(dir, "vectors")),
+  });
+  await engine.initialize();
+  await assert.rejects(
+    () =>
+      (
+        engine as unknown as {
+          _expandHits(hits: readonly TdbSearchResult[]): Promise<TdbSearchResult[]>;
+        }
+      )._expandHits([
+        { path: outside, library: "Root", id: 1, score: 1, text: "authority" },
+      ]),
+    (error: unknown) => error instanceof MemoriaError && error.code === "persistence",
+  );
+  await engine.close();
 });
 
 test("TDBEngine ingests a text fact and finds it via query", async (t) => {

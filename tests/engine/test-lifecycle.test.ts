@@ -61,6 +61,9 @@ function makeVectorStore(): VectorStoreContract & {
     async remove(indexName, id) {
       getIndex(indexName).delete(id);
     },
+    resetDerivedState() {
+      indices.clear();
+    },
     async replaceIndex(indexName, entries) {
       indices.set(indexName, new Map(entries.map((entry) => [entry.id, entry.vector])));
     },
@@ -319,6 +322,7 @@ test("active operation registry drains successful and failed operations without 
 
 test("close waits for an in-flight search before flushing and closing", async () => {
   const { engine, metadataStore } = makeInjectedEngine();
+  engine.config.indexNames = ["Root"];
   let lookupStarted!: () => void;
   let releaseLookup!: () => void;
   const started = new Promise<void>((resolve) => {

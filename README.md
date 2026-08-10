@@ -76,8 +76,8 @@ void main().catch((error) => {
 
 ## MDX 文件格式
 
-文件可以在开头写 YAML front matter。`tags` 会进入标签流程，其他字段会作为结果
-中的 metadata；正文才会被分块和嵌入。MDX/JSX 只作为文字读取，不会被执行。
+`.mdx` 文件可以在开头写 YAML front matter。`tags` 会进入标签流程，其他字段会作为
+结果中的 metadata；正文才会被分块和嵌入。MDX/JSX 只作为文字读取，不会被执行。
 
 ```mdx
 ---
@@ -94,8 +94,9 @@ source: personal-journal
 今天手冲咖啡：水温约 93 度，粉水比 1:15。
 ```
 
-没有 front matter 的 `.md` 文件仍然可以读取。只改标题或标签时，系统会尽量复用
-正文向量，不重复计算正文嵌入。数据目录的备份和清理规则见
+没有 front matter 的 `.md` 文件仍然可以读取，但 `.md` 和逻辑文档不会自动解析
+front matter。只改标题或标签时，系统会尽量复用正文向量，不重复计算正文嵌入。
+数据目录的备份和清理规则见
 [data/README.md](data/README.md)。
 
 ## 使用真实嵌入

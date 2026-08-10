@@ -8,6 +8,8 @@ import type BetterSqlite3 from "better-sqlite3";
 import type {
   ChunkMetadataInput,
   ChunkRow,
+  DocumentTagReplacement,
+  DocumentTagReplacementResult,
   DocumentStateReplacement,
   DocumentStateReplacementResult,
   FileMetadataInput,
@@ -325,7 +327,115 @@ class SqliteMetadataStore extends MetadataStore {
         fileMeta.metadataJson ?? null,
         existing.id,
       );
+    this.db.transaction(() => {
+      this._incrementMetadataGenerationInTransaction();
+    })();
     return { fileId: Number(existing.id), changed: true };
+  }
+
+  async replaceDocumentTags(
+    replacement: DocumentTagReplacement,
+  ): Promise<DocumentTagReplacementResult> {
+    const { file, tags, orderedTagNames } = replacement;
+    const now = Math.floor(Date.now() / 1000);
+
+    return this.db.transaction(() => {
+      const existingByDocument = file.documentId
+        ? (this.db
+            .prepare("SELECT * FROM files WHERE document_id = ?")
+            .get(file.documentId) as FileQueryRow | undefined)
+        : undefined;
+      const existing =
+        existingByDocument ||
+        (this.db.prepare("SELECT * FROM files WHERE path = ?").get(file.path) as
+          FileQueryRow | undefined);
+      const previousIndexName = existing?.diary_name ?? null;
+      const fileValues = [
+        file.path,
+        file.diaryName,
+        file.checksum,
+        file.mtime,
+        file.size,
+        now,
+        file.documentId ?? null,
+        file.revision ?? null,
+        file.sourceJson ?? null,
+        file.metadataJson ?? null,
+      ] as const;
+
+      let fileId: number;
+      if (existing) {
+        this.db
+          .prepare(
+            `UPDATE files SET
+              path = ?, diary_name = ?, checksum = ?, mtime = ?, size = ?,
+              updated_at = ?, document_id = ?, revision = ?, source_json = ?,
+              metadata_json = ?
+             WHERE id = ?`,
+          )
+          .run(...fileValues, existing.id);
+        fileId = Number(existing.id);
+      } else {
+        const insertFile = this.db.prepare(
+          `INSERT INTO files (
+            path, diary_name, checksum, mtime, size, updated_at,
+            document_id, revision, source_json, metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        const info = insertFile.run(...fileValues);
+        fileId = Number(info.lastInsertRowid);
+      }
+
+      const insertTag = this.db.prepare(
+        "INSERT OR IGNORE INTO tags (name, vector) VALUES (?, ?)",
+      );
+      const updateTagVector = this.db.prepare(
+        "UPDATE tags SET vector = ? WHERE name = ?",
+      );
+      const selectTag = this.db.prepare("SELECT id, vector FROM tags WHERE name = ?");
+      const tagIdsByName = new Map<string, number>();
+      const tagIds: number[] = [];
+      for (const tag of tags) {
+        insertTag.run(tag.name, tag.vector ?? null);
+        if (tag.vector !== null) updateTagVector.run(tag.vector, tag.name);
+        const row = selectTag.get(tag.name) as
+          { id: number; vector?: Buffer | null } | undefined;
+        if (!row) continue;
+        const tagId = Number(row.id);
+        tagIds.push(tagId);
+        tagIdsByName.set(tag.name, tagId);
+      }
+
+      const fileTagIds: number[] = [];
+      for (const tagName of orderedTagNames) {
+        let tagId = tagIdsByName.get(tagName);
+        if (tagId === undefined) {
+          const stored = selectTag.get(tagName) as
+            { id: number; vector?: Buffer | null } | undefined;
+          if (stored?.vector != null) tagId = Number(stored.id);
+        }
+        if (tagId !== undefined && !fileTagIds.includes(tagId)) {
+          fileTagIds.push(tagId);
+        }
+      }
+
+      this.db.prepare("DELETE FROM file_tags WHERE file_id = ?").run(fileId);
+      const insertFileTag = this.db.prepare(
+        "INSERT INTO file_tags (file_id, tag_id, position) VALUES (?, ?, ?)",
+      );
+      fileTagIds.forEach((tagId, index) => {
+        insertFileTag.run(fileId, tagId, index + 1);
+      });
+
+      const metadataGeneration = this._incrementMetadataGenerationInTransaction();
+      return {
+        fileId,
+        tagIds,
+        metadataGeneration,
+        previousIndexName,
+        currentIndexName: file.diaryName,
+      };
+    })();
   }
 
   async countFiles(): Promise<number> {

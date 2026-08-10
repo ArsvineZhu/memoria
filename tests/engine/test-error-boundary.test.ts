@@ -58,6 +58,9 @@ function makeVectorStore(
       return [];
     },
     async remove() {},
+    resetDerivedState() {
+      indices.clear();
+    },
     async replaceIndex(indexName, entries) {
       indices.set(indexName, new Map(entries.map((entry) => [entry.id, entry.vector])));
     },
@@ -181,6 +184,7 @@ test("search vector failures are not silently downgraded", async () => {
 test("search getAllChunks failures cross the boundary as persistence errors", async () => {
   const cause = new Error("chunks persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
+  engine.config.indexNames = ["Root"];
   (metadataStore as unknown as { getSearchCorpus?: unknown }).getSearchCorpus =
     undefined;
   metadataStore.getAllChunks = async () => {
@@ -324,6 +328,7 @@ test("search getFileByChunkId failures cross the boundary as persistence errors"
 test("search tag file lookup failures cross the boundary as persistence errors", async () => {
   const cause = new Error("tag file lookup persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
+  engine.config.indexNames = ["Root"];
   engine.config.tagSearchEnabled = true;
   metadataStore.getAllChunks = async () => [];
   metadataStore.getFileIdsByTagId = async () => {
@@ -348,6 +353,7 @@ test("search tag file lookup failures cross the boundary as persistence errors",
 test("search tag chunk lookup failures cross the boundary as persistence errors", async () => {
   const cause = new Error("tag chunk lookup persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
+  engine.config.indexNames = ["Root"];
   engine.config.tagSearchEnabled = true;
   metadataStore.getAllChunks = async () => [];
   metadataStore.getFileIdsByTagId = async () => [7];

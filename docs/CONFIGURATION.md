@@ -40,22 +40,22 @@ SQLite 路径。
 
 ## 嵌入和向量存储
 
-| 配置项              |                          默认值 | 用途                                                                                |
-| ------------------- | ------------------------------: | ----------------------------------------------------------------------------------- |
-| `apiUrl`            |                            `""` | OpenAI 兼容接口的基础地址                                                           |
-| `apiKey`            |                            `""` | 由调用方传入的 Provider 密钥                                                        |
-| `model`             | `"google/gemini-embedding-001"` | 主模型名                                                                            |
-| `modelSig`          |  `"gemini-embedding-2-preview"` | 用于缓存/配置识别的模型签名                                                         |
-| `fallbackModels`    |                            `[]` | OpenAI 兼容接口的备用模型列表                                                       |
-| `maxBatchItems`     |                            `32` | 主嵌入每批条数                                                                      |
-| `maxToken`          |                          `8000` | 单条文本 token 上限                                                                 |
-| `concurrency`       |                             `5` | 主嵌入并行任务数                                                                    |
-| `dimension`         |                          `3072` | 主向量维度                                                                          |
-| `tagIndexCapacity`  |                         `50000` | 标签索引初始容量                                                                    |
-| `indexSaveDelay`    |                        `120000` | 主索引延迟保存时间，单位毫秒                                                        |
-| `tagIndexSaveDelay` |                        `300000` | 标签索引延迟保存时间，单位毫秒                                                      |
-| `persistTagIndex`   |                         `false` | 兼容字段；当前实现不以它决定是否保存 `global_tags`，保存由 `tagIndexSaveDelay` 调度 |
-| `indexLoadEnabled`  |                            可选 | 兼容配置；`DEFAULT_CONFIG` 未提供默认值                                             |
+| 配置项              |                          默认值 | 用途                                                                                                |
+| ------------------- | ------------------------------: | --------------------------------------------------------------------------------------------------- |
+| `apiUrl`            |                            `""` | OpenAI 兼容接口的基础地址                                                                           |
+| `apiKey`            |                            `""` | 由调用方传入的 Provider 密钥                                                                        |
+| `model`             | `"google/gemini-embedding-001"` | 主模型名                                                                                            |
+| `modelSig`          |  `"gemini-embedding-2-preview"` | 用于缓存/配置识别的模型签名                                                                         |
+| `fallbackModels`    |                            `[]` | OpenAI 兼容接口的备用模型列表                                                                       |
+| `maxBatchItems`     |                            `32` | 主嵌入每批条数                                                                                      |
+| `maxToken`          |                          `8000` | 单条文本 token 上限                                                                                 |
+| `concurrency`       |                             `5` | 主嵌入并行任务数                                                                                    |
+| `dimension`         |                          `3072` | 主向量维度                                                                                          |
+| `tagIndexCapacity`  |                         `50000` | 标签索引初始容量                                                                                    |
+| `indexSaveDelay`    |                        `120000` | 主索引延迟保存时间，单位毫秒                                                                        |
+| `tagIndexSaveDelay` |                        `300000` | 标签索引延迟保存时间，单位毫秒                                                                      |
+| `persistTagIndex`   |                         `false` | `true` 保存并恢复 `global_tags`；`false` 不写入该索引，恢复时从 SQLite authority 重建，并保留旧文件 |
+| `indexLoadEnabled`  |                            可选 | 兼容配置；`DEFAULT_CONFIG` 未提供默认值                                                             |
 
 Provider 的 `getDimension()` 必须等于 `config.dimension`。更换模型或维度后旧向量
 空间不能直接复用，需要重新摄入；详见 [EMBEDDING.md](EMBEDDING.md)。
@@ -77,8 +77,10 @@ Provider 的 `getDimension()` 必须等于 `config.dimension`。更换模型或�
 | `checkpoint`          | `false` | 是否写摄入检查点              |
 | `checkpointInterval`  |     `1` | 每多少个文件写一次检查点      |
 
-MDX front matter 由文件摄入路径解析。`tags` 会进入现有标签清理流程，其他符合
-JSON 的字段会成为文档 metadata。front matter 会在分块和嵌入前移除。
+文件系统 adapter 只对大小写不敏感的 `.mdx` 解析 YAML front matter。`tags` 会进入
+现有标签清理流程，其他符合 JSON 的字段会成为文档 metadata；front matter 会在分块
+和嵌入前移除。`.md` 和逻辑文档保留原始内容，不在 `FileReaderStage` 中解析
+front matter。
 
 ## 检索开关
 
@@ -128,7 +130,9 @@ JSON 的字段会成为文档 metadata。front matter 会在分块和嵌入前�
 | `hybridAlpha` / `hybridBeta`       |   `0.7` / `0.3` | TDB 兼容的融合别名                |
 
 搜索调用可以临时覆盖 `topK`、范围、标签检索、权重、`minScore` 和时间衰减等常用
-配置。向量检索、BM25 和结果补全使用同一范围选择，行为说明见
+配置。范围优先级是调用参数 aliases（`indexNames` / `diaryNames` / `diaryName` /
+`libraries`）> 配置默认值 > authority discovery > `Root` fallback；显式空数组是
+空范围，不会回退到 `Root`。向量检索、BM25 和结果补全使用同一范围选择，行为说明见
 [FUNCTIONS.md](FUNCTIONS.md)。
 
 ## 后处理

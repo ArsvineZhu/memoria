@@ -28,7 +28,8 @@ class ChunkEmbedderStage extends Stage {
     const fileInfo = input;
     const chunks: string[] = Array.isArray(fileInfo.chunks) ? fileInfo.chunks : [];
 
-    if (fileInfo.needsEmbedding === false) {
+    const needsChunkEmbedding = fileInfo.needsChunkEmbedding ?? fileInfo.needsEmbedding;
+    if (needsChunkEmbedding === false) {
       return { ...fileInfo, chunkEntries: [] };
     }
 

@@ -132,10 +132,11 @@ extractTags
 `(code, message, {cause?, retryable?, details?})`。`asMemoriaError(error, code,
 message, options?)` 会为未知错误保留原始 `cause`，已有 `MemoriaError` 则原样返回。
 
-`search()` 的 scope precedence 是：显式 `indexNames` / `diaryNames` → 只检索该范围；
-没有显式 scope → 检索 SQLite authority 发现的全部内容索引；只有 scope discovery
-不可用时，才使用 `Root` 作为 compatibility fallback。vector、BM25 与结果 hydration
-共享同一 scope。`timeDecay` 只由 `TimeDecayStage` 执行。
+`search()` 的 scope precedence 是：调用参数 aliases
+（`indexNames` / `diaryNames` / `diaryName` / `libraries`）→ 配置默认值 → SQLite
+authority discovery → `Root` compatibility fallback。显式空数组表示空 scope，不会
+回退；vector、BM25、标签扩展与结果 hydration 共享同一 scope。`timeDecay` 只由
+`TimeDecayStage` 执行。
 
 **KnowledgeBaseAdapter 方法面**：`initialize / shutdown / flush / flushBatch /
 handleDelete / deleteFile / getStats / close / removeDocument / search /
@@ -173,7 +174,7 @@ matchedTags, tagMatchCount, coreTagsMatched, boostFactor, tagMatchScore}`）。
 
 | `ResidualPyramid` | `new ResidualPyramid({maxLevels?=3, topK?=10, minEnergyRatio?=0.1, dimension?=3072})`；`analyze(queryVector, {searchFn, lookupFn})` → `{levels, totalExplainedEnergy, finalResidual, features}`；`extractFeatures(pyramid)` | 残差金字塔：每层残差子空间正交投影 + 握手特征（方向相干 / 模式强度 / 新颖度）；`features = {depth, coverage, novelty, coherence, tagMemoActivation, expansionSignal}` |
 
-| `ResultDeduplicator` | `new ResultDeduplicator(db?, {dimension?, semanticThreshold?, maxResults?, minSemanticCandidates?, sourcePriority?})`；`deduplicate(candidates, queryVector?, {semantic?, semanticThreshold?, maxResults?, stage?})` → Promise<Array>；`hardDeduplicate(candidates)`；`updateConfig(...)` | 双层去重：承诺精确身份（chunkId/正文/path:chunkIndex）+ 余弦语义（默认 0.92） |
+| `ResultDeduplicator` | `new ResultDeduplicator(loadVector?: ChunkVectorLoader, {dimension?, semanticThreshold?, maxResults?, minSemanticCandidates?, sourcePriority?})`；`deduplicate(candidates, queryVector?, {semantic?, semanticThreshold?, maxResults?, stage?})` → Promise<Array>；`hardDeduplicate(candidates)`；`updateConfig(...)` | 双层去重：承诺精确身份（chunkId/正文/path:chunkIndex）+ 余弦语义（默认 0.92） |
 | `ResultDeduplicator.updateConfig` | `(config?)` | 热更新 resolution（维/clamp 阈值等） |
 
 ## 5. Gram-Schmidt 基元

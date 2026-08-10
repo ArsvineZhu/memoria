@@ -252,6 +252,8 @@ export interface FileSnapshot extends Omit<
   diaryName: string;
   checksum: string;
   needsEmbedding: boolean;
+  needsChunkEmbedding?: boolean;
+  needsTagUpdate?: boolean;
   needsMetadataWrite?: boolean;
   unstable: boolean;
 }
@@ -531,6 +533,8 @@ export interface PipelineData extends UnknownRecord {
   diaryName?: string;
   checksum?: string;
   needsEmbedding?: boolean;
+  needsChunkEmbedding?: boolean;
+  needsTagUpdate?: boolean;
   needsMetadataWrite?: boolean;
   metadataOnly?: boolean;
   previousIndexName?: string | null;
@@ -554,6 +558,8 @@ export interface PipelineData extends UnknownRecord {
   indexNames?: string[];
   libraries?: string[];
   resolvedIndexNames?: string[];
+  scopeSource?: "call" | "config" | "authority" | "fallback";
+  scopeWasExplicit?: boolean;
   topK?: number;
   queries?: QueryVector[];
   queryVector?: EmbeddingVector;
@@ -610,6 +616,15 @@ export interface VectorIndexEntry {
   vector: VectorLike;
 }
 
+export interface VectorReconciliationPlan {
+  indexEntries: Map<string, VectorIndexEntry[]>;
+  expectedIndexNames: string[];
+  rebuiltChunkCount: number;
+  rebuiltTagCount: number;
+  metadataChunkCount: number;
+  skippedVectorCount: number;
+}
+
 export interface SearchCorpusChunk {
   id: number;
   content: string;
@@ -632,6 +647,7 @@ export interface VectorStoreContract {
   scheduleIndexSave?(indexName: string): void;
   flushPendingSaves?(): void | Promise<void>;
   resetDerivedState?(): void | Promise<void>;
+  rebuildDerivedState?(plan: VectorReconciliationPlan): void | Promise<void>;
   restorePersistedIndexes?(indexNames: readonly string[]): Promise<boolean>;
   replaceIndex?(
     indexName: string,
@@ -745,6 +761,20 @@ export interface DocumentStateReplacementResult {
   currentIndexName: string;
 }
 
+export interface DocumentTagReplacement {
+  file: FileMetadataInput;
+  tags: readonly TagMetadataInput[];
+  orderedTagNames: readonly string[];
+}
+
+export interface DocumentTagReplacementResult {
+  fileId: number;
+  tagIds: number[];
+  metadataGeneration: number;
+  previousIndexName: string | null;
+  currentIndexName: string;
+}
+
 export interface HealthStatus {
   healthy: boolean;
   issues: string[];
@@ -773,6 +803,9 @@ export interface MetadataStoreContract {
   replaceDocumentState?(
     replacement: DocumentStateReplacement,
   ): Promise<DocumentStateReplacementResult>;
+  replaceDocumentTags?(
+    replacement: DocumentTagReplacement,
+  ): Promise<DocumentTagReplacementResult>;
   getChunksByFileId(fileId: number): Promise<ChunkRow[]>;
   getChunkById(id: number): Promise<ChunkRow | null>;
   getAllChunks(): Promise<ChunkRow[]>;
@@ -1003,7 +1036,7 @@ export interface TdbDocumentStateReplacement {
   chunks: readonly {
     text: string;
     checksum: string;
-    vector: Buffer;
+    vector: Buffer | null;
   }[];
 }
 
@@ -1079,7 +1112,7 @@ export interface TdbStoreContract {
   markTdbVectorStateClean(): Promise<void>;
   getTdbRebuildChunks(): Promise<TdbRebuildChunk[]>;
   updateChunkVectors(
-    entries: readonly { chunkId: number; vector: Buffer }[],
+    entries: readonly { chunkId: number; vector: Buffer | null }[],
   ): Promise<void>;
   countFiles(): Promise<number>;
   listLibraries(): Promise<string[]>;

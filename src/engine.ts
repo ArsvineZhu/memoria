@@ -6,6 +6,7 @@ import { DEFAULT_CONFIG, mergeConfig } from "./config/default-config.js";
 import { loadRagParams } from "./config/rag-params-loader.js";
 import PipelineContext from "./core/context.js";
 import ActiveOperationRegistry from "./core/active-operation-registry.js";
+import DerivedStateCoordinator from "./core/derived-state-coordinator.js";
 import IngestPipeline from "./pipelines/ingest-pipeline.js";
 import DeletePipeline from "./pipelines/delete-pipeline.js";
 import SearchPipeline from "./pipelines/search-pipeline.js";
@@ -18,6 +19,7 @@ import type {
   MemoryDocumentDeleteResult,
   MemoryDocumentIngestResult,
   MemoryDocumentInput,
+  MemoryDocumentSource,
   MemoryEngineOptions,
   MetadataStoreContract,
   PipelineData,
@@ -80,6 +82,15 @@ function normalizeFiles(files: unknown): FileInput[] {
       content: typeof entry.content === "string" ? entry.content : undefined,
       mtime: typeof entry.mtime === "number" ? entry.mtime : undefined,
       size: typeof entry.size === "number" ? entry.size : undefined,
+      documentId: typeof entry.documentId === "string" ? entry.documentId : undefined,
+      revision: typeof entry.revision === "string" ? entry.revision : undefined,
+      documentSource: isRecord(entry.documentSource)
+        ? (entry.documentSource as MemoryDocumentSource)
+        : undefined,
+      documentMetadata: isRecord(entry.documentMetadata)
+        ? entry.documentMetadata
+        : undefined,
+      diaryName: typeof entry.diaryName === "string" ? entry.diaryName : undefined,
     };
   });
 }
@@ -128,6 +139,9 @@ class MemoryEngine {
   private _vectorMutationFailed = false;
   private readonly _activeOperations = new ActiveOperationRegistry();
   private readonly _mutationTails = new Map<string, Promise<void>>();
+  private readonly _vectorCoordinator = new DerivedStateCoordinator(async () => {
+    this.lastReconciliation = await this._reconcileUnsafe();
+  });
   _closed: boolean;
   ragParams: UnknownRecord;
   _lastIndexedAt: number | null;
@@ -232,6 +246,10 @@ class MemoryEngine {
       });
 
       this._applyRagParamsToConfig(this.ragParams);
+      const searchOptions = this.options.searchOptions || {};
+      if (!Array.isArray(searchOptions.stages)) {
+        this.searchPipeline = new SearchPipeline(this.config, searchOptions);
+      }
       this.lastReconciliation = await this._recoverIndexes();
       if (this.options.onReady && typeof this.options.onReady === "function") {
         await this.options.onReady(this);
@@ -384,6 +402,7 @@ class MemoryEngine {
       if (valid) {
         this._vectorStateComplete = true;
         this._vectorMutationFailed = false;
+        this._vectorCoordinator.markClean();
         return {
           authoritative: "metadata",
           metadataChunks: 0,
@@ -393,10 +412,11 @@ class MemoryEngine {
         };
       }
     }
-    return this._reconcileInternal();
+    await this._vectorCoordinator.reconcile();
+    return this.lastReconciliation!;
   }
 
-  private async _reconcileInternal(): Promise<ReconciliationReport> {
+  private async _reconcileUnsafe(): Promise<ReconciliationReport> {
     // Planning reads the complete SQLite authority before the vector store is
     // reset, so a read/decode failure cannot destroy a currently usable index.
     const plan = await buildVectorReconciliationPlan(
@@ -499,12 +519,33 @@ class MemoryEngine {
     });
     this._mutationTails.set(key, tail);
 
-    return previous.then(operation).finally(() => {
-      release();
-      if (this._mutationTails.get(key) === tail) {
-        this._mutationTails.delete(key);
-      }
-    });
+    const coordinated = previous.then(() =>
+      this._vectorCoordinator.runMutation(key, async () => {
+        this._vectorStateComplete = false;
+        return operation();
+      }),
+    );
+    return coordinated
+      .then(
+        (result) => {
+          this._vectorMutationFailed = this._vectorCoordinator.isDirty;
+          this._vectorStateComplete =
+            !this._vectorCoordinator.isDirty &&
+            this._vectorCoordinator.activeMutations === 0;
+          return result;
+        },
+        (error) => {
+          this._vectorMutationFailed = true;
+          this._vectorStateComplete = false;
+          throw error;
+        },
+      )
+      .finally(() => {
+        release();
+        if (this._mutationTails.get(key) === tail) {
+          this._mutationTails.delete(key);
+        }
+      });
   }
 
   private _fileMutationKey(filePath: string, relPath?: string): string {
@@ -521,7 +562,8 @@ class MemoryEngine {
   reconcile(): Promise<ReconciliationReport> {
     return this._runReadyOperation("reconcile", async () => {
       try {
-        return await this._reconcileInternal();
+        await this._vectorCoordinator.reconcile();
+        return this.lastReconciliation!;
       } catch (error) {
         throw asMemoriaError(
           error,
@@ -601,29 +643,21 @@ class MemoryEngine {
         const result = await this._runSerializedMutation(
           this._fileMutationKey(entry.path, entry.relPath),
           async () => {
-            const wasComplete = this._vectorStateComplete;
-            this._vectorStateComplete = false;
-            try {
-              const result = await this.ingestPipeline.run(
-                {
-                  path: entry.path,
-                  relPath: entry.relPath,
-                  content: entry.content,
-                  mtime: entry.mtime,
-                  size: entry.size,
-                },
-                this.ctx,
-              );
-              if (!result.skipped && !this._vectorMutationFailed) {
-                this._vectorStateComplete = true;
-              } else if (result.skipped && !this._vectorMutationFailed) {
-                this._vectorStateComplete = wasComplete;
-              }
-              return result;
-            } catch (error) {
-              this._vectorMutationFailed = true;
-              throw error;
-            }
+            return this.ingestPipeline.run(
+              {
+                path: entry.path,
+                relPath: entry.relPath,
+                content: entry.content,
+                mtime: entry.mtime,
+                size: entry.size,
+                documentId: entry.documentId,
+                revision: entry.revision,
+                documentSource: entry.documentSource,
+                documentMetadata: entry.documentMetadata,
+                diaryName: entry.diaryName,
+              },
+              this.ctx,
+            );
           },
         );
         results.push(result as IngestEnvelope);
@@ -670,45 +704,32 @@ class MemoryEngine {
           ? Number(document.updatedAt)
           : 0;
         const size = Buffer.byteLength(document.content, "utf8");
-        const wasComplete = this._vectorStateComplete;
-        this._vectorStateComplete = false;
-        try {
-          const result = (await this.ingestPipeline.run(
-            {
-              path: storagePath,
-              relPath: storagePath,
-              content: document.content,
-              mtime,
-              size,
-              diaryName: "Logical",
-              documentId,
-              revision,
-              documentSource: document.source,
-              documentMetadata: document.metadata,
-            },
-            this.ctx,
-          )) as IngestEnvelope;
-
-          if (!result.skipped && !this._vectorMutationFailed) {
-            this._vectorStateComplete = true;
-          } else if (result.skipped && !this._vectorMutationFailed) {
-            this._vectorStateComplete = wasComplete;
-          }
-          if (!result.skipped && result.fileId != null)
-            this._lastIndexedAt = Date.now();
-          return {
-            ...result,
+        const result = (await this.ingestPipeline.run(
+          {
+            path: storagePath,
+            relPath: storagePath,
+            content: document.content,
+            mtime,
+            size,
+            diaryName: "Logical",
             documentId,
             revision,
-            source: document.source,
-            metadata: document.metadata,
             documentSource: document.source,
             documentMetadata: document.metadata,
-          };
-        } catch (error) {
-          this._vectorMutationFailed = true;
-          throw error;
-        }
+          },
+          this.ctx,
+        )) as IngestEnvelope;
+
+        if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
+        return {
+          ...result,
+          documentId,
+          revision,
+          source: document.source,
+          metadata: document.metadata,
+          documentSource: document.source,
+          documentMetadata: document.metadata,
+        };
       });
     } catch (error) {
       throw asMemoriaError(error, "ingestion", "MemoryEngine ingestion failed.", {
@@ -755,28 +776,16 @@ class MemoryEngine {
           row = await this.metadataStore.getFileByPath(storagePath);
         }
 
-        const wasComplete = this._vectorStateComplete;
-        this._vectorStateComplete = false;
-        try {
-          const result = (await this.deletePipeline.run(
-            {
-              path: row?.path || storagePath,
-              relPath: row?.path || storagePath,
-              documentId: normalizedId,
-              diaryName: row?.diary_name || row?.diaryName || "Logical",
-            },
-            this.ctx,
-          )) as DeleteEnvelope;
-          if (result.deleted !== false && !this._vectorMutationFailed) {
-            this._vectorStateComplete = true;
-          } else if (result.deleted === false && !this._vectorMutationFailed) {
-            this._vectorStateComplete = wasComplete;
-          }
-          return { ...result, documentId: normalizedId };
-        } catch (error) {
-          this._vectorMutationFailed = true;
-          throw error;
-        }
+        const result = (await this.deletePipeline.run(
+          {
+            path: row?.path || storagePath,
+            relPath: row?.path || storagePath,
+            documentId: normalizedId,
+            diaryName: row?.diary_name || row?.diaryName || "Logical",
+          },
+          this.ctx,
+        )) as DeleteEnvelope;
+        return { ...result, documentId: normalizedId };
       });
     } catch (error) {
       throw asMemoriaError(error, "persistence", "MemoryEngine remove failed.", {
@@ -822,10 +831,9 @@ class MemoryEngine {
     if (!input.query && typeof query === "string") input.query = query;
     input.options = { ...options, ...(input.options || {}) };
     try {
-      if (!this._vectorStateComplete || this._vectorMutationFailed) {
-        await this._reconcileInternal();
-      }
-      return (await this.searchPipeline.run(input, this.ctx)) as SearchEnvelope;
+      return await this._vectorCoordinator.runStableRead(
+        async () => (await this.searchPipeline.run(input, this.ctx)) as SearchEnvelope,
+      );
     } catch (error) {
       throw asMemoriaError(error, "retrieval", "MemoryEngine search failed.", {
         retryable: true,
@@ -852,28 +860,15 @@ class MemoryEngine {
       return (await this._runSerializedMutation(
         this._fileMutationKey(source.path, source.relPath),
         async () => {
-          const wasComplete = this._vectorStateComplete;
-          this._vectorStateComplete = false;
-          try {
-            const result = (await this.deletePipeline.run(
-              {
-                path: source.path,
-                relPath: source.relPath,
-                documentId: source.documentId,
-                diaryName: source.diaryName,
-              },
-              this.ctx,
-            )) as DeleteEnvelope;
-            if (result.deleted && !this._vectorMutationFailed) {
-              this._vectorStateComplete = true;
-            } else if (!result.deleted && !this._vectorMutationFailed) {
-              this._vectorStateComplete = wasComplete;
-            }
-            return result;
-          } catch (error) {
-            this._vectorMutationFailed = true;
-            throw error;
-          }
+          return (await this.deletePipeline.run(
+            {
+              path: source.path,
+              relPath: source.relPath,
+              documentId: source.documentId,
+              diaryName: source.diaryName,
+            },
+            this.ctx,
+          )) as DeleteEnvelope;
         },
       )) as DeleteEnvelope;
     } catch (error) {

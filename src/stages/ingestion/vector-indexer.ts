@@ -102,7 +102,7 @@ class VectorIndexerStage extends Stage {
       if (chunkCount > 0) {
         vectorStore.scheduleIndexSave(currentIndexName);
       }
-      if (tagCount > 0) {
+      if (tagCount > 0 && ctx.config?.persistTagIndex !== false) {
         vectorStore.scheduleIndexSave(TAG_INDEX_NAME);
       }
     }

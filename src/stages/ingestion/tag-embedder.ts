@@ -28,7 +28,8 @@ class TagEmbedderStage extends Stage {
     const fileInfo = input;
     const tags: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
 
-    if (fileInfo.needsEmbedding === false) {
+    const needsChunkEmbedding = fileInfo.needsChunkEmbedding ?? fileInfo.needsEmbedding;
+    if (needsChunkEmbedding === false && fileInfo.needsTagUpdate !== true) {
       return { ...fileInfo, tagEntries: [] };
     }
 

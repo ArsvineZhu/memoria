@@ -62,6 +62,12 @@ class BM25SearcherStage extends Stage {
     }
 
     const config = ctx.config || {};
+    const resolvedScope = Array.isArray(info.resolvedIndexNames)
+      ? info.resolvedIndexNames
+      : undefined;
+    if (resolvedScope && resolvedScope.length === 0) {
+      return { ...info, bm25Results: [] };
+    }
     const tokenizer: (text: string) => Promise<string[]> =
       typeof config.tokenizer === "function"
         ? this._wrapTokenizer(config.tokenizer)
@@ -88,22 +94,27 @@ class BM25SearcherStage extends Stage {
     let chunks: Array<ChunkRow | SearchCorpusChunk> = [];
     try {
       if (typeof metadataStore.getSearchCorpus === "function") {
-        chunks = await metadataStore.getSearchCorpus(
-          Array.isArray(info.resolvedIndexNames) ? info.resolvedIndexNames : undefined,
-        );
+        chunks = await metadataStore.getSearchCorpus(resolvedScope);
       } else {
-        const explicitScope =
-          Array.isArray(info.indexNames) ||
-          Array.isArray(info.diaryNames) ||
-          typeof info.diaryName === "string" ||
-          Array.isArray(info.libraries);
-        if (explicitScope && Array.isArray(info.resolvedIndexNames)) {
-          throw new Error("Metadata provider cannot honor scoped search.");
-        }
         if (typeof metadataStore.getAllChunks !== "function") {
           return { ...info, bm25Results: [], metadataStoreMissing: true };
         }
         chunks = await metadataStore.getAllChunks();
+        if (resolvedScope) {
+          if (typeof metadataStore.getFileByChunkId !== "function") {
+            throw new Error(
+              "Metadata provider cannot honor the resolved search scope.",
+            );
+          }
+          const allowed = new Set(resolvedScope);
+          const scopedChunks: Array<ChunkRow | SearchCorpusChunk> = [];
+          for (const chunk of chunks) {
+            const file = await metadataStore.getFileByChunkId(Number(chunk.id));
+            const indexName = file?.diary_name || file?.diaryName || "Root";
+            if (file && allowed.has(indexName)) scopedChunks.push(chunk);
+          }
+          chunks = scopedChunks;
+        }
       }
     } catch (e) {
       throw asMemoriaError(

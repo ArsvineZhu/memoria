@@ -24,6 +24,7 @@ import TagExpanderStage from "../../src/stages/memo/tag-expander.js";
 import VectorReshaperStage from "../../src/stages/memo/vector-reshaper.js";
 import GeodesicRerankerStage from "../../src/stages/memo/geodesic-reranker.js";
 import CandidateMergerStage from "../../src/stages/retrieval/candidate-merger.js";
+import AssociatorStage from "../../src/stages/postprocess/associator.js";
 
 const dim = 4;
 
@@ -414,6 +415,90 @@ test("TagExpanderStage: expands the candidate pool through similar tags", async 
   assert.strictEqual(out.mergedCandidates.length, 2);
 });
 
+test("TagExpanderStage filters expanded chunks to the resolved scope", async () => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const vectorStore = makeVectorStore();
+  const inScopeFile = (await metadataStore.upsertFile({
+    path: "in.md",
+    diaryName: "in-scope",
+    checksum: "in",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const outsideFile = (await metadataStore.upsertFile({
+    path: "out.md",
+    diaryName: "outside",
+    checksum: "out",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const [inChunk] = await metadataStore.insertChunks(inScopeFile, [
+    { chunkIndex: 0, content: "in" },
+  ]);
+  const [outsideChunk] = await metadataStore.insertChunks(outsideFile, [
+    { chunkIndex: 0, content: "out" },
+  ]);
+  const [inTag, outsideTag] = await metadataStore.upsertTags([
+    { name: "in-tag", vector: encodeVectorBlob(vec(1, 0, 0, 0)) },
+    { name: "outside-tag", vector: encodeVectorBlob(vec(0.95, 0.05, 0, 0)) },
+  ]);
+  await metadataStore.setFileTags(inScopeFile, [inTag]);
+  await metadataStore.setFileTags(outsideFile, [outsideTag]);
+  await vectorStore.add("global_tags", inTag, vec(1, 0, 0, 0));
+  await vectorStore.add("global_tags", outsideTag, vec(0.95, 0.05, 0, 0));
+
+  const out = await new TagExpanderStage().process(
+    {
+      mergedCandidates: [{ chunkId: inChunk, score: 0.8 }],
+      resolvedIndexNames: ["in-scope"],
+    },
+    new PipelineContext({
+      config: { tagExpansionEnabled: true, tagExpansionTopK: 5 },
+      vectorStore,
+      metadataStore,
+    }),
+  );
+  assert.deepEqual(
+    out.mergedCandidates.map((candidate) => candidate.chunkId),
+    [inChunk],
+  );
+  assert.deepEqual(out.tagExpansion?.added, []);
+  assert.ok(outsideChunk > 0);
+});
+
+test("TagExpanderStage returns no candidates for an explicit empty scope", async () => {
+  const { metaStore, vectorStore, c1 } = await seedExpansionStore();
+  const out = await new TagExpanderStage().process(
+    {
+      mergedCandidates: [{ chunkId: c1, score: 0.8 }],
+      resolvedIndexNames: [],
+    },
+    new PipelineContext({
+      config: { tagExpansionEnabled: true },
+      vectorStore,
+      metadataStore: metaStore,
+    }),
+  );
+  assert.deepEqual(out.mergedCandidates, []);
+  assert.deepEqual(out.tagExpansion?.added, []);
+});
+
+test("AssociatorStage returns no candidates for an explicit empty scope", async () => {
+  const { metaStore, vectorStore, c1 } = await seedExpansionStore();
+  const out = await new AssociatorStage().process(
+    {
+      mergedCandidates: [{ chunkId: c1, score: 0.8 }],
+      resolvedIndexNames: [],
+    },
+    new PipelineContext({
+      config: { associatorEnabled: true },
+      vectorStore,
+      metadataStore: metaStore,
+    }),
+  );
+  assert.deepEqual(out.mergedCandidates, []);
+});
+
 test("TagExpanderStage: disabled returns input candidates unchanged", async () => {
   const stage = new TagExpanderStage();
   const { metaStore, vectorStore, c1 } = await seedExpansionStore();
@@ -583,7 +668,14 @@ test("GeodesicRerankerStage applies the normalized energy formula stably", async
       { chunkId: c1, score: 0.2, tags: ["alpha", "beta"] },
       { chunkId: 999, score: 0.1, tags: ["alpha"] },
     ],
-    tagMemo: { activations: new Map([[alpha, 8], [beta, 4], [gamma, 1], [delta, 1]]) },
+    tagMemo: {
+      activations: new Map([
+        [alpha, 8],
+        [beta, 4],
+        [gamma, 1],
+        [delta, 1],
+      ]),
+    },
   };
   const ctx = new PipelineContext({
     config: {
@@ -631,7 +723,14 @@ test("GeodesicRerankerStage uses stored file tags and passes through empty field
   const lowSample = await stage.process(
     {
       mergedCandidates: [{ chunkId: c1, score: 0.3 }],
-      tagMemo: { activations: new Map([[1, 8], [2, 4], [3, 1], [4, 1]]) },
+      tagMemo: {
+        activations: new Map([
+          [1, 8],
+          [2, 4],
+          [3, 1],
+          [4, 1],
+        ]),
+      },
     },
     ctx,
   );
@@ -641,7 +740,12 @@ test("GeodesicRerankerStage uses stored file tags and passes through empty field
   const allZero = await stage.process(
     {
       mergedCandidates: [{ chunkId: c1, score: 0.3, tags: ["alpha", "beta"] }],
-      tagMemo: { activations: new Map([[1, 0], [2, 0]]) },
+      tagMemo: {
+        activations: new Map([
+          [1, 0],
+          [2, 0],
+        ]),
+      },
     },
     ctx,
   );

@@ -64,6 +64,13 @@ class VectorSearcherStage extends Stage {
       return { ...info, vectorResults: [], vectorStoreMissing: true };
     }
 
+    if (
+      Array.isArray(info.resolvedIndexNames) &&
+      info.resolvedIndexNames.length === 0
+    ) {
+      return { ...info, vectorResults: [] };
+    }
+
     const config = ctx.config || {};
     const queries: QueryVector[] = Array.isArray(info.queries) ? info.queries : [];
     const indexNames = Array.isArray(info.resolvedIndexNames)
@@ -125,14 +132,20 @@ class VectorSearcherStage extends Stage {
     config: MemoryConfigOverrides,
     ctx: PipelineContextLike,
   ): Promise<string[]> {
-    if (Array.isArray(config.indexNames) && config.indexNames.length > 0) {
-      return [...new Set(config.indexNames.map(String).filter(Boolean))];
+    if (Array.isArray(info.indexNames)) {
+      return [...new Set(info.indexNames.map(String).filter(Boolean))];
     }
-    if (Array.isArray(info.diaryNames) && info.diaryNames.length > 0) {
+    if (Array.isArray(info.diaryNames)) {
       return [...new Set(info.diaryNames.map(String).filter(Boolean))];
     }
-    if (typeof info.diaryName === "string" && info.diaryName) {
-      return [info.diaryName];
+    if (typeof info.diaryName === "string") {
+      return info.diaryName ? [info.diaryName] : [];
+    }
+    if (Array.isArray(info.libraries)) {
+      return [...new Set(info.libraries.map(String).filter(Boolean))];
+    }
+    if (Array.isArray(config.indexNames)) {
+      return [...new Set(config.indexNames.map(String).filter(Boolean))];
     }
     if (config.searchAllIndices) {
       const metadataStore = ctx.metadataStore;
@@ -217,6 +230,10 @@ class VectorSearcherStage extends Stage {
       return [];
     }
 
+    if (Array.isArray(allowedIndexNames) && allowedIndexNames.length === 0) {
+      return [];
+    }
+
     const tagK = Math.max(1, Math.round(Number(config.tagK) || 10));
     let hits: VectorHit[] = [];
     try {
@@ -262,7 +279,7 @@ class VectorSearcherStage extends Stage {
         }
         for (const chunk of chunks || []) {
           if (chunk.id == null) continue;
-          if (allowedIndexNames && allowedIndexNames.length > 0) {
+          if (Array.isArray(allowedIndexNames)) {
             const file = await metadataStore.getFileByChunkId(chunk.id);
             const indexName = file?.diary_name || file?.diaryName || "Root";
             if (!allowedIndexNames.includes(indexName)) continue;

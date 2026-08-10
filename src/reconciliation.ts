@@ -4,20 +4,14 @@ import type {
   MetadataStoreContract,
   ReconciliationReport,
   VectorIndexEntry,
+  VectorReconciliationPlan,
   VectorStoreContract,
 } from "./types.js";
 import { decodeVectorBlob } from "./utils/vector-codec.js";
 
 const TAG_INDEX_NAME = "global_tags";
 
-export interface VectorReconciliationPlan {
-  indexEntries: Map<string, VectorIndexEntry[]>;
-  expectedIndexNames: string[];
-  rebuiltChunkCount: number;
-  rebuiltTagCount: number;
-  metadataChunkCount: number;
-  skippedVectorCount: number;
-}
+export type { VectorReconciliationPlan } from "./types.js";
 
 interface ReconciliationOptions {
   metadataStore: MetadataStoreContract;
@@ -148,24 +142,25 @@ export async function applyVectorReconciliationPlan(
   vectorStore: VectorStoreContract,
 ): Promise<ReconciliationReport> {
   try {
-    if (typeof vectorStore.resetDerivedState === "function") {
-      await vectorStore.resetDerivedState();
-    }
-
-    for (const indexName of plan.expectedIndexNames) {
-      const entries = plan.indexEntries.get(indexName) ?? [];
-      if (typeof vectorStore.replaceIndex === "function") {
-        await vectorStore.replaceIndex(indexName, entries);
-        continue;
+    if (typeof vectorStore.rebuildDerivedState === "function") {
+      await vectorStore.rebuildDerivedState(plan);
+    } else {
+      if (
+        typeof vectorStore.resetDerivedState !== "function" ||
+        typeof vectorStore.replaceIndex !== "function"
+      ) {
+        throw new MemoriaError(
+          "configuration",
+          "Vector store does not provide an atomic derived-state rebuild capability.",
+          { retryable: false },
+        );
       }
-      for (const entry of entries) {
-        try {
-          await vectorStore.remove(indexName, entry.id);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (!/not found|missing|absent/i.test(message)) throw error;
-        }
-        await vectorStore.add(indexName, entry.id, entry.vector);
+      await vectorStore.resetDerivedState();
+      for (const indexName of plan.expectedIndexNames) {
+        await vectorStore.replaceIndex(
+          indexName,
+          plan.indexEntries.get(indexName) ?? [],
+        );
       }
     }
 

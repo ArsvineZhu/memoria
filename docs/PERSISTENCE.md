@@ -58,10 +58,11 @@ source: personal-journal
 正文内容。MDX/JSX 仅按 UTF-8 文本处理，不会被执行。
 ```
 
-`tags` 进入现有标签流水线，其他键写入 `files.metadata_json`；front matter 在
-分块和嵌入前剥离。正文向量因此与 body checksum 绑定，只有 front matter 变化时
-可以复用已有向量并执行 metadata-only 更新。没有 front matter 的 `.md` 仍按旧
-规则工作。
+文件系统 adapter 只对大小写不敏感的 `.mdx` 解析 front matter；`.md` 和逻辑文档
+仍按原始内容处理。`tags` 进入现有标签流水线，其他键写入 `files.metadata_json`；
+front matter 在分块和嵌入前剥离。正文向量与 body checksum 绑定，而 adapter 另以
+完整原始源文件计算 `revision`，因此 front matter 变化可以复用已有正文向量并执行
+metadata/tag 更新；`.md` 不会因为正文中的 `---` 被误解析。
 
 SQLite 是可查询的元数据、块正文、标签和持久向量 BLOB 权威；`.usearch` 文件是
 按 diary/tag 命名的派生缓存。索引可以删除或在缺失、损坏、维度不符时从 SQLite
@@ -124,9 +125,10 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
    序列化 rows，再用一个 SQLite transaction 原子完成 file upsert、旧 chunks
    替换、tags upsert、`file_tags` 重建与 generation/dirty 更新。旧 chunk id 在
    transaction 内采集并返回为 `removedChunkIds`，供下一步清理向量索引。
-   未实现该 optional capability 的第三方 store 保留
-   `upsertFile → insertChunks → upsertTags → setFileTags` 兼容路径；这不是内置
-   SQLite 的默认路径。
+   仅标签变化且不重建 chunks 时，内置 store 使用可选的
+   `replaceDocumentTags()` 在一个 transaction 中更新 file metadata、tags、
+   `file_tags` 和 generation/dirty，并保留旧 chunks。缺少该能力时在写入前抛出
+   `configuration` 错误，不执行非原子多步写入；其他不涉及标签的旧兼容路径仍可使用。
 2. **Rust 写**（vector-indexer.ts:28–74）：
    先按 `removedChunkIds` 删除陈旧向量（防止重嵌文件留下孤儿）；
    chunk 向量按 `diaryName`（无则 `Root`）写索引，tag 向量写
@@ -141,8 +143,9 @@ flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage
    | `global_tags`      | `tagIndexSaveDelay` = 10000ms | 300000ms                                |
    | 其他（diary 索引） | `indexSaveDelay` = 5000ms     | 120000ms                                |
 
-   `persistTagIndex` 是兼容构造项，当前实现不按它门控调度——`global_tags`
-   同样进入定时保存。不要把它当作关闭标签索引保存的开关。
+   `persistTagIndex=true` 时 `global_tags` 按上述延迟持久化并在 clean restore 时加载；
+   `false` 时不保存该索引，旧 `.usearch`/旁车文件保留但被忽略，恢复阶段从 SQLite
+   authority 重建内存标签索引。
 
 **关闭时序**（engine.ts）：`close()` 等待 keyed mutation queue，先
 `flushPendingSaves()`，仅在 flush 成功且 vector state 完整时调用
@@ -172,10 +175,14 @@ clean，并使 `close()` 抛 `MemoriaError("lifecycle", ...)`。内置
 以下任一条件都会进入全量 rebuild：dirty、generation mismatch、预期文件缺失、
 loader 异常、metadata/native dimension 不匹配，或 `indexLoadEnabled=false`：
 
-1. 如果 vector store 暴露 `resetDerivedState()`，先取消 save timers、清空内存
-   index，并仅删除 `storePath` 根目录下符合 `index_[0-9a-f]{32}.usearch` 及其
-   `.meta.json` 的 Memoria 文件；不递归删除其他文件。这样 SQLite authority 已
-   删除的 diary 不会留下可在未来同名重建时复活的 ghost vectors。
+1. 如果 vector store 暴露 `rebuildDerivedState(plan)`，引擎把已校验的 authority
+   plan 交给它完成原子重建；否则必须同时提供 `resetDerivedState()` 和
+   `replaceIndex()`。缺少完整能力时直接抛出 `configuration`/完整性错误并保持
+   dirty，禁止用逐项 `add` 假装恢复成功。内置 Vexus 路径会先取消 save timers、
+   清空内存 index，并仅删除 `storePath` 根目录下符合
+   `index_[0-9a-f]{32}.usearch` 及其 `.meta.json` 的 Memoria 文件；不递归删除其他
+   文件。这样 SQLite authority 已删除的 diary 不会留下可在未来同名重建时复活的
+   ghost vectors。
 2. 通过 `getIndexableChunks()` 的一次 bulk query 读取 `chunks JOIN files`，再读取
    `getAllTags()`；解码有效 BLOB 后按 diary/global_tags 分组，调用
    `replaceIndex()` 重建全部 expected indexes。
@@ -183,9 +190,10 @@ loader 异常、metadata/native dimension 不匹配，或 `indexLoadEnabled=fals
    `vector_generation = metadata_generation`、`vector_dirty=0`。任何 rebuild 或
    save 失败都保持 dirty，并使 initialize 失败；不能宣称 ready。
 
-没有 `resetDerivedState()` 的第三方 vector store 保留现有兼容路径，不要求其
-提供 manifest。没有 `getIndexableChunks()` / expected-name capability 的旧
-MetadataStore 也继续走逐行 fallback；内置 SQLite 始终走 bulk/atomic path。
+第三方 vector store 只能选择实现完整的 `rebuildDerivedState(plan)`，或同时实现
+`resetDerivedState()` 与 `replaceIndex()`；不再接受缺少严格 reconciliation 能力的
+fallback。MetadataStore 仍可用逐行 authority 读取作为旧兼容路径，但 tag-only
+更新必须提供 `replaceDocumentTags()`。
 
 逻辑文档以 `document_id` 唯一识别；`revision` 相同且内容摘要不变时摄入幂等，
 revision 或 content 改变时替换同一 files 行及其 chunks。`remove(documentId)` 不依赖

@@ -36,7 +36,20 @@ class TagExtractorStage extends Stage {
       extraTags,
     });
 
-    return { ...fileInfo, tags };
+    let needsTagUpdate = fileInfo.needsTagUpdate === true;
+    if (ctx.metadataStore && typeof fileInfo.relPath === "string") {
+      const existing = await ctx.metadataStore.getFileByPath(fileInfo.relPath);
+      if (existing) {
+        const existingTags = await ctx.metadataStore.getFileTags(existing.id);
+        const existingNames = existingTags.map((tag) => tag.name || "");
+        needsTagUpdate =
+          needsTagUpdate ||
+          existingNames.length !== tags.length ||
+          existingNames.some((name, index) => name !== tags[index]);
+      }
+    }
+
+    return { ...fileInfo, tags, needsTagUpdate };
   }
 }
 

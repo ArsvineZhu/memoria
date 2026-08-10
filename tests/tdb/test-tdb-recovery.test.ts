@@ -59,6 +59,144 @@ function replacement(
   };
 }
 
+test("TDBEngine serializes same-document upserts before embedding the next revision", async () => {
+  const { root, metadataStore, vectorStore } = engineParts();
+  let calls = 0;
+  let firstStarted!: () => void;
+  let releaseFirst!: () => void;
+  const firstStartedPromise = new Promise<void>((resolve) => {
+    firstStarted = resolve;
+  });
+  const firstRelease = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const provider = embeddingProvider(async (texts = []) => {
+    calls += 1;
+    if (calls === 1) {
+      firstStarted();
+      await firstRelease;
+    }
+    return texts.map(() => new Float32Array([1, 0, 0, 0]));
+  });
+  const engine = new TDBEngine({
+    config: {
+      tdbEnabled: true,
+      tdbDimension: DIMENSION,
+      tdbRootPath: root,
+      tdbStorePath: path.join(root, "vectors"),
+    },
+    metadataStore,
+    vectorStore,
+    embeddingProvider: provider,
+  });
+  await engine.initialize();
+  try {
+    const first = engine.upsertText("first revision", {
+      library: "facts",
+      path: "same.md",
+    });
+    await firstStartedPromise;
+    const second = engine.upsertText("second revision", {
+      library: "facts",
+      path: "same.md",
+    });
+    await Promise.resolve();
+    assert.equal(calls, 1);
+
+    releaseFirst();
+    await Promise.all([first, second]);
+    assert.equal(calls, 2);
+    assert.equal(
+      (await metadataStore.getChunks("facts", "same.md"))[0]?.text,
+      "second revision",
+    );
+  } finally {
+    releaseFirst();
+    await engine.close().catch(() => undefined);
+    metadataStore.close();
+  }
+});
+
+test("TDBEngine reconciles dirty vector state before a later mutation", async () => {
+  const { root, metadataStore, vectorStore } = engineParts();
+  const provider = embeddingProvider(async (texts = []) =>
+    texts.map(() => new Float32Array([1, 0, 0, 0])),
+  );
+  let rebuildCalls = 0;
+  const replaceIndex = vectorStore.replaceIndex.bind(vectorStore);
+  vectorStore.replaceIndex = async (...args) => {
+    rebuildCalls += 1;
+    return replaceIndex(...args);
+  };
+  const engine = new TDBEngine({
+    config: {
+      tdbEnabled: true,
+      tdbDimension: DIMENSION,
+      tdbRootPath: root,
+      tdbStorePath: path.join(root, "vectors"),
+    },
+    metadataStore,
+    vectorStore,
+    embeddingProvider: provider,
+  });
+  await engine.initialize();
+  try {
+    const originalAdd = vectorStore.add.bind(vectorStore);
+    vectorStore.add = async () => {
+      throw new Error("first vector failure");
+    };
+    await assert.rejects(() =>
+      engine.upsertText("failed revision", { library: "facts", path: "dirty.md" }),
+    );
+    vectorStore.add = originalAdd;
+    const before = rebuildCalls;
+    await engine.upsertText("recovered revision", {
+      library: "facts",
+      path: "dirty.md",
+    });
+    assert.ok(rebuildCalls > before);
+  } finally {
+    await engine.close().catch(() => undefined);
+    metadataStore.close();
+  }
+});
+
+test("TDBEngine rejects a vector provider without complete reconciliation capability", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-tdb-capability-"));
+  const metadataStore = new TDBStore({ dbPath: ":memory:" });
+  const vectorStore = {
+    dimension: DIMENSION,
+    async add() {},
+    async addBatch() {},
+    async search() {
+      return [];
+    },
+    async remove() {},
+  };
+  const engine = new TDBEngine({
+    config: {
+      tdbEnabled: true,
+      tdbDimension: DIMENSION,
+      tdbRootPath: root,
+      tdbStorePath: path.join(root, "vectors"),
+    },
+    metadataStore,
+    vectorStore,
+    embeddingProvider: embeddingProvider(async (texts = []) =>
+      texts.map(() => new Float32Array([1, 0, 0, 0])),
+    ),
+  });
+
+  await assert.rejects(
+    () => engine.initialize(),
+    (error: unknown) => error instanceof MemoriaError && error.code === "configuration",
+  );
+  assert.equal((await metadataStore.getTdbGenerationState()).vectorDirty, true);
+  await engine.close();
+  metadataStore.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("TDBStore migrates legacy chunks with vectors and generation defaults", async () => {
   const dbPath = tempDb();
   const legacy = new TDBStore({ dbPath });

@@ -5,9 +5,7 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 
 import Stage from "../../core/stage.js";
-import { MemoriaError } from "../../errors.js";
 import { serializeDocumentJson } from "../../utils/logical-document.js";
-import { parseMdxDocument } from "../../utils/mdx-document.js";
 
 /**
  * Reads a file from disk (or accepts caller-supplied content),
@@ -42,6 +40,8 @@ class FileReaderStage extends Stage {
       | "mtime"
       | "size"
       | "needsEmbedding"
+      | "needsChunkEmbedding"
+      | "needsTagUpdate"
       | "needsMetadataWrite"
       | "unstable"
     > & {
@@ -53,6 +53,8 @@ class FileReaderStage extends Stage {
       mtime: number;
       size: number;
       needsEmbedding: boolean;
+      needsChunkEmbedding: boolean;
+      needsTagUpdate: boolean;
       needsMetadataWrite: boolean;
       unstable: boolean;
     }
@@ -114,23 +116,7 @@ class FileReaderStage extends Stage {
       throw new TypeError("FileReaderStage could not obtain text content");
     }
 
-    let documentMetadata = input.documentMetadata;
-    try {
-      const parsed = parseMdxDocument(content);
-      content = parsed.body;
-      if (parsed.hasFrontmatter) {
-        documentMetadata = {
-          ...(input.documentMetadata || {}),
-          ...parsed.frontmatter,
-        };
-      }
-    } catch (error) {
-      throw new MemoriaError(
-        "ingestion",
-        `Failed to parse MDX front matter in "${filePath}".`,
-        { cause: error, details: { path: filePath } },
-      );
-    }
+    const documentMetadata = input.documentMetadata;
 
     const checksum = crypto.createHash("md5").update(content).digest("hex");
 
@@ -167,6 +153,8 @@ class FileReaderStage extends Stage {
       size,
       documentMetadata,
       needsEmbedding,
+      needsChunkEmbedding: needsEmbedding,
+      needsTagUpdate: false,
       needsMetadataWrite,
       unstable,
     };

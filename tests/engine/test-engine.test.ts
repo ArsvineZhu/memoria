@@ -391,6 +391,41 @@ test("initialize() is idempotent and exposes ragParams", async () => {
   engine.close();
 });
 
+test("initialize() rebuilds the default search pipeline after applying rag params", async () => {
+  const { engine } = makeEngine({
+    ragParams: {
+      KnowledgeBaseManager: { riverMemo: { enabled: true } },
+    },
+  });
+
+  assert.ok(!engine.searchPipeline.stages.some((stage) => stage.name === "riverMemo"));
+  await engine.initialize();
+  assert.ok(engine.searchPipeline.stages.some((stage) => stage.name === "riverMemo"));
+  await engine.close();
+});
+
+test("initialize() preserves an explicitly supplied search stage list", async () => {
+  const explicitStage = {
+    name: "explicit-search-stage",
+    async process(input: import("../../src/types.js").PipelineData) {
+      return input;
+    },
+  };
+  const { engine } = makeEngine({
+    ragParams: {
+      KnowledgeBaseManager: { riverMemo: { enabled: true } },
+    },
+    searchOptions: { stages: [explicitStage] },
+  });
+
+  await engine.initialize();
+  assert.deepEqual(
+    engine.searchPipeline.stages.map((stage) => stage.name),
+    ["explicit-search-stage"],
+  );
+  await engine.close();
+});
+
 // ── End-to-end: ingest → stats → search → delete ─────────────────────
 
 test("flushBatch ingests a temp file and getStats() reflects counts", async () => {

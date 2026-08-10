@@ -36,16 +36,16 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 `IngestPipeline` 串行执行：
 
-| 顺序 | Stage 类名                 | 文件                              | 行为要点                                                                                                                                                                    |
-| ---- | -------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | `FileReaderStage`          | `stages/ingestion/file-reader.ts` | 读盘（或取预置 content/mtime/size）；md5 校验和；相对路径 `/` 归一化；目录首段为 diaryName；md5+mtime+size 全匹配 → `needsEmbedding:false`；读前后快照守卫（unstable 标记） |
-| 2    | `TagExtractorStage`        | `tag-extractor.ts`                | 提取文末连续 `Tag:` 行；黑名单 / 超集黑名单 / 长度与日期过滤 / maxTagsPerFile                                                                                               |
-| 3    | `ChunkerStage`             | `text-chunker.ts`                 | 按句子切块（`split(/(?<=[。？！.!?\n])/)`），tiktoken 计数，超长句强制切分，相邻块按 overlapTokens 重叠                                                                     |
-| 4    | `ChunkEmbedderStage`       | `chunk-embedder.ts`               | 块批量嵌入；失败（null）项剔除，块序保持                                                                                                                                    |
-| 5    | `TagEmbedderStage`         | `tag-embedder.ts`                 | 标签批量嵌入                                                                                                                                                                |
-| 6    | `MetadataWriterStage`      | `metadata-writer.ts`              | SQLite 写入：file upsert → chunk 行（BLOB 向量）→ tag upsert → file_tags 重建；旧块 id 输出为 `removedChunkIds`；可选 kv_store 检查点                                       |
-| 7    | `VectorIndexerStage`       | `vector-indexer.ts`               | 向量写入：日记索引（名 = diaryName）+ `global_tags` 标签索引；先删遗留后 upsert（幂等重嵌）；触发延迟落盘                                                                   |
-| 8    | `CooccurrenceBuilderStage` | `co-occurrence-builder.ts`        | 默认 no-op；`cooccurrenceRebuild` 开启时重建共现矩阵                                                                                                                        |
+| 顺序 | Stage 类名                 | 文件                              | 行为要点                                                                                                                                                                                               |
+| ---- | -------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1    | `FileReaderStage`          | `stages/ingestion/file-reader.ts` | 读取 adapter 提供的稳定快照（或读盘）；逻辑内容 md5；相对路径 `/` 归一化；目录首段为 diaryName；正文未变时 `needsChunkEmbedding:false`（`needsEmbedding` 为兼容别名）；读前后快照守卫（unstable 标记） |
+| 2    | `TagExtractorStage`        | `tag-extractor.ts`                | 合并 `.mdx` front matter tags 与文末连续 `Tag:` 行；黑名单 / 超集黑名单 / 长度与日期过滤 / maxTagsPerFile；与已有文件标签比较并识别 tag-only 变化                                                      |
+| 3    | `ChunkerStage`             | `text-chunker.ts`                 | 按句子切块（`split(/(?<=[。？！.!?\n])/)`），tiktoken 计数，超长句强制切分，相邻块按 overlapTokens 重叠                                                                                                |
+| 4    | `ChunkEmbedderStage`       | `chunk-embedder.ts`               | 块批量嵌入；失败（null）项剔除，块序保持                                                                                                                                                               |
+| 5    | `TagEmbedderStage`         | `tag-embedder.ts`                 | 标签批量嵌入                                                                                                                                                                                           |
+| 6    | `MetadataWriterStage`      | `metadata-writer.ts`              | SQLite 写入：正常路径原子替换 file/chunks/tags/file_tags；仅标签变化时要求 `replaceDocumentTags` 原子更新并保留 chunks；旧块 id 输出为 `removedChunkIds`；可选 kv_store 检查点                         |
+| 7    | `VectorIndexerStage`       | `vector-indexer.ts`               | 向量写入：日记索引（名 = diaryName）+ `global_tags` 标签索引；先删遗留后 upsert（幂等重嵌）；触发延迟落盘                                                                                              |
+| 8    | `CooccurrenceBuilderStage` | `co-occurrence-builder.ts`        | 默认 no-op；`cooccurrenceRebuild` 开启时重建共现矩阵                                                                                                                                                   |
 
 分块参数：`chunkMaxTokens`（默认 600，别名 `maxTokens`）、`chunkOverlapTokens`
 （默认 96，别名 `overlapTokens`）；超长单句由 `forceSplitLongText` 硬切。
@@ -63,12 +63,12 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 ### 2.3 Candidate（混合召回：向量 + 稀疏双路）
 
-| Stage 类名             | 文件                                   | 职责                                                                                                                                                                                         |
-| ---------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `QueryEmbedderStage`   | `stages/retrieval/query-embedder.ts`   | 查询嵌入 + 可选变体（`queryExpansion>1` 且注入 `rephraserFn`）+ epsilon 掩码；输出 `queries: [{text, vector}]`                                                                               |
-| `VectorSearcherStage`  | `stages/retrieval/vector-searcher.ts`  | 索引解析优先级：`indexNames > diaryNames > diaryName > searchAllIndices > 'Root'`；逐查询逐索引 KNN（每索引 `perIndexK`），按 chunkId 保留最高分；可选标签索引召回扩展（`tagSearchEnabled`） |
-| `BM25SearcherStage`    | `stages/retrieval/bm25-searcher.ts`    | 全库 BM25（k1=1.5，b=0.75）；默认分词 = 英文词 + CJK 二元组/单字；IDF 标准公式；仅保留正分项，按 `bm25PoolK` 截断                                                                            |
-| `CandidateMergerStage` | `stages/retrieval/candidate-merger.ts` | 双路归一化 + 加权和融合；`minScore` 过滤；可选时效衰减；按 `topK` 截断                                                                                                                       |
+| Stage 类名             | 文件                                   | 职责                                                                                                                                                            |
+| ---------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `QueryEmbedderStage`   | `stages/retrieval/query-embedder.ts`   | 查询嵌入 + 可选变体（`queryExpansion>1` 且注入 `rephraserFn`）+ epsilon 掩码；输出 `queries: [{text, vector}]`                                                  |
+| `VectorSearcherStage`  | `stages/retrieval/vector-searcher.ts`  | 使用统一 scope resolver；调用参数 aliases > 配置默认值 > authority discovery > `Root` fallback；空 scope 返回空结果；逐查询逐索引 KNN并过滤标签扩展             |
+| `BM25SearcherStage`    | `stages/retrieval/bm25-searcher.ts`    | 按 resolver 给出的 scope 执行 BM25（k1=1.5，b=0.75）；空 scope 返回空结果；默认分词 = 英文词 + CJK 二元组/单字；IDF 标准公式；仅保留正分项，按 `bm25PoolK` 截断 |
+| `CandidateMergerStage` | `stages/retrieval/candidate-merger.ts` | 双路归一化 + 加权和融合；`minScore` 过滤；可选时效衰减；按 `topK` 截断                                                                                          |
 
 验证视角：`tests/stages/test-retrieval-stages.test.ts`。
 
@@ -100,11 +100,11 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 ### 2.6 Storage（存储：SQLite 元数据 + Rust 向量）
 
-| 组件                                 | 文件                                 | 要点                                                                                                                                                                                                         |
-| ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SqliteMetadataStore`                | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async                                                                                |
-| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex` 为兼容配置，当前保存调度不以它为开关                        |
-| `VectorStore` / `MetadataStore` 接口 | `interfaces/`                        | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；`upsertFile/getFileByPath/insertChunks/upsertTags/setFileTags/getFileIdsByTagId/buildCooccurrenceMatrix/checkpoint/healthCheck` 等 |
+| 组件                                 | 文件                                 | 要点                                                                                                                                                                                                               |
+| ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SqliteMetadataStore`                | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async                                                                                      |
+| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；懒加载磁盘恢复；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex=false` 忽略旧 `global_tags` 文件并从 authority 重建                |
+| `VectorStore` / `MetadataStore` 接口 | `interfaces/`                        | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；恢复要求 `rebuildDerivedState(plan)`，或同时提供 `resetDerivedState + replaceIndex`；SQLite 标签-only 更新使用可选 `replaceDocumentTags` |
 
 验证视角：`tests/providers/test-sqlite-metadata-store.test.ts`、
 `test-vexus-vector-store.test.ts`。
@@ -113,8 +113,8 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 - **向量路**：`VectorSearcherStage` → Rust VexusIndex **精确余弦** KNN。
   索引名 = 日记（相对路径首段），标签索引 `global_tags`。
-- **词路**：`BM25SearcherStage` 遍历全块语料（`metadataStore.getAllChunks()`），
-  BM25 标准公式 + 中文二元组分词。
+- **词路**：`BM25SearcherStage` 在统一 scope 内遍历块语料
+  （`metadataStore.getAllChunks()`），BM25 标准公式 + 中文二元组分词。
 - **融合**（`candidateMerger`）：各源分数按源最大值归一化到 [0,1] → 加权和
   `vectorWeight × V + bm25Weight × B`（引擎默认 **0.7 / 0.3**；别名
   `hybridAlpha`/`hybridBeta` 同值；stage 兜底 0.6/0.4）→ 按 chunkId 去重取高
@@ -180,8 +180,9 @@ tagMemoActivation, expansionSignal}`（逐层残差正交投影 + 能量解释�
   `prepareTextForEmbedding` 剥离装饰 emoji、`<|x|>` 管道符，规整空白；
   空文本 → `[EMPTY_CONTENT]`。
 - **标签向量**：`TagEmbedderStage` 嵌入后由 `VectorIndexerStage` 写入
-  `global_tags` 共享索引（容量 `tagIndexCapacity`=50000）。当前实现会按
-  `tagIndexSaveDelay` 调度保存；`persistTagIndex` 仍作为兼容配置保留，但不是保存开关。
+  `global_tags` 共享索引（容量 `tagIndexCapacity`=50000）。`persistTagIndex=true`
+  才会按 `tagIndexSaveDelay` 持久化并恢复；`false` 不保存该索引，恢复时从 authority
+  重建内存索引但保留旧文件。
 - **标签召回**：`tagSearchEnabled` 开启时，`VectorSearcherStage` 在标签索引
   取前 `tagK`（默认 10）个标签，经 `getFileIdsByTagId` → `getChunksByFileId`
   展开为候选块（打分继承标签命中分）。

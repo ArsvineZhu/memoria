@@ -58,6 +58,9 @@ function countingVectorStore(
       store.replaceCalls += 1;
       store.indices.set(indexName, new Set(entries.map((entry) => entry.id)));
     },
+    resetDerivedState() {
+      store.indices.clear();
+    },
     async getIndexStats(indexName) {
       return {
         size: (store.indices.get(indexName) as Set<number> | undefined)?.size || 0,
@@ -132,6 +135,9 @@ function failingVectorStore(): VectorStoreContract {
       return undefined;
     },
     async replaceIndex(): Promise<void> {
+      return undefined;
+    },
+    async resetDerivedState(): Promise<void> {
       return undefined;
     },
     flushPendingSaves(): void {

@@ -6,12 +6,14 @@ import * as chokidar from "chokidar";
 import type { FSWatcher } from "chokidar";
 
 import { MemoriaError } from "../errors.js";
+import { parseMdxDocument } from "../utils/mdx-document.js";
 import type {
   DeleteEnvelope,
   FileInput,
   IngestEnvelope,
   MemoryDocumentDeleteResult,
   MemoryDocumentIngestResult,
+  UnknownRecord,
 } from "../types.js";
 
 export interface FilesystemIngestionTarget {
@@ -20,7 +22,7 @@ export interface FilesystemIngestionTarget {
     content: string;
     revision?: string;
     source?: { type: "filesystem"; path: string };
-    metadata?: { path: string; mtime: number; size: number };
+    metadata?: UnknownRecord & { path: string; mtime: number; size: number };
     updatedAt?: number;
   }): Promise<MemoryDocumentIngestResult>;
   remove?(documentId: string): Promise<MemoryDocumentDeleteResult>;
@@ -95,16 +97,18 @@ class FilesystemIngestionAdapter {
     const snapshot = await this.readSnapshot(absolutePath);
     if (this.target.ingest && snapshot.content !== undefined) {
       const relativePath = snapshot.relPath ?? this.relativePath(absolutePath);
+      const metadata = {
+        ...(snapshot.documentMetadata ?? {}),
+        path: relativePath,
+        mtime: snapshot.mtime ?? 0,
+        size: snapshot.size ?? 0,
+      };
       const logicalResult = await this.target.ingest({
         id: `filesystem:${relativePath}`,
         content: snapshot.content,
-        revision: createHash("sha256").update(snapshot.content).digest("hex"),
+        revision: snapshot.revision,
         source: { type: "filesystem", path: relativePath },
-        metadata: {
-          path: relativePath,
-          mtime: snapshot.mtime ?? 0,
-          size: snapshot.size ?? 0,
-        },
+        metadata,
         updatedAt: snapshot.mtime,
       });
       return [logicalResult];
@@ -204,7 +208,7 @@ class FilesystemIngestionAdapter {
         `Filesystem path is not a regular file: ${filePath}`,
       );
     }
-    const content = await readFile(filePath, "utf8");
+    const rawContent = await readFile(filePath, "utf8");
     const after = await stat(filePath);
     if (
       before.size !== after.size ||
@@ -216,12 +220,30 @@ class FilesystemIngestionAdapter {
         { retryable: true },
       );
     }
+    let content = rawContent;
+    let documentMetadata: UnknownRecord | undefined;
+    if (extname(filePath).toLowerCase() === ".mdx") {
+      try {
+        const parsed = parseMdxDocument(rawContent);
+        content = parsed.body;
+        documentMetadata = parsed.frontmatter;
+      } catch (error) {
+        throw new MemoriaError(
+          "ingestion",
+          `Failed to parse MDX front matter: ${this.relativePath(filePath)}`,
+          { cause: error },
+        );
+      }
+    }
+
     return {
       path: filePath,
       relPath: this.relativePath(filePath),
       content,
       mtime: Math.trunc(after.mtimeMs),
       size: after.size,
+      revision: createHash("sha256").update(rawContent).digest("hex"),
+      documentMetadata,
     };
   }
 

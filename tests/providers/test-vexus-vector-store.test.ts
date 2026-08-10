@@ -223,6 +223,89 @@ test("saveIndex and loadIndex roundtrip", async () => {
   }
 });
 
+test("persistTagIndex controls global tag persistence and preserves old files when disabled", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-tag-persist-off-"));
+  try {
+    const source = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+      persistTagIndex: true,
+    });
+    await source.add("global_tags", 7, vec(1, 0, 0, 0));
+    await source.saveIndex("global_tags");
+    const tagPath = source._getIndexPath("global_tags");
+    assert.equal(fs.existsSync(tagPath), true);
+
+    const disabled = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+      persistTagIndex: false,
+    });
+    assert.equal(
+      await (
+        disabled as unknown as {
+          restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
+        }
+      ).restorePersistedIndexes(["global_tags"]),
+      false,
+    );
+    assert.equal(disabled.indices.has("global_tags"), false);
+    assert.equal(
+      fs.existsSync(tagPath),
+      true,
+      "old tag files are ignored, not deleted",
+    );
+
+    const before = fs.readdirSync(tmpDir).sort();
+    await disabled.add("global_tags", 8, vec(0, 1, 0, 0));
+    disabled.scheduleIndexSave("global_tags");
+    disabled.flushPendingSaves();
+    assert.deepEqual(fs.readdirSync(tmpDir).sort(), before);
+  } finally {
+    try {
+      for (const file of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, file));
+      fs.rmdirSync(tmpDir);
+    } catch (_) {}
+  }
+});
+
+test("persistTagIndex true restores the global tag index", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-tag-persist-on-"));
+  try {
+    const source = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+      persistTagIndex: true,
+    });
+    await source.add("global_tags", 9, vec(1, 0, 0, 0));
+    await source.saveIndex("global_tags");
+
+    const reopened = new VexusVectorStore({
+      dimension: DIM,
+      storePath: tmpDir,
+      tagIndexCapacity: CAPACITY,
+      persistTagIndex: true,
+    });
+    assert.equal(
+      await (
+        reopened as unknown as {
+          restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
+        }
+      ).restorePersistedIndexes(["global_tags"]),
+      true,
+    );
+    assert.equal((await reopened.getIndexStats("global_tags")).size, 1);
+  } finally {
+    try {
+      for (const file of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, file));
+      fs.rmdirSync(tmpDir);
+    } catch (_) {}
+  }
+});
+
 test("restorePersistedIndexes rejects missing, corrupt, and wrong-dimension indexes", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-restore-"));
   const restore = (store: VexusVectorStore, names: readonly string[]) =>

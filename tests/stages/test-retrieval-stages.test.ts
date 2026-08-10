@@ -7,12 +7,17 @@ import PipelineContext from "../../src/core/context.js";
 import Pipeline from "../../src/core/pipeline.js";
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
 import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
-import type { EmbeddingProviderContract, QueryVector } from "../../src/types.js";
+import type {
+  EmbeddingProviderContract,
+  MetadataStoreContract,
+  QueryVector,
+} from "../../src/types.js";
 
 import QueryEmbedderStage from "../../src/stages/retrieval/query-embedder.js";
 import VectorSearcherStage from "../../src/stages/retrieval/vector-searcher.js";
 import BM25SearcherStage from "../../src/stages/retrieval/bm25-searcher.js";
 import CandidateMergerStage from "../../src/stages/retrieval/candidate-merger.js";
+import SearchScopeResolverStage from "../../src/stages/retrieval/search-scope-resolver.js";
 
 const dim = 4;
 
@@ -50,6 +55,51 @@ function makeVectorStore() {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+test("SearchScopeResolverStage gives call aliases precedence and preserves explicit empty scope", async () => {
+  const stage = new SearchScopeResolverStage();
+  const metadataStore = {
+    getExpectedVectorIndexNames: async () => ["authority"],
+  } as unknown as MetadataStoreContract;
+  const ctx = new PipelineContext({
+    config: { indexNames: ["config"] },
+    metadataStore,
+  });
+
+  const callScope = await stage.process({ query: "q", diaryNames: ["call"] }, ctx);
+  assert.deepEqual(callScope.resolvedIndexNames, ["call"]);
+  assert.equal(callScope.scopeSource, "call");
+  assert.equal(callScope.scopeWasExplicit, true);
+
+  const emptyScope = await stage.process({ query: "q", libraries: [] }, ctx);
+  assert.deepEqual(emptyScope.resolvedIndexNames, []);
+  assert.equal(emptyScope.scopeSource, "call");
+  assert.equal(emptyScope.scopeWasExplicit, true);
+});
+
+test("SearchScopeResolverStage records authority and fallback scope sources", async () => {
+  const stage = new SearchScopeResolverStage();
+  const authority = await stage.process(
+    { query: "q" },
+    new PipelineContext({
+      config: {},
+      metadataStore: {
+        getExpectedVectorIndexNames: async () => ["authority", "global_tags"],
+      } as unknown as MetadataStoreContract,
+    }),
+  );
+  assert.deepEqual(authority.resolvedIndexNames, ["authority"]);
+  assert.equal(authority.scopeSource, "authority");
+  assert.equal(authority.scopeWasExplicit, false);
+
+  const fallback = await stage.process(
+    { query: "q" },
+    new PipelineContext({ config: {} }),
+  );
+  assert.deepEqual(fallback.resolvedIndexNames, ["Root"]);
+  assert.equal(fallback.scopeSource, "fallback");
+  assert.equal(fallback.scopeWasExplicit, false);
+});
 
 // ── Metadata store retrieval helpers (used by the stages) ────────────────
 
@@ -376,6 +426,40 @@ test("VectorSearcherStage expands tag hits to chunks of tagged files", async () 
     assert.ok(!ids.includes(cid), "untagged chunks excluded");
 });
 
+test("VectorSearcherStage does not let tag search escape an explicit empty scope", async () => {
+  const stage = new VectorSearcherStage();
+  const vectorStore = makeVectorStore();
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const file = (await metadataStore.upsertFile({
+    path: "tagged.md",
+    diaryName: "diary1",
+    checksum: "tagged",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const [chunkId] = await metadataStore.insertChunks(file, [
+    { chunkIndex: 0, content: "tagged" },
+  ]);
+  const [tagId] = await metadataStore.upsertTags([{ name: "tagged", vector: null }]);
+  await metadataStore.setFileTags(file, [tagId]);
+  await vectorStore.add("global_tags", tagId, vec(1, 0, 0, 0));
+
+  const out = await stage.process(
+    {
+      queries: [{ text: "q", vector: vec(1, 0, 0, 0) }],
+      resolvedIndexNames: [],
+      topK: 10,
+    },
+    new PipelineContext({
+      config: { tagSearchEnabled: true },
+      vectorStore,
+      metadataStore,
+    }),
+  );
+  assert.deepEqual(out.vectorResults, []);
+  assert.ok(chunkId > 0);
+});
+
 test("VectorSearcherStage skips queries with null vectors", async () => {
   const stage = new VectorSearcherStage();
   const store = makeVectorStore();
@@ -520,6 +604,18 @@ test("BM25SearcherStage reports missing metadataStore and empty corpus", async (
   const emptyCtx = new PipelineContext({ config: {}, metadataStore: emptyStore });
   const empty = await stage.process({ query: "x" }, emptyCtx);
   assert.deepStrictEqual(empty.bm25Results, []);
+});
+
+test("BM25SearcherStage treats an explicit empty resolved scope as empty", async (t) => {
+  const stage = new BM25SearcherStage();
+  const { store } = await seedBm25Corpus();
+  t.after(() => store.close());
+
+  const out = await stage.process(
+    { query: "alpha", resolvedIndexNames: [] },
+    new PipelineContext({ config: {}, metadataStore: store }),
+  );
+  assert.deepEqual(out.bm25Results, []);
 });
 
 test("retrieval stages honor one resolved scope across vector and BM25", async () => {

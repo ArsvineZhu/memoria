@@ -670,7 +670,7 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
   assert.strictEqual(row.diaryName, "diary1");
   assert.strictEqual(row.score, 0.77);
   assert.strictEqual(row.source, "associate");
-  assert.ok(!("associationChannel" in row));
+  assert.strictEqual(row.associationChannel, "tag");
   assert.strictEqual(row.similarity, 0.77);
   assert.ok(Number.isFinite(row.updatedAt));
   assert.deepStrictEqual(row.tags, ["重要"]);

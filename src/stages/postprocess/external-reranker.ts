@@ -61,7 +61,12 @@ class ExternalRerankerStage extends Stage {
     try {
       reranked = await reranker(query, candidates);
     } catch (error) {
-      return { ...info, mergedCandidates: candidates, rerankSkipped: true };
+      return {
+        ...info,
+        mergedCandidates: candidates,
+        rerankSkipped: true,
+        rerankError: error instanceof Error ? error.message : String(error),
+      };
     }
 
     const rerankedList = Array.isArray(reranked) ? reranked : [];

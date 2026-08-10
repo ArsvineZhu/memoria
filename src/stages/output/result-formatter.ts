@@ -28,6 +28,8 @@ type OutputCandidate = ChunkCandidate & {
   memoScore?: number;
   tagMatchScore?: number;
   rerankScore?: number;
+  associationChannel?: "tag" | "vector";
+  associationOf?: number;
 };
 
 function parseRecord(value: string | null | undefined): UnknownRecord | undefined {
@@ -196,6 +198,10 @@ class ResultFormatterStage extends Stage {
       revision: file?.revision ?? undefined,
       sourceMetadata: parseRecord(file?.source_json),
       metadata: parseRecord(file?.metadata_json),
+      associationChannel: outputCandidate?.associationChannel,
+      associationOf: Number.isFinite(Number(outputCandidate?.associationOf))
+        ? Number(outputCandidate.associationOf)
+        : undefined,
       memoScore: Number.isFinite(Number(outputCandidate?.memoScore))
         ? Number(outputCandidate.memoScore)
         : Number.isFinite(Number(outputCandidate?.tagMatchScore))

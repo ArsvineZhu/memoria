@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "description": "memoria real-embedding recall demo (DashScope)",
-  "main": "demo-recall.js",
+  "main": "../../dist-test/examples/real-embed/demo-recall.js",
   "scripts": {
-    "start": "node demo-recall.js"
+    "start": "node ../../dist-test/examples/real-embed/demo-recall.js"
   }
 }

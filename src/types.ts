@@ -309,6 +309,9 @@ export interface SearchResult extends VectorResult {
   revision?: string;
   sourceMetadata?: MemoryDocumentSource;
   metadata?: UnknownRecord;
+  associationChannel?: "tag" | "vector";
+  associationOf?: number;
+  rerankScore?: number;
 }
 
 export interface ChunkCandidate {
@@ -348,6 +351,15 @@ export interface SearchEnvelope {
   associatorSkipped?: boolean;
   pyramid?: PyramidData;
   epa?: EpaEnvelope;
+  tagExpansion?: TagExpansionData;
+  vectorReshape?: VectorReshapeData;
+  riverMemo?: RiverMemoData;
+  dedupeStats?: DedupeStats;
+  truncationStats?: TruncationStats;
+  expansionStats?: ExpansionStats;
+  reranked?: boolean;
+  rerankSkipped?: boolean;
+  rerankError?: string;
   failed?: boolean;
   [key: string]: unknown;
 }

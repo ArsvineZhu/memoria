@@ -2,19 +2,20 @@
 
 ## 源码布局
 
-| 目录                              | 职责                                          |
-| --------------------------------- | --------------------------------------------- |
-| `src/index.ts`                    | ESM 公开入口和导出类型                        |
-| `src/engine.ts`                   | `MemoryEngine` 生命周期、逻辑摄入、搜索和删除 |
-| `src/pipelines/`、`src/stages/`   | 摄入、检索、记忆、后处理、输出和 TDB 阶段     |
-| `src/providers/`                  | SQLite 元数据、Rust 向量存储和嵌入 Provider   |
-| `src/interfaces/`、`src/types.ts` | Provider 契约和运行时/公开数据结构            |
-| `src/compat/`                     | `KnowledgeBaseAdapter` 兼容层                 |
-| `src/config/`                     | 默认配置、路径派生和 RAG 参数加载             |
-| `src/utils/`                      | 文本、MDX、向量和数值工具                     |
-| `tests/`                          | 单元、集成、消费者、类型和恢复测试            |
-| `examples/`                       | 离线演示和真实 Provider 示例                  |
-| `rust-vexus-lite/`                | 原生向量索引包，另有专属 `AGENTS.md`          |
+| 目录                              | 职责                                                                                               |
+| --------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `src/`                            | TypeScript 源码边界；入口见 [src/README.md](../src/README.md) 和 [src/AGENTS.md](../src/AGENTS.md) |
+| `src/index.ts`                    | ESM 公开入口和导出类型                                                                             |
+| `src/engine.ts`                   | `MemoryEngine` 生命周期、逻辑摄入、搜索和删除                                                      |
+| `src/pipelines/`、`src/stages/`   | 摄入、检索、记忆、后处理、输出和 TDB 阶段                                                          |
+| `src/providers/`                  | SQLite 元数据、Rust 向量存储和嵌入 Provider                                                        |
+| `src/interfaces/`、`src/types.ts` | Provider 契约和运行时/公开数据结构                                                                 |
+| `src/compat/`                     | `KnowledgeBaseAdapter` 兼容层                                                                      |
+| `src/config/`                     | 默认配置、路径派生和 RAG 参数加载                                                                  |
+| `src/utils/`                      | 文本、MDX、向量和数值工具                                                                          |
+| `tests/`                          | 单元、集成、消费者、类型和恢复测试                                                                 |
+| `examples/`                       | 离线演示和真实 Provider 示例                                                                       |
+| `rust-vexus-lite/`                | 原生向量索引包，另有专属 `AGENTS.md`                                                               |
 
 ## 扩展点
 
@@ -29,6 +30,9 @@
 
 修改契约前先读 [API.md](API.md)、[ARCHITECTURE.md](ARCHITECTURE.md) 和
 [EMBEDDING.md](EMBEDDING.md)。
+
+进入 `src/` 修改前，再读 [源码范围说明](../src/README.md) 和
+[源码 Agent 规则](../src/AGENTS.md)。
 
 ## 数据和生成内容
 
@@ -51,8 +55,8 @@ SQLite 和向量索引是生成内容并被忽略；`dist/`、`dist-test/` 和�
 corepack pnpm verify:docs
 ```
 
-该检查只验证维护范围内 Markdown 的相对路径，不检查 `eval/`、编译产物、依赖
-或测试夹具。
+该检查验证维护范围内 Markdown 的相对路径，并核对 `src/index.ts` 与 API 文档的
+运行时导出清单；不检查 `eval/`、编译产物、依赖或测试夹具。
 
 ## 原生开发
 

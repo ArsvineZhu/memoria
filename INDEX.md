@@ -37,14 +37,15 @@ dist/, dist-test/     编译产物，不是源码，不要手工编辑
 
 可点击入口：
 
-| 范围     | 入口                                                                                                           |
-| -------- | -------------------------------------------------------------------------------------------------------------- |
-| 文档体系 | [docs/README.md](docs/README.md)、[docs/INDEX.md](docs/INDEX.md)                                               |
-| 数据边界 | [data/README.md](data/README.md)                                                                               |
-| 示例     | [examples/README.md](examples/README.md)                                                                       |
-| 测试     | [tests/README.md](tests/README.md)                                                                             |
-| 仓库脚本 | [scripts/README.md](scripts/README.md)                                                                         |
-| 原生包   | [rust-vexus-lite/README.md](rust-vexus-lite/README.md)、[rust-vexus-lite/AGENTS.md](rust-vexus-lite/AGENTS.md) |
+| 范围            | 入口                                                                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| TypeScript 源码 | [src/README.md](src/README.md)、[src/AGENTS.md](src/AGENTS.md)                                                 |
+| 文档体系        | [docs/README.md](docs/README.md)、[docs/INDEX.md](docs/INDEX.md)                                               |
+| 数据边界        | [data/README.md](data/README.md)                                                                               |
+| 示例            | [examples/README.md](examples/README.md)                                                                       |
+| 测试            | [tests/README.md](tests/README.md)                                                                             |
+| 仓库脚本        | [scripts/README.md](scripts/README.md)                                                                         |
+| 原生包          | [rust-vexus-lite/README.md](rust-vexus-lite/README.md)、[rust-vexus-lite/AGENTS.md](rust-vexus-lite/AGENTS.md) |
 
 行为以源码和测试为准；软件包入口、命令、依赖和 Node.js 版本以
 `package.json` 为准；CI 以 `.github/workflows/ci.yml` 为准；原生构建以

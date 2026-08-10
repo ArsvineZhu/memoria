@@ -29,6 +29,10 @@ const maintainedDocumentRoots = [
   "tests/AGENTS.md",
   "rust-vexus-lite",
 ];
+const runtimeExportSourcePath = resolve(repositoryRoot, "src/index.ts");
+const runtimeExportDocumentationPath = resolve(repositoryRoot, "docs/API.md");
+const runtimeExportStartMarker = "<!-- runtime-exports:start -->";
+const runtimeExportEndMarker = "<!-- runtime-exports:end -->";
 
 function isExcludedPath(filePath) {
   const relativePath = relative(repositoryRoot, filePath);
@@ -165,17 +169,111 @@ function findBrokenLinks(sourcePath) {
   return errors;
 }
 
+function parseRuntimeExportLines(lines, sourceLabel) {
+  const names = [];
+
+  for (const line of lines) {
+    const normalized = line
+      .replace(/\/\/.*$/, "")
+      .trim()
+      .replace(/,$/, "");
+    if (!normalized) continue;
+
+    const match = normalized.match(
+      /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/,
+    );
+    if (!match) {
+      throw new Error(`Invalid runtime export line in ${sourceLabel}: ${line}`);
+    }
+    names.push(match[2] || match[1]);
+  }
+
+  return names;
+}
+
+function extractRuntimeExportsFromSource(source) {
+  const match = source.match(/\bexport\s*\{([\s\S]*?)\n\};/);
+  if (!match) {
+    throw new Error(`Runtime export block not found in ${runtimeExportSourcePath}`);
+  }
+  return parseRuntimeExportLines(match[1].split(/\r?\n/), runtimeExportSourcePath);
+}
+
+function extractMarkedRuntimeExports(document) {
+  const start = document.indexOf(runtimeExportStartMarker);
+  const end = document.indexOf(runtimeExportEndMarker);
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error(
+      `Runtime export documentation markers not found in ${runtimeExportDocumentationPath}`,
+    );
+  }
+
+  const block = document.slice(start + runtimeExportStartMarker.length, end);
+  const lines = block
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("```"));
+  return parseRuntimeExportLines(lines, runtimeExportDocumentationPath);
+}
+
+function findRuntimeExportDrift() {
+  try {
+    const documentedSource = readFileSync(runtimeExportDocumentationPath, "utf8");
+    const sourceExports = extractRuntimeExportsFromSource(
+      readFileSync(runtimeExportSourcePath, "utf8"),
+    );
+    const documentedExports = extractMarkedRuntimeExports(documentedSource);
+
+    const firstDifference = sourceExports.findIndex(
+      (name, index) => documentedExports[index] !== name,
+    );
+    const sameLength = sourceExports.length === documentedExports.length;
+    if (sameLength && firstDifference === -1) return [];
+
+    const differenceIndex =
+      firstDifference === -1
+        ? Math.min(sourceExports.length, documentedExports.length)
+        : firstDifference;
+    return [
+      {
+        file: relative(repositoryRoot, runtimeExportDocumentationPath),
+        line: documentedSource
+          .slice(0, documentedSource.indexOf(runtimeExportStartMarker))
+          .split(/\r?\n/).length,
+        target: "runtime export list",
+        reason: "runtime-export-drift",
+        detail:
+          `source and documentation differ at position ${differenceIndex + 1}: ` +
+          `source=${sourceExports[differenceIndex] ?? "<end>"}, ` +
+          `docs=${documentedExports[differenceIndex] ?? "<end>"}`,
+      },
+    ];
+  } catch (error) {
+    return [
+      {
+        file: relative(repositoryRoot, runtimeExportDocumentationPath),
+        line: 1,
+        target: "runtime export list",
+        reason: "runtime-export-drift",
+        detail: error instanceof Error ? error.message : String(error),
+      },
+    ];
+  }
+}
+
 function main() {
   const documents = collectDocuments().sort();
-  const errors = documents.flatMap(findBrokenLinks);
+  const errors = [...documents.flatMap(findBrokenLinks), ...findRuntimeExportDrift()];
 
   if (errors.length > 0) {
-    console.error(`Documentation link check failed (${errors.length} issue(s)):`);
+    console.error(`Documentation verification failed (${errors.length} issue(s)):`);
     for (const error of errors) {
       const detail =
-        error.reason === "excluded"
-          ? "target is outside the maintained documentation scope"
-          : `resolved path does not exist: ${error.resolvedPath}`;
+        error.reason === "runtime-export-drift"
+          ? error.detail
+          : error.reason === "excluded"
+            ? "target is outside the maintained documentation scope"
+            : `resolved path does not exist: ${error.resolvedPath}`;
       console.error(`- ${error.file}:${error.line} -> ${error.target} (${detail})`);
     }
     process.exitCode = 1;
@@ -183,7 +281,7 @@ function main() {
   }
 
   console.log(
-    `Documentation link check passed (${documents.length} Markdown/MDX files).`,
+    `Documentation verification passed (${documents.length} Markdown/MDX files).`,
   );
 }
 
@@ -191,4 +289,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   main();
 }
 
-export { collectDocuments, findBrokenLinks, normalizeTarget, resolveDocumentTarget };
+export {
+  collectDocuments,
+  extractMarkedRuntimeExports,
+  extractRuntimeExportsFromSource,
+  findBrokenLinks,
+  findRuntimeExportDrift,
+  normalizeTarget,
+  resolveDocumentTarget,
+};

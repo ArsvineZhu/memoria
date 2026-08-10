@@ -1,7 +1,9 @@
-# API — 导出符号参考（dist/index.js / dist/index.d.ts）
+# API — 导出符号参考
 
-> 参考对象：编译后的 `dist/index.js`（源入口为 `src/index.ts`）。库是 ESM-first；
-> 历史 CommonJS consumer 通过 `dist/index.cjs` 兼容 facade 保留。
+> 权威事实源：`package.json` 的 `exports`、`src/index.ts`、`src/index.cts`、
+> `src/errors.ts` 和公开类型。库是 ESM-first；历史 CommonJS consumer 通过
+> `dist/index.cjs` 兼容 facade 保留。`dist/` 是生成的打包验证输出，不是新的 API
+> 声明来源。
 >
 > ```ts
 > const esm = await import("memoria");
@@ -17,22 +19,58 @@
 > 分组名与 `index.ts` 顶部注释一致；每个符号给出签名、参数、返回值和默认值。
 > 类型标注以 TypeScript 源码和 `dist/index.d.ts` 为准。
 
-## 0. 全量导出清单（实测输出）
+## 0. 全量导出清单
+
+<!-- runtime-exports:start -->
 
 ```text
-Pipeline, Stage, PipelineContext, createMemoryEngine, MemoryEngine,
-DEFAULT_CONFIG, mergeConfig, loadRagParams, loadRagParamsSync,
-RAG_PARAMS_DEFAULTS, KnowledgeBaseAdapter, TDBEngine, TDBSearchPipeline,
-TDBStore, TriviumDBAdapter, resolveLibrary, safeLibraryName, EPA,
-ResidualPyramid, ResultDeduplicator, dotProduct, magnitude, normalize,
-orthogonalize, orthogonalProjection, clusterTags, computeWeightedPCA,
-powerIteration, selectBasisDimension, buildRowOperator,
-solveDualScaledFields, normalizeSource, effectiveSupport, propagate,
-computeFirWeights, adjacencyFromEdges, computeRiverObservability,
-decodeVectorBlob, encodeVectorBlob, prepareTextForEmbedding, extractTags
+Pipeline
+Stage
+PipelineContext
+createMemoryEngine
+MemoryEngine
+DEFAULT_CONFIG
+mergeConfig
+loadRagParams
+loadRagParamsSync
+RAG_PARAMS_DEFAULTS
+KnowledgeBaseAdapter
+TDBEngine
+TDBSearchPipeline
+TDBStore
+TriviumDBAdapter
+resolveLibrary
+safeLibraryName
+EPA
+ResidualPyramid
+ResultDeduplicator
+dotProduct
+magnitude
+normalize
+orthogonalize
+orthogonalProjection
+clusterTags
+computeWeightedPCA
+powerIteration
+selectBasisDimension
+buildRowOperator
+solveDualScaledFields
+normalizeSource
+effectiveSupport
+propagate
+computeFirWeights
+adjacencyFromEdges
+computeRiverObservability
+decodeVectorBlob
+encodeVectorBlob
+prepareTextForEmbedding
+extractTags
 ```
 
-上表对应当前 `src/index.ts` 的运行时导出；如需核对构建产物，可重新运行上方的
+<!-- runtime-exports:end -->
+
+上表必须与当前 `src/index.ts` 的运行时导出保持一致；`corepack pnpm verify:docs`
+会检查这两个清单是否发生漂移。如需核对构建产物，可重新运行上方的
 `Object.keys` 示例。下列分组按 `src/index.ts` 注释划分。
 
 ## 1. Core
@@ -82,6 +120,17 @@ decodeVectorBlob, encodeVectorBlob, prepareTextForEmbedding, extractTags
 | `memoria/providers/dashscope` | `DashScopeEmbeddingProvider`     | DashScope 原生嵌入 Provider |
 
 这些子路径当前提供 ESM 入口和类型声明；CommonJS 兼容仅由根包入口提供。
+
+### `memoria/errors` 契约
+
+`memoria/errors` 导出 `MemoriaError`、`asMemoriaError`，以及类型
+`MemoriaErrorCode` 和 `MemoriaErrorOptions`。稳定错误码为：
+`configuration`、`ingestion`、`persistence`、`embedding`、`vector_backend`、
+`integrity`、`retrieval`、`lifecycle`。
+
+`MemoriaError` 的公共字段是 `code`、`retryable` 和只读 `details`；构造参数为
+`(code, message, {cause?, retryable?, details?})`。`asMemoriaError(error, code,
+message, options?)` 会为未知错误保留原始 `cause`，已有 `MemoriaError` 则原样返回。
 
 `search()` 的 scope precedence 是：显式 `indexNames` / `diaryNames` → 只检索该范围；
 没有显式 scope → 检索 SQLite authority 发现的全部内容索引；只有 scope discovery

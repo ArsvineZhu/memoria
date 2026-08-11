@@ -52,8 +52,6 @@ test("parseMdxDocument passes through content without front matter", () => {
 });
 
 test("parseMdxDocument rejects malformed or non-object front matter", () => {
-  assert.throws(() =>
-    parseMdxDocument("---\ntitle: [unterminated\n---\nBody"),
-  );
+  assert.throws(() => parseMdxDocument("---\ntitle: [unterminated\n---\nBody"));
   assert.throws(() => parseMdxDocument("---\n- list item\n---\nBody"));
 });

@@ -24,8 +24,8 @@ export function isRealPathContained(rootPath: string, targetPath: string): boole
   const realRelative = path.relative(realRoot, realTarget);
   return Boolean(
     realRelative &&
-      realRelative !== ".." &&
-      !realRelative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(realRelative),
+    realRelative !== ".." &&
+    !realRelative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(realRelative),
   );
 }

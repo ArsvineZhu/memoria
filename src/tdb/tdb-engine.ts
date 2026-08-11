@@ -701,9 +701,7 @@ class TDBEngine {
       });
     }
     const destinationPath = String(options.path || resolved.relPath);
-    const destinationLibrary = safeLibraryName(
-      options.library || resolved.library,
-    );
+    const destinationLibrary = safeLibraryName(options.library || resolved.library);
     return this._upsertTextInternal(content, {
       path: destinationPath,
       library: destinationLibrary,
@@ -725,9 +723,7 @@ class TDBEngine {
         const absPath = path.resolve(filePath);
         const resolved = resolveLibrary(this.config.tdbRootPath, absPath);
         const destinationPath = String(options.path || resolved.relPath);
-        const destinationLibrary = safeLibraryName(
-          options.library || resolved.library,
-        );
+        const destinationLibrary = safeLibraryName(options.library || resolved.library);
         return this._runSerializedMutation(destinationLibrary, destinationPath, () =>
           this._upsertFileInternal(filePath, {
             ...options,

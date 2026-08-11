@@ -24,6 +24,7 @@
 ### Task 1: Add the managed data-path contract
 
 **Files:**
+
 - Modify: `src/types.ts:28-33` to add `dataPath` to `MemoryConfig`.
 - Modify: `src/config/default-config.ts:23-27,192-199,227-241` to derive main/TDB paths from `dataPath` and preserve explicit path overrides.
 - Modify: `src/engine.ts:154-158` so explicit top-level `options.dbPath` always overrides the merged config.
@@ -33,6 +34,7 @@
 - Test: `tests/engine/test-engine.test.ts` and `tests/tdb/test-tdb.test.ts`.
 
 **Interfaces:**
+
 - Consumes: `MemoryConfigOverrides`, existing explicit `rootPath`/`storePath`/`dbPath`/TDB overrides.
 - Produces: `DEFAULT_CONFIG.dataPath`, default paths under `data/`, and `mergeConfig({ dataPath })` path derivation.
 
@@ -43,17 +45,33 @@ Add assertions that:
 ```ts
 assert.equal(DEFAULT_CONFIG.dataPath, join(process.cwd(), "data"));
 assert.equal(DEFAULT_CONFIG.rootPath, join(DEFAULT_CONFIG.dataPath, "content"));
-assert.equal(DEFAULT_CONFIG.storePath, join(DEFAULT_CONFIG.dataPath, "memoria", "indexes"));
-assert.equal(DEFAULT_CONFIG.dbPath, join(DEFAULT_CONFIG.dataPath, "memoria", "memory.sqlite"));
+assert.equal(
+  DEFAULT_CONFIG.storePath,
+  join(DEFAULT_CONFIG.dataPath, "memoria", "indexes"),
+);
+assert.equal(
+  DEFAULT_CONFIG.dbPath,
+  join(DEFAULT_CONFIG.dataPath, "memoria", "memory.sqlite"),
+);
 assert.equal(DEFAULT_CONFIG.tdbRootPath, join(DEFAULT_CONFIG.dataPath, "knowledge"));
-assert.equal(DEFAULT_CONFIG.tdbStorePath, join(DEFAULT_CONFIG.dataPath, "tdb", "indexes"));
-assert.equal(DEFAULT_CONFIG.tdbDbPath, join(DEFAULT_CONFIG.dataPath, "tdb", "knowledge.sqlite"));
+assert.equal(
+  DEFAULT_CONFIG.tdbStorePath,
+  join(DEFAULT_CONFIG.dataPath, "tdb", "indexes"),
+);
+assert.equal(
+  DEFAULT_CONFIG.tdbDbPath,
+  join(DEFAULT_CONFIG.dataPath, "tdb", "knowledge.sqlite"),
+);
 
 const custom = mergeConfig({ dataPath: join(tmpdir(), "custom-data") });
 assert.equal(custom.rootPath, join(custom.dataPath, "content"));
 assert.equal(custom.storePath, join(custom.dataPath, "memoria", "indexes"));
 assert.equal(custom.dbPath, join(custom.dataPath, "memoria", "memory.sqlite"));
-const legacy = mergeConfig({ dataPath: "custom", rootPath: "legacy-root", dbPath: ":memory:" });
+const legacy = mergeConfig({
+  dataPath: "custom",
+  rootPath: "legacy-root",
+  dbPath: ":memory:",
+});
 assert.equal(legacy.rootPath, "legacy-root");
 assert.equal(legacy.dbPath, ":memory:");
 ```
@@ -85,12 +103,14 @@ Keep path derivation in one small helper inside `default-config.ts`; do not add 
 ### Task 2: Implement and test the MDX front-matter parser
 
 **Files:**
+
 - Modify: `package.json` and `pnpm-lock.yaml` to add `yaml`.
 - Create: `src/utils/mdx-document.ts` with `parseMdxDocument(content: string)` and exported `MdxDocument`/`MdxFrontmatter` types.
 - Modify: `src/index.ts` to export the parser and its public types if they are part of the supported host contract.
 - Test: `tests/utils/test-mdx-document.test.ts`.
 
 **Interfaces:**
+
 - Consumes: UTF-8 string content.
 - Produces:
 
@@ -147,12 +167,14 @@ Keep delimiter detection and YAML validation in this utility; do not spread fron
 ### Task 3: Integrate MDX metadata, body checksums, and tags into ingestion
 
 **Files:**
+
 - Modify: `src/stages/ingestion/file-reader.ts:1-151` to parse MDX, merge metadata, expose body content, and use the body checksum for front-matter documents.
 - Modify: `src/stages/ingestion/tag-extractor.ts:1-31` and `src/utils/text-preprocessor.ts:31-109` to normalize front-matter tags through existing rules and merge them with trailing `Tag:` tags.
 - Modify: `src/errors.ts` only if a dedicated ingestion error wrapper is needed; otherwise use the existing stage boundary.
 - Test: `tests/stages/test-ingestion-stages.test.ts`, `tests/stages/test-ingestion-write-stages.test.ts`, and `tests/adapters/test-filesystem-ingestion-adapter.test.ts`.
 
 **Interfaces:**
+
 - Consumes: `FileInput`/`PipelineData` with `.md` or `.mdx` content and optional existing `documentMetadata`.
 - Produces: body-only `content`, merged JSON-compatible `documentMetadata`, `needsEmbedding=false` for front-matter-only changes, and normalized union tags.
 
@@ -199,6 +221,7 @@ Keep the parser independent of persistence and keep tag normalization in `text-p
 ### Task 4: Move the demo and documentation to the MDX data layout
 
 **Files:**
+
 - Create: `data/README.md`.
 - Create: `data/content/life/coffee.mdx`, `data/content/memory/cold-knowledge.mdx`, and `data/content/quantum/qubit.mdx`.
 - Modify: `examples/demo/main.ts` to read canonical MDX sources from `data/content` and write only generated state under `data/memoria`.
@@ -207,6 +230,7 @@ Keep the parser independent of persistence and keep tag normalization in `text-p
 - Test: add a deterministic demo/data-layout assertion under `tests/integration/` or the existing demo test surface.
 
 **Interfaces:**
+
 - Consumes: `data/content/**/*.mdx`.
 - Produces: no root-level runtime `VectorStore/`; demo state under `data/memoria/`.
 
@@ -239,6 +263,7 @@ Remove stale “VectorStore is the default” and “geodesic does not belong he
 ### Task 5: Migrate and clean known generated artifacts safely
 
 **Files/targets:**
+
 - Modify: worktree `examples/demo/demo-data/` only if it remains after the demo migration.
 - Remove or move: worktree `VectorStore/` after verifying it contains only `.usearch`/`.meta.json` generated files and no SQLite authority/source.
 - Remove or move: worktree `VectorStoreTDB/` and `knowledge/` only when empty or generated-only; preserve any discovered user-authored files.
@@ -263,6 +288,7 @@ Run `rg --files` for root-level `VectorStore`, `VectorStoreTDB`, and `examples/d
 ### Task 6: Full verification and completion audit
 
 **Files:**
+
 - No new production files; update tests/docs only where failures expose a real contract gap.
 
 - [ ] **Step 1: Run the full test suite**

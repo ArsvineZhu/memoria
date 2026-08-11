@@ -3,6 +3,7 @@ import type {
   ExternalReranker,
   MemoryConfigOverrides,
   MemoryDocumentInput,
+  MemoryDocumentFormat,
   MemoryDocumentSource,
   MemoryEngineOptions,
   MetadataStoreContract,
@@ -51,7 +52,9 @@ const document: MemoryDocumentInput = {
   content: "typed logical memory",
   source: { type: "test" } satisfies MemoryDocumentSource,
   revision: 1,
+  format: "mdx",
 };
+const documentFormat: MemoryDocumentFormat = document.format!;
 
 const stage: Stage<{ query: string }, SearchEnvelope> = {
   name: "typed-stage",
@@ -147,6 +150,7 @@ void minimalMetadataStore;
 void optionalMetadataCapabilities;
 void optionalVectorCapabilities;
 void document;
+void documentFormat;
 void domainMetadataMethods;
 void compatibleMetadataStore;
 void compatibilityContext;

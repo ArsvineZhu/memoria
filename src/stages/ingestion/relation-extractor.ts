@@ -6,6 +6,10 @@ import {
   extractMdxRelations,
   relationDocumentKey,
 } from "../../retrieval/relation-graph.js";
+import {
+  isStructuredDocumentFormat,
+  resolveDocumentFormat,
+} from "../../utils/document-format.js";
 
 /**
  * Derive source relations without writing them.  The following metadata
@@ -33,6 +37,7 @@ class RelationExtractorStage extends Stage {
 
     const sourceContent =
       typeof info.sourceContent === "string" ? info.sourceContent : info.content;
+    const format = resolveDocumentFormat(info.format, info.relPath || info.path);
     const relationSourceKey = relationDocumentKey({
       documentId: info.documentId,
       path: info.path,
@@ -45,12 +50,15 @@ class RelationExtractorStage extends Stage {
 
     return {
       ...info,
-      explicitRelations: extractMdxRelations(
-        sourceContent,
-        info.relPath,
-        relationSourceKey,
-        relationSourceRevision,
-      ),
+      format,
+      explicitRelations: isStructuredDocumentFormat(format)
+        ? extractMdxRelations(
+            sourceContent,
+            info.relPath,
+            relationSourceKey,
+            relationSourceRevision,
+          )
+        : [],
       relationSourceKey,
       relationSourceRevision,
       relationGraphSkipped: false,

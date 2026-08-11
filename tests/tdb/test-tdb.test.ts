@@ -345,9 +345,16 @@ test("TDBEngine retains a metadata store when its close fails", async (t) => {
   await engine.initialize();
 
   const metadata = engine.metadataStore;
+  const vector = engine.vectorStore;
+  const originalVectorClose = vector.close?.bind(vector);
   const originalClose = metadata.close?.bind(metadata);
   let failures = 1;
   let calls = 0;
+  let vectorCalls = 0;
+  vector.close = async () => {
+    vectorCalls += 1;
+    await Promise.resolve(originalVectorClose?.());
+  };
   metadata.close = async () => {
     calls += 1;
     if (failures > 0) {
@@ -365,9 +372,15 @@ test("TDBEngine retains a metadata store when its close fails", async (t) => {
   );
   assert.equal(engine.state, "closing");
   assert.equal(calls, 1);
+  assert.equal(vectorCalls, 1);
+  await assert.rejects(
+    () => engine.search("must reject while closing"),
+    /current state is closing/,
+  );
   await engine.close();
   assert.equal(engine.state, "closed");
   assert.equal(calls, 2);
+  assert.equal(vectorCalls, 1);
 });
 
 test("TDB filesystem resolution rejects paths outside the configured root", async (t) => {

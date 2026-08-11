@@ -222,6 +222,8 @@ export interface SearchOptions extends UnknownRecord {
   inheritRetrievalDefaults?: boolean;
 }
 
+export type MemoryDocumentFormat = "text" | "markdown" | "mdx";
+
 /** Host-neutral provenance attached to a logical memory document. */
 export interface MemoryDocumentSource extends UnknownRecord {
   type?: string;
@@ -232,6 +234,9 @@ export interface MemoryDocumentSource extends UnknownRecord {
 export interface MemoryDocumentInput {
   id: string;
   content: string;
+  format?: MemoryDocumentFormat;
+  /** Optional immutable source snapshot when content is a parsed projection. */
+  sourceContent?: string;
   source?: MemoryDocumentSource;
   revision?: string | number;
   metadata?: UnknownRecord;
@@ -253,6 +258,7 @@ export interface FileInput {
   path: string;
   relPath?: string;
   content?: string;
+  format?: MemoryDocumentFormat;
   /** Optional raw source snapshot; content may be a parsed/body projection. */
   sourceContent?: string;
   mtime?: number;
@@ -272,9 +278,11 @@ export interface FileSnapshot extends Omit<
   | "documentMetadata"
   | "diaryName"
   | "sourceContent"
+  | "format"
 > {
   relPath: string;
   content: string;
+  format?: MemoryDocumentFormat;
   sourceContent?: string;
   mtime: number;
   size: number;
@@ -612,6 +620,7 @@ export interface PipelineData extends UnknownRecord {
   path?: string;
   relPath?: string;
   content?: string;
+  format?: MemoryDocumentFormat;
   /** Immutable source snapshot used by derived-link extraction; never embedded. */
   sourceContent?: string;
   mtime?: number;

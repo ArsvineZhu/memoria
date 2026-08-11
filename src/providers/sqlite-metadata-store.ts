@@ -29,7 +29,7 @@ import type {
   RetrievalScopeResolution,
   UnknownRecord,
 } from "../types.js";
-import { relationDocumentKey } from "../retrieval/relation-graph.js";
+import { relationDocumentAliases } from "../retrieval/relation-graph.js";
 
 const requireFromProvider = createRequire(import.meta.url);
 let DatabaseCtor: typeof BetterSqlite3 | null = null;
@@ -520,7 +520,7 @@ class SqliteMetadataStore extends MetadataStore {
       .run(RELATION_GENERATION_KEY, "0");
   }
 
-  _incrementMetadataGenerationInTransaction(): number {
+  _incrementMetadataGenerationInTransaction(vectorStateChanged = true): number {
     const generationRow = this.db
       .prepare("SELECT value FROM kv_store WHERE key = ?")
       .get(METADATA_GENERATION_KEY) as KeyValueRow | undefined;
@@ -533,7 +533,17 @@ class SqliteMetadataStore extends MetadataStore {
       "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
     );
     setKv.run(METADATA_GENERATION_KEY, String(metadataGeneration));
-    setKv.run(VECTOR_DIRTY_KEY, "1");
+    if (vectorStateChanged) {
+      setKv.run(VECTOR_DIRTY_KEY, "1");
+    } else {
+      const dirtyRow = this.db
+        .prepare("SELECT value FROM kv_store WHERE key = ?")
+        .get(VECTOR_DIRTY_KEY) as KeyValueRow | undefined;
+      if ((dirtyRow?.value ?? "1") === "0") {
+        setKv.run(VECTOR_GENERATION_KEY, String(metadataGeneration));
+        setKv.run(VECTOR_DIRTY_KEY, "0");
+      }
+    }
     return metadataGeneration;
   }
 
@@ -636,8 +646,11 @@ class SqliteMetadataStore extends MetadataStore {
         fileMeta.metadataJson ?? null,
         existing.id,
       );
+    const vectorStateChanged =
+      existing.diary_name !== fileMeta.diaryName ||
+      existing.checksum !== fileMeta.checksum;
     this.db.transaction(() => {
-      this._incrementMetadataGenerationInTransaction();
+      this._incrementMetadataGenerationInTransaction(vectorStateChanged);
     })();
     return { fileId: Number(existing.id), changed: true };
   }
@@ -873,6 +886,8 @@ class SqliteMetadataStore extends MetadataStore {
     replacement: DocumentStateReplacement,
   ): Promise<DocumentStateReplacementResult> {
     const { file, chunks, tags, orderedTagNames } = replacement;
+    const preserveChunks = replacement.preserveChunks === true;
+    const preserveTags = replacement.preserveTags === true;
     const now = Math.floor(Date.now() / 1000);
 
     const result = this.db.transaction(() => {
@@ -886,13 +901,14 @@ class SqliteMetadataStore extends MetadataStore {
         (this.db.prepare("SELECT * FROM files WHERE path = ?").get(file.path) as
           FileQueryRow | undefined);
       const previousIndexName = existing?.diary_name ?? null;
-      const removedChunkIds = existing
-        ? (
-            this.db
-              .prepare("SELECT id FROM chunks WHERE file_id = ? ORDER BY id")
-              .all(existing.id) as Array<{ id: number }>
-          ).map((row) => Number(row.id))
-        : [];
+      const removedChunkIds =
+        existing && !preserveChunks
+          ? (
+              this.db
+                .prepare("SELECT id FROM chunks WHERE file_id = ? ORDER BY id")
+                .all(existing.id) as Array<{ id: number }>
+            ).map((row) => Number(row.id))
+          : [];
 
       let fileId: number;
       const fileValues = [
@@ -929,7 +945,6 @@ class SqliteMetadataStore extends MetadataStore {
         fileId = Number(info.lastInsertRowid);
       }
 
-      const preserveChunks = replacement.preserveChunks === true;
       const existingChunkIds = preserveChunks
         ? (
             this.db
@@ -980,7 +995,6 @@ class SqliteMetadataStore extends MetadataStore {
           .prepare("SELECT tag_id FROM file_tags WHERE file_id = ?")
           .all(fileId) as Array<{ tag_id: number }>
       ).map((row) => Number(row.tag_id));
-      const preserveTags = replacement.preserveTags === true;
       const fileTagIds: number[] = preserveTags ? [...previousTagIds] : [];
       if (!preserveTags) {
         for (const tagName of orderedTagNames) {
@@ -1007,13 +1021,8 @@ class SqliteMetadataStore extends MetadataStore {
       if (replacement.relationSourceKey) {
         const relationKeys = new Set<string>([
           replacement.relationSourceKey,
-          relationDocumentKey({ path: replacement.file.path }),
-          ...(existing
-            ? [
-                relationDocumentKey(existing),
-                relationDocumentKey({ path: existing.path }),
-              ]
-            : []),
+          ...relationDocumentAliases({ path: replacement.file.path }),
+          ...(existing ? relationDocumentAliases(existing) : []),
         ]);
         const staleRelations = this.db.prepare(
           `UPDATE memory_relations
@@ -1071,7 +1080,10 @@ class SqliteMetadataStore extends MetadataStore {
         this._incrementRelationGenerationInTransaction();
       }
 
-      const metadataGeneration = this._incrementMetadataGenerationInTransaction();
+      const vectorStateChanged =
+        !preserveChunks || !preserveTags || previousIndexName !== file.diaryName;
+      const metadataGeneration =
+        this._incrementMetadataGenerationInTransaction(vectorStateChanged);
       const orphanedTagIds = previousTagIds.filter((tagId) => {
         const row = this.db
           .prepare("SELECT 1 AS present FROM file_tags WHERE tag_id = ? LIMIT 1")
@@ -1129,8 +1141,7 @@ class SqliteMetadataStore extends MetadataStore {
       ).map((row) => Number(row.tag_id));
 
       const relationKeys = new Set<string>([
-        relationDocumentKey(existing),
-        relationDocumentKey({ path: existing.path }),
+        ...relationDocumentAliases(existing),
         ...(input.relationSourceKeys || []),
       ]);
       const staleRelations = this.db.prepare(
@@ -1288,12 +1299,12 @@ class SqliteMetadataStore extends MetadataStore {
         continue;
       }
       allowedChunkIds.push(Number(row.chunk_id));
-      allowedDocumentKeys.add(
-        relationDocumentKey({
-          documentId: row.document_id,
-          path: row.path,
-        }),
-      );
+      for (const key of relationDocumentAliases({
+        documentId: row.document_id,
+        path: row.path,
+      })) {
+        allowedDocumentKeys.add(key);
+      }
     }
     return { allowedChunkIds, allowedDocumentKeys: [...allowedDocumentKeys] };
   }

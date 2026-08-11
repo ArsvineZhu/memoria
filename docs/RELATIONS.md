@@ -43,15 +43,19 @@ await files.start(); // 后续 add/change/unlink 事件
 写回源文件。`MemoryEngine.ingest({ id, content, metadata })` 仍可用于没有文件路径
 的逻辑文档。
 
-MDX 的 front matter 会进入文件 metadata，`tags` 进入标签索引，正文进入块和向量。
-正文中的以下静态关系会被提取：
+`markdown`/`mdx` 的 front matter 会进入文件 metadata，`tags` 进入标签索引，正文进入
+块和向量。无路径逻辑文档默认是 `text`；需要结构化解析时显式传入
+`format: "mdx"` 或 `format: "markdown"`。`text` 文档中的 front matter、Markdown/Wiki
+链接和 `MemoryLink` 都留在正文，不生成来源关系；重新摄入为 `text` 时仍提交空的来源
+关系 authority，用于清理该文档旧的显式边。结构化正文中的以下静态关系会被提取：
 
 - 普通 Markdown 链接，如 `[结果](../data/content/life/coffee.mdx#section)`；
 - `[[other.mdx]]` wikilink；
 - HTML `<a href="...">`；
 - 允许列表中的字面量 `<MemoryLink target="..." />`。
 
-解析器不执行 JSX、`import`、表达式或任意 MDX 组件。查询也始终是普通字符串；
+解析器不执行 JSX、`import`、表达式或任意 MDX 组件。源文件和 `sourceContent` 只读，
+辅助关系写入 SQLite，不回写原文。查询也始终是普通字符串；
 这里的 MDX 只属于“记忆源的静态读取”，不是查询语言。
 
 ## 关系记录

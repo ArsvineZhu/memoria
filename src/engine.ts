@@ -319,6 +319,12 @@ class MemoryEngine {
     } catch (error) {
       this._initPromise = null;
       try {
+        await this._activeOperations.drain();
+      } catch {
+        // Preserve the initialization failure; active-operation cleanup is
+        // best effort and must not replace the primary error.
+      }
+      try {
         await this._disposeOwnedResources(true);
       } catch {
         // Preserve the initialization failure; cleanup is best effort.
@@ -832,6 +838,7 @@ class MemoryEngine {
               path: entry.path,
               relPath: entry.relPath,
               content: entry.content,
+              format: entry.format,
               sourceContent: entry.sourceContent,
               mtime: entry.mtime,
               size: entry.size,
@@ -895,6 +902,8 @@ class MemoryEngine {
               path: storagePath,
               relPath: storagePath,
               content: document.content,
+              format: document.format ?? "text",
+              sourceContent: document.sourceContent ?? document.content,
               mtime,
               size,
               diaryName: "Logical",

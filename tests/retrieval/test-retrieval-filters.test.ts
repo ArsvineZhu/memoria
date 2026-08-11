@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import RetrievalFilterResolverStage from "../../src/stages/retrieval/retrieval-filter.js";
 import CandidateFilterStage from "../../src/stages/retrieval/candidate-filter.js";
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
+import { RelationGraphStore } from "../../src/retrieval/relation-graph.js";
 import type { PipelineContextLike, PipelineData } from "../../src/types.js";
 
 function makeContext(): PipelineContextLike {
@@ -134,6 +135,71 @@ test("SQLite retrieval scope resolves with one joined authority query", async ()
     );
     assert.equal((out.allowedChunkIds as Set<number>).size, 1);
     assert.equal((out.allowedDocumentKeys as Set<string>).has("document:active"), true);
+  } finally {
+    store.close();
+  }
+});
+
+test("SQLite retrieval scope includes document and path aliases for relation expansion", async () => {
+  const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: 4 });
+  const a = await store.replaceDocumentState({
+    file: {
+      path: "research/a.mdx",
+      diaryName: "research",
+      checksum: "a",
+      mtime: 1,
+      size: 1,
+      documentId: "A",
+    },
+    chunks: [{ chunkIndex: 0, content: "A", vector: null }],
+    tags: [],
+    orderedTagNames: [],
+  });
+  const b = await store.replaceDocumentState({
+    file: {
+      path: "research/b.mdx",
+      diaryName: "research",
+      checksum: "b",
+      mtime: 1,
+      size: 1,
+      documentId: "B",
+    },
+    chunks: [{ chunkIndex: 0, content: "B", vector: null }],
+    tags: [],
+    orderedTagNames: [],
+  });
+  await store.replaceExplicitRelations("document:A", "r1", [
+    {
+      id: "a-to-b",
+      from: "document:A",
+      to: "path:research/b.mdx",
+      kind: "explicit-link",
+      origin: "source",
+      confidence: 1,
+      weight: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      status: "active",
+      active: true,
+    },
+  ]);
+
+  try {
+    const scope = await store.resolveRetrievalScope({ spaces: ["research"] }, [
+      "research",
+    ]);
+    assert.ok(scope.allowedDocumentKeys.includes("document:A"));
+    assert.ok(scope.allowedDocumentKeys.includes("path:research/a.mdx"));
+    assert.ok(scope.allowedDocumentKeys.includes("document:B"));
+    assert.ok(scope.allowedDocumentKeys.includes("path:research/b.mdx"));
+
+    const related = await new RelationGraphStore(store).relatedChunks(
+      [a.chunkIds[0]!],
+      1,
+      10,
+      new Set(scope.allowedDocumentKeys),
+    );
+    assert.ok(related.some((chunk) => chunk.chunkId === b.chunkIds[0]));
   } finally {
     store.close();
   }

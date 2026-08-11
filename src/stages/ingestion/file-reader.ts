@@ -7,6 +7,10 @@ import * as crypto from "node:crypto";
 import Stage from "../../core/stage.js";
 import { serializeDocumentJson } from "../../utils/logical-document.js";
 import { parseMdxDocument } from "../../utils/mdx-document.js";
+import {
+  isStructuredDocumentFormat,
+  resolveDocumentFormat,
+} from "../../utils/document-format.js";
 
 /**
  * Reads a file from disk (or accepts caller-supplied content),
@@ -105,6 +109,7 @@ class FileReaderStage extends Stage {
     // Relative paths are stored with forward slashes on every platform
     // (mirrors the original knowledge base path convention).
     const relPath = relPathRaw.split(path.sep).join("/");
+    const format = resolveDocumentFormat(input.format, relPath);
     const parts = relPath.split("/");
     const diaryName =
       typeof input.documentId === "string"
@@ -121,13 +126,15 @@ class FileReaderStage extends Stage {
       typeof input.sourceContent === "string" ? input.sourceContent : content;
     let documentMetadata = input.documentMetadata;
     try {
-      const parsed = parseMdxDocument(content);
-      if (parsed.hasFrontmatter) {
-        documentMetadata = {
-          ...(documentMetadata || {}),
-          ...parsed.frontmatter,
-        };
-        content = parsed.body;
+      if (isStructuredDocumentFormat(format)) {
+        const parsed = parseMdxDocument(content);
+        if (parsed.hasFrontmatter) {
+          documentMetadata = {
+            ...(documentMetadata || {}),
+            ...parsed.frontmatter,
+          };
+          content = parsed.body;
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -164,6 +171,7 @@ class FileReaderStage extends Stage {
       ...input,
       path: filePath,
       relPath,
+      format,
       diaryName,
       content,
       sourceContent,

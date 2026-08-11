@@ -388,6 +388,8 @@ export interface SearchEnvelope {
   expansionStats?: ExpansionStats;
   reranked?: boolean;
   rerankSkipped?: boolean;
+  rerankFailure?: "provider_error";
+  /** Compatibility field; runtime values are stable safe error codes. */
   rerankError?: string;
   defaultRetrievalPlan?: RetrievalPlan;
   requestedRetrievalPlan?: RetrievalPlanInput;

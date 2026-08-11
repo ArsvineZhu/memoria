@@ -147,10 +147,7 @@ test("mutation reentry from a stable read fails immediately with a concurrency e
 
   assert.notEqual(result, "timed out");
   assert.ok(result instanceof Error);
-  assert.equal(
-    (result as Error & { code?: string }).code,
-    "concurrency",
-  );
+  assert.equal((result as Error & { code?: string }).code, "concurrency");
   assert.equal(
     (result as Error & { details?: Record<string, unknown> }).details?.reason,
     "stable_read_reentrancy",
@@ -193,4 +190,34 @@ test("failed reconciliation remains dirty and can be retried", async () => {
   assert.equal(coordinator.isDirty, true);
   await coordinator.reconcile();
   assert.equal(coordinator.isDirty, false);
+});
+
+test("failed recovery after mutation requeue releases its queue ticket", async () => {
+  const coordinator = new DerivedStateCoordinator(async () => undefined);
+  const readStarted = deferred();
+  const releaseRead = deferred();
+  const read = coordinator.runStableRead(async () => {
+    readStarted.resolve();
+    await releaseRead.promise;
+  });
+  await readStarted.promise;
+
+  const internals = coordinator as unknown as {
+    _ensureClean: () => Promise<void>;
+    _queuedMutations: number;
+  };
+  let ensureCalls = 0;
+  internals._ensureClean = async () => {
+    ensureCalls += 1;
+    if (ensureCalls === 3) throw new Error("second recovery failed");
+  };
+  coordinator.markDirty();
+
+  const mutation = coordinator.runMutation("doc:recovery", async () => undefined);
+  releaseRead.resolve();
+  await read;
+
+  await assert.rejects(mutation, /second recovery failed/);
+  assert.equal(ensureCalls, 3);
+  assert.equal(internals._queuedMutations, 0);
 });

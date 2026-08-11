@@ -113,6 +113,14 @@ function isLifecycleError(error: unknown, operation: string): boolean {
   );
 }
 
+function isConcurrencyError(error: unknown, operation: string): boolean {
+  return (
+    error instanceof MemoriaError &&
+    error.code === "concurrency" &&
+    error.details.operation === operation
+  );
+}
+
 test("constructor defers default providers and context until initialize", async () => {
   const engine = createMemoryEngine({ config: { dimension: DIM } });
   assert.strictEqual(engine.state, "created");
@@ -192,6 +200,70 @@ test("concurrent initialize calls share one lifecycle transition", async () => {
     await engine.initialize();
     assert.strictEqual(readyCalls, 1);
   } finally {
+    await closeInjected(engine, metadataStore);
+  }
+});
+
+test("onReady observes ready state, permits reads, and rejects lifecycle reentry", async () => {
+  let callbackState: string | undefined;
+  let callbackReadWasReady = false;
+  const { engine, metadataStore } = makeInjectedEngine({
+    onReady: async (readyEngineUnknown) => {
+      const readyEngine = readyEngineUnknown as ReturnType<typeof createMemoryEngine>;
+      callbackState = readyEngine.state;
+      callbackReadWasReady = (await readyEngine.getStats()).initialized;
+      await assert.rejects(
+        () => readyEngine.initialize(),
+        (error: unknown) => isConcurrencyError(error, "initialize"),
+      );
+      await assert.rejects(
+        () => readyEngine.close(),
+        (error: unknown) => isConcurrencyError(error, "close"),
+      );
+    },
+  });
+
+  try {
+    await engine.initialize();
+    assert.equal(callbackState, "ready");
+    assert.equal(callbackReadWasReady, true);
+    assert.equal(engine.state, "ready");
+  } finally {
+    await closeInjected(engine, metadataStore);
+  }
+});
+
+test("close waits for an onReady callback after the engine becomes ready", async () => {
+  let markReadyStarted!: () => void;
+  let releaseReady!: () => void;
+  const readyStarted = new Promise<void>((resolve) => {
+    markReadyStarted = resolve;
+  });
+  const readyBarrier = new Promise<void>((resolve) => {
+    releaseReady = resolve;
+  });
+  const { engine, metadataStore } = makeInjectedEngine({
+    onReady: async () => {
+      markReadyStarted();
+      await readyBarrier;
+    },
+  });
+
+  try {
+    const initializing = engine.initialize();
+    await readyStarted;
+    assert.equal(engine.state, "ready");
+
+    const closing = engine.close();
+    await Promise.resolve();
+    assert.equal(engine.state, "ready");
+
+    releaseReady();
+    await initializing;
+    await closing;
+    assert.equal(engine.state, "closed");
+  } finally {
+    releaseReady();
     await closeInjected(engine, metadataStore);
   }
 });
@@ -318,6 +390,37 @@ test("active operation registry drains successful and failed operations without 
   );
   assert.equal(registry.size, 0);
   await registry.drain();
+
+  await assert.rejects(
+    registry.run(async () => registry.drain()),
+    (error: unknown) => isConcurrencyError(error, "drain"),
+  );
+});
+
+test("an active engine operation cannot close its own engine", async () => {
+  const { engine, metadataStore } = makeInjectedEngine();
+
+  try {
+    await engine.initialize();
+    engine.ingestPipeline.run = (async (input) => {
+      await assert.rejects(
+        () => engine.close(),
+        (error: unknown) => isConcurrencyError(error, "close"),
+      );
+      return {
+        ...input,
+        skipped: false,
+        fileId: 1,
+        chunkIds: [],
+        tagIds: [],
+      };
+    }) as typeof engine.ingestPipeline.run;
+
+    await engine.ingest({ id: "active-close", content: "content" });
+    assert.equal(engine.state, "ready");
+  } finally {
+    await closeInjected(engine, metadataStore);
+  }
 });
 
 test("close waits for an in-flight search before flushing and closing", async () => {

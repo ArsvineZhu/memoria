@@ -23,8 +23,9 @@ corepack pnpm build:test
 node dist-test/examples/demo/main.js
 ```
 
-它不访问网络、不需要密钥，使用固定的 128 维离线嵌入。演示源文件在
-`data/content/`，演示生成内容在 `data/memoria/demo/`。
+它不访问网络、不需要密钥，使用固定的 128 维离线嵌入。演示通过固定三文件清单
+读取 `data/content/`，不会摄入同目录下的 `recall-demo/` 语料；演示生成内容在
+`data/memoria/demo/`。
 
 ## 2. 保存和搜索一段文字
 

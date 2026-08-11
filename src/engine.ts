@@ -1,5 +1,6 @@
 "use strict";
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as path from "node:path";
 
 import { DEFAULT_CONFIG, mergeConfig } from "./config/default-config.js";
@@ -68,6 +69,10 @@ export interface EngineStats {
 }
 
 export type EngineState = "created" | "initializing" | "ready" | "closing" | "closed";
+
+interface LifecycleContext {
+  phase: "onReady";
+}
 
 function isRecord(value: unknown): value is UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -146,6 +151,7 @@ class MemoryEngine {
   state: EngineState;
   private _initPromise: Promise<void> | null;
   private _closePromise: Promise<void> | null;
+  private readonly _lifecycleContext = new AsyncLocalStorage<LifecycleContext>();
   private _ownsMetadataStore = false;
   private _ownsVectorStore = false;
   private _ownsEmbeddingProvider = false;
@@ -236,12 +242,24 @@ class MemoryEngine {
     return this.state === "ready";
   }
 
+  private _assertLifecycleReentry(operation: "initialize" | "close"): void {
+    if (this._lifecycleContext.getStore()?.phase !== "onReady") return;
+    throw new MemoriaError("concurrency", `Cannot ${operation} from within onReady.`, {
+      details: {
+        reason: "lifecycle_reentrancy",
+        phase: "onReady",
+        operation,
+      },
+    });
+  }
+
   async initialize(): Promise<void> {
-    if (this.state === "ready") return;
-    if (this.state === "initializing") {
+    this._assertLifecycleReentry("initialize");
+    if (this._initPromise) {
       await this._initPromise;
       return;
     }
+    if (this.state === "ready") return;
     if (this.state === "closing" || this.state === "closed") {
       throw new MemoriaError(
         "lifecycle",
@@ -281,10 +299,12 @@ class MemoryEngine {
         this.searchPipeline = new SearchPipeline(this.config, rebuiltSearchOptions);
       }
       this.lastReconciliation = await this._recoverIndexes();
-      if (this.options.onReady && typeof this.options.onReady === "function") {
-        await this.options.onReady(this);
-      }
       this.state = "ready";
+      if (this.options.onReady && typeof this.options.onReady === "function") {
+        await this._lifecycleContext.run({ phase: "onReady" }, () =>
+          this.options.onReady!(this),
+        );
+      }
     })();
     this._initPromise = initialization;
 
@@ -563,18 +583,24 @@ class MemoryEngine {
   }
 
   private _runSerializedMutation<T>(
-    key: string,
+    key: string | readonly string[],
     operation: () => Promise<T>,
   ): Promise<T> {
-    const previous = this._mutationTails.get(key) || Promise.resolve();
+    const keys = (Array.isArray(key) ? [...key] : [key])
+      .filter((value) => value.length > 0)
+      .sort();
+    const queueKeys = [...new Set(keys.length > 0 ? keys : ["__default__"])];
+    const previous = queueKeys.map(
+      (queueKey) => this._mutationTails.get(queueKey) || Promise.resolve(),
+    );
     let release!: () => void;
     const tail = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this._mutationTails.set(key, tail);
+    for (const queueKey of queueKeys) this._mutationTails.set(queueKey, tail);
 
-    const coordinated = previous.then(() =>
-      this._vectorCoordinator.runMutation(key, async () => {
+    const coordinated = Promise.all(previous).then(() =>
+      this._vectorCoordinator.runMutation(queueKeys.join("\u0000"), async () => {
         this._vectorStateComplete = false;
         return operation();
       }),
@@ -596,8 +622,10 @@ class MemoryEngine {
       )
       .finally(() => {
         release();
-        if (this._mutationTails.get(key) === tail) {
-          this._mutationTails.delete(key);
+        for (const queueKey of queueKeys) {
+          if (this._mutationTails.get(queueKey) === tail) {
+            this._mutationTails.delete(queueKey);
+          }
         }
       });
   }
@@ -612,15 +640,16 @@ class MemoryEngine {
     return `file:${normalizeMutationPath(identity)}`;
   }
 
-  private _canonicalMutationKey(input: {
+  private _canonicalMutationKeys(input: {
     path: string;
     relPath?: string;
     documentId?: string;
-  }): string {
+  }): string[] {
+    const keys = [this._fileMutationKey(input.path, input.relPath)];
     if (input.documentId !== undefined) {
-      return `document:${normalizeDocumentId(input.documentId)}`;
+      keys.push(`document:${normalizeDocumentId(input.documentId)}`);
     }
-    return this._fileMutationKey(input.path, input.relPath);
+    return [...new Set(keys)].sort();
   }
 
   /** Rebuild derived vector indices from the metadata/content authority. */
@@ -706,7 +735,7 @@ class MemoryEngine {
       const results: IngestEnvelope[] = [];
       for (const entry of entries) {
         const result = await this._runSerializedMutation(
-          this._canonicalMutationKey(entry),
+          this._canonicalMutationKeys(entry),
           async () => {
             return this.ingestPipeline.run(
               {
@@ -941,7 +970,7 @@ class MemoryEngine {
     try {
       const source: FileInput = typeof input === "string" ? { path: input } : input;
       return (await this._runSerializedMutation(
-        this._canonicalMutationKey(source),
+        this._canonicalMutationKeys(source),
         async () => {
           return (await this.deletePipeline.run(
             {
@@ -1097,11 +1126,13 @@ class MemoryEngine {
    * @returns {Promise<void>}
    */
   async close(): Promise<void> {
+    this._assertLifecycleReentry("close");
+    this._activeOperations.assertNotInActiveOperation("close");
     if (this.state === "closed") return;
     if (this._closePromise) return this._closePromise;
 
     const closing = (async () => {
-      if (this.state === "initializing" && this._initPromise) {
+      if (this._initPromise) {
         await this._initPromise;
       }
 

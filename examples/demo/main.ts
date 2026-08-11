@@ -5,7 +5,7 @@
  *
  * 章节：
  *   1. 初始化   —— createMemoryEngine + 注入 Fake 嵌入 Provider
- *   2. 摄入     —— 文件适配器扫描 3 篇演示日记 → getStats
+ *   2. 摄入     —— 文件适配器按固定清单读取 3 篇演示日记 → getStats
  *   3. 基础检索 —— 混合检索（向量 + BM25）展示格式化结果
  *   4. 高级检索 —— TagMemo 浪潮 + EPA 投影 + 残差金字塔 痕迹
  *   5. 删除     —— 文件适配器 removeFile → 再查询确认消失
@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { createMemoryEngine } from "../../src/index.js";
 import FilesystemIngestionAdapter from "../../src/adapters/filesystem-ingestion-adapter.js";
 import { FakeEmbeddingProvider } from "./fake-embedding.js";
+import { DEMO_NOTES, ingestDemoSources } from "./demo-sources.js";
 import type { MemoryEngine } from "../../src/engine.js";
 import type { SearchEnvelope } from "../../src/types.js";
 
@@ -74,8 +75,6 @@ function snippet(text: unknown, max = 80): string {
 }
 
 /* ---------------- 演示日记 ---------------- */
-
-const NOTES = ["quantum/qubit.mdx", "memory/cold-knowledge.mdx", "life/coffee.mdx"];
 
 /* ---------------- 引擎初始化 ---------------- */
 
@@ -131,13 +130,13 @@ async function chapter2(
   engine: MemoryEngine,
   filesystem: FilesystemIngestionAdapter,
 ): Promise<void> {
-  for (const note of NOTES) {
+  for (const note of DEMO_NOTES) {
     const abs = path.join(NOTES_DIR, note);
     const stat = fs.statSync(abs);
     info(`读取 ${note} (${stat.size} 字节)`);
   }
 
-  const envelopes = await filesystem.scan();
+  const envelopes = await ingestDemoSources(filesystem, NOTES_DIR);
   const stats = await engine.getStats();
   const errors = envelopes
     .filter((e) => typeof e.error === "string")

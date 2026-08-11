@@ -72,6 +72,7 @@ class DerivedStateCoordinator {
             release();
             await this._ensureClean();
             this._queuedMutations += 1;
+            queueTicketConsumed = false;
             continue;
           }
 

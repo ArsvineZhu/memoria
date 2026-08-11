@@ -18,7 +18,8 @@ VCP 标签、占位符、modifier，也不写查询 MDX。需要固定算法时�
 rerank。原 VCP 的组合 `RiverMemo::Rerank+` 则拆成
 `topology + riverMemo.rerank + externalRerank: { mode: "rrf" }`：前者是
 Topology V3，后者才是外部 Reranker 与原检索排名的 RRF。没有注入
-`ctx.reranker` 时，RRF 层会保留 Topology 结果并留下 `rerankSkipped` 诊断。
+`ctx.reranker` 时，RRF 层会保留 Topology 结果并留下 `rerankSkipped` 诊断；普通 provider
+异常使用 `rerankFailure: "provider_error"`，生命周期/并发控制错误继续抛出。
 
 ## 最小调用
 

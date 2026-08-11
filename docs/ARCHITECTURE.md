@@ -73,7 +73,8 @@ initialize()        ── 幂等：按需 dynamic import 并创建缺失 Provid
                        状态；clean 且 persisted indexes 可验证时直接加载并注册它们，
                        dirty/stale/missing/corrupt 时 reset derived vector state 后
                        从 SQLite authority 批量重建；`persistTagIndex=false` 的 clean
-                       path 只局部重建内存 `global_tags` → onReady 回调 → ready
+                       path 只局部重建内存 `global_tags` → ready → onReady 回调
+                       （回调可读引擎；回调内 initialize/close 会快速失败）
 ingest(document)    ── 逻辑内容摄入；按稳定 documentId 幂等 upsert
 ingestBatch(docs)   ── 顺序执行逻辑内容摄入
 remove(documentId)  ── 按逻辑身份删除，不依赖源文件路径

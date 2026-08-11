@@ -89,8 +89,9 @@ const result = await engine.search("这份记忆和设计稿的关系", {
 ```
 
 这里的 `externalRerank` 才对应旧 `Rerank+`。它需要 `ctx.reranker`；缺少服务或
-服务失败时保留 Topology 候选并报告 `rerankSkipped`，不会让外部依赖成为主检索的
-单点故障。
+服务失败时保留 Topology 候选并报告 `rerankSkipped` 与安全码
+`rerankFailure: "provider_error"`，不会让普通外部依赖成为主检索的单点故障；
+生命周期/并发控制错误仍会向上抛出。
 
 显式计划优先于自然语言自动选择。空的 `filters.spaces: []` 是有意的空范围，会返回空
 结果，不会偷偷回退到 `Root`。没有显式计划时，旧的配置开关仍保持兼容；文件型 SQLite

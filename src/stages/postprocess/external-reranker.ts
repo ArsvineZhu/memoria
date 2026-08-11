@@ -34,6 +34,8 @@ class ExternalRerankerStage extends Stage {
       mergedCandidates: ChunkCandidate[];
       reranked?: boolean;
       rerankSkipped?: boolean;
+      rerankFailure?: "provider_error";
+      rerankError?: string;
     }
   > {
     const info = input || {};
@@ -64,8 +66,7 @@ class ExternalRerankerStage extends Stage {
     } catch (error) {
       if (
         error instanceof MemoriaError &&
-        error.code === "concurrency" &&
-        error.details.reason === "stable_read_reentrancy"
+        (error.code === "concurrency" || error.code === "lifecycle")
       ) {
         throw error;
       }
@@ -73,7 +74,8 @@ class ExternalRerankerStage extends Stage {
         ...info,
         mergedCandidates: candidates,
         rerankSkipped: true,
-        rerankError: error instanceof Error ? error.message : String(error),
+        rerankFailure: "provider_error",
+        rerankError: "provider_error",
       };
     }
 

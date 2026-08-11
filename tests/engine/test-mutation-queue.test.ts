@@ -51,7 +51,10 @@ function makeEngine() {
 
 type MutationQueueInternals = {
   _mutationTails: Map<string, Promise<void>>;
-  _runSerializedMutation<T>(key: string, operation: () => Promise<T>): Promise<T>;
+  _runSerializedMutation<T>(
+    key: string | readonly string[],
+    operation: () => Promise<T>,
+  ): Promise<T>;
 };
 
 test("same document revisions execute in queue-entry order", async () => {
@@ -332,6 +335,75 @@ test("logical and file mutations with one documentId share a canonical queue key
       "logical-start",
       "logical-finish",
     ]);
+  } finally {
+    releaseFlush();
+    await engine.close();
+  }
+});
+
+test("documentId-backed flush and path-only delete share both authority aliases", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-mutation-aliases-"));
+  const engine = createMemoryEngine({
+    dbPath: ":memory:",
+    config: {
+      dimension: DIMENSION,
+      rootPath: root,
+      storePath: join(root, "indices"),
+    },
+    embeddingProvider: embeddingProvider(),
+  });
+  await engine.initialize();
+
+  const events: string[] = [];
+  let markFlushStarted!: () => void;
+  let releaseFlush!: () => void;
+  let markDeleteStarted!: () => void;
+  const flushStarted = new Promise<void>((resolve) => {
+    markFlushStarted = resolve;
+  });
+  const flushRelease = new Promise<void>((resolve) => {
+    releaseFlush = resolve;
+  });
+  const deleteStarted = new Promise<void>((resolve) => {
+    markDeleteStarted = resolve;
+  });
+
+  engine.ingestPipeline.run = async (input) => {
+    events.push("flush-start");
+    markFlushStarted();
+    await flushRelease;
+    events.push("flush-finish");
+    return ingestResult(input);
+  };
+  engine.deletePipeline.run = async (input) => {
+    events.push("delete");
+    markDeleteStarted();
+    return { ...input, deleted: true, removedChunkIds: [] };
+  };
+
+  const filePath = join(root, "foo.md");
+  try {
+    const flush = engine.flushBatch({
+      path: filePath,
+      relPath: "foo.md",
+      documentId: "shared:authority",
+      content: "file state",
+      mtime: 0,
+      size: 10,
+    });
+    await flushStarted;
+
+    const deletion = engine.handleDelete("foo.md");
+    const startedBeforeFlushRelease = await Promise.race([
+      deleteStarted.then(() => true as const),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 50)),
+    ]);
+    assert.equal(startedBeforeFlushRelease, false);
+    assert.deepEqual(events, ["flush-start"]);
+
+    releaseFlush();
+    await Promise.all([flush, deletion]);
+    assert.deepEqual(events, ["flush-start", "flush-finish", "delete"]);
   } finally {
     releaseFlush();
     await engine.close();

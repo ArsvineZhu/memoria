@@ -132,7 +132,8 @@ binding` 或 `Unsupported OS/architecture`（`rust-vexus-lite/index.js:299–310
   条的“仓库根 `.env`”是两个文件——测试读根 `.env`，Demo 读自己的 `.env`。
 - 若 embedding key 存在仍失败，对照第 1/2 条（目录权限、维度 1024 与模型是否一致）；
   使用 `--external-rerank` 时还必须配置 `RERANK_API_URL`、`RERANK_API_KEY`、
-  `RERANK_MODEL`，外部服务失败会保留 local 结果并记录 `rerankSkipped`/`rerankError`。
+  `RERANK_MODEL`，外部服务失败会保留 local 结果并记录
+  `rerankSkipped`/`rerankFailure: "provider_error"`（兼容字段 `rerankError` 也只写安全码）。
 
 ## 附：通用排查顺序
 

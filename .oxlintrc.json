@@ -11,6 +11,11 @@
   "options": {
     "typeAware": true
   },
+  "rules": {
+    "no-debugger": "error",
+    "no-constant-condition": "error",
+    "no-unsafe-finally": "error"
+  },
   "categories": {
     "correctness": "off",
     "nursery": "off",

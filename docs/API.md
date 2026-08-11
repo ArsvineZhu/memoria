@@ -270,8 +270,9 @@ authority discovery → `Root` compatibility fallback。显式空数组表示空
 `TimeDecayStage` 执行。搜索结果 envelope 还会保留 `vectorResults`、`bm25Results`、
 `tagExpansion`、`vectorReshape`、`tagMemo`、`riverMemo`、`geodesic`、`epa`、
 `pyramid`、`associatorStats`、`dedupeStats`、`truncationStats`、`expansionStats` 以及
-`reranked`/`rerankSkipped`/`rerankError` 等诊断字段；字段可能因开关或依赖未满足而
-缺省。详见 [检索能力矩阵](RETRIEVAL_FEATURES.md)。
+`reranked`/`rerankSkipped`/`rerankFailure`/`rerankError` 等诊断字段；其中
+`rerankError` 是兼容字段，运行时只会写安全错误码，不暴露 provider 异常原文；字段
+可能因开关或依赖未满足而缺省。详见 [检索能力矩阵](RETRIEVAL_FEATURES.md)。
 
 兼容层的 `applyTagBoostAsync`、`rerankWithTagMemoAsync` 和
 `rerankWithRiverMemoAsync` 保留旧调用形状，但内部复用 MemoRuntime、TagMemo

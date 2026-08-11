@@ -14,23 +14,23 @@
 对应信号。阶段可能因为没有候选、没有标签图、没有向量、scope 为空或缺少注入依赖而
 安全跳过。请同时查看“实际信号”列和搜索结果中的 trace 字段。
 
-| 能力                  | 开关/入口                                                                    |                          默认值 | 依赖                                                 | 诊断字段                                                                      | Demo 场景             |
-| --------------------- | ---------------------------------------------------------------------------- | ------------------------------: | ---------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------- |
-| vector + BM25 hybrid  | `vectorWeight` / `bm25Weight`                                                |                         enabled | embedding、SQLite、Vexus                             | `vectorResults`、`bm25Results`                                                | 所有查询              |
-| EPA                   | `epaProjectionEnabled`                                                       |                          `true` | tag vectors                                          | `epa`                                                                         | 跨主题语义轴          |
-| residual pyramid      | `residualPyramidEnabled`                                                     |                          `true` | tag vectors                                          | `pyramid`                                                                     | 多事实查询            |
-| TagMemo V9/V10        | `tagMemoV9Enabled` / `tagMemoV10Enabled` 或 `RetrievalPlan.strategy="field"` |                  `false` / auto | tag graph、tag vectors；文件型 SQLite 可用 Rust Memo | `tagMemo`、`nativeMemo`                                                       | 标签联想              |
-| RiverMemo（兼容）     | `riverMemoEnabled`                                                           |                         `false` | `riverStateStore`、tag river                         | `riverMemo`                                                                   | 旧版连续查询轨迹      |
-| RiverMemo Topology V3 | `RetrievalPlan.strategy="topology"` 或 `topologyV3Enabled`                   |                  `false` / auto | 文件型 SQLite、Vexus MemoRuntime                     | `riverMemo`、`topologyV3`、`topologyV3Skipped`                                | 关系/路径重排         |
-| tag expansion         | `tagExpansionEnabled`                                                        |                         `false` | `global_tags`                                        | `tagExpansion`                                                                | 同义标签扩展          |
-| vector rerank         | `vectorReshapeEnabled`                                                       |                         `false` | chunk vectors                                        | `vectorReshape`                                                               | embedding 相似度重排  |
-| geodesic rerank       | `geodesicRerankEnabled`                                                      |                         `false` | TagMemo activations                                  | `geodesic`、`geodesicSkipped`                                                 | 标签能量重排          |
-| same-file expansion   | `expansionEnabled` / `fullDocumentExpansionEnabled`                          |                         `false` | sibling chunks / parent document                     | `expansionStats`                                                              | 上下文或全文补全      |
-| association           | `associatorEnabled`                                                          |                         `false` | co-occurrence + vector store                         | `associatorStats`、`associationChannel`、`associationOf`                      | 标签/向量相关记忆     |
-| external rerank / RRF | `externalRerankEnabled` + `ctx.reranker`                                     |                         `false` | 外部 Chat API                                        | `reranked`、`rerankSkipped`、`rerankError`、`rerankScore`、`externalRrfScore` | Rerank/Rerank+ 后处理 |
-| time decay            | `timeDecayEnabled`                                                           |                         `false` | file timestamps                                      | candidate `decay`                                                             | 新旧记忆排序          |
-| dedupe/truncate       | `dedupeEnabled` / `truncateEnabled`                                          | dedupe `true`，truncate `false` | candidate vectors                                    | `dedupeStats`、`truncationStats`                                              | 结果清理              |
-| relation graph/filter | `retrievalPlan.filters` / `expansion.related` / `sameDocument` / `associate` |        filters 按请求，扩展关闭 | SQLite metadata、关系图、标签/向量                   | `retrievalFilter`、`relationExpansion`、`associatorStats`、`finalCandidates`  | 范围约束和关联补全    |
+| 能力                  | 开关/入口                                                                    |                          默认值 | 依赖                                                 | 诊断字段                                                                                       | Demo 场景             |
+| --------------------- | ---------------------------------------------------------------------------- | ------------------------------: | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------- |
+| vector + BM25 hybrid  | `vectorWeight` / `bm25Weight`                                                |                         enabled | embedding、SQLite、Vexus                             | `vectorResults`、`bm25Results`                                                                 | 所有查询              |
+| EPA                   | `epaProjectionEnabled`                                                       |                          `true` | tag vectors                                          | `epa`                                                                                          | 跨主题语义轴          |
+| residual pyramid      | `residualPyramidEnabled`                                                     |                          `true` | tag vectors                                          | `pyramid`                                                                                      | 多事实查询            |
+| TagMemo V9/V10        | `tagMemoV9Enabled` / `tagMemoV10Enabled` 或 `RetrievalPlan.strategy="field"` |                  `false` / auto | tag graph、tag vectors；文件型 SQLite 可用 Rust Memo | `tagMemo`、`nativeMemo`                                                                        | 标签联想              |
+| RiverMemo（兼容）     | `riverMemoEnabled`                                                           |                         `false` | `riverStateStore`、tag river                         | `riverMemo`                                                                                    | 旧版连续查询轨迹      |
+| RiverMemo Topology V3 | `RetrievalPlan.strategy="topology"` 或 `topologyV3Enabled`                   |                  `false` / auto | 文件型 SQLite、Vexus MemoRuntime                     | `riverMemo`、`topologyV3`、`topologyV3Skipped`                                                 | 关系/路径重排         |
+| tag expansion         | `tagExpansionEnabled`                                                        |                         `false` | `global_tags`                                        | `tagExpansion`                                                                                 | 同义标签扩展          |
+| vector rerank         | `vectorReshapeEnabled`                                                       |                         `false` | chunk vectors                                        | `vectorReshape`                                                                                | embedding 相似度重排  |
+| geodesic rerank       | `geodesicRerankEnabled`                                                      |                         `false` | TagMemo activations                                  | `geodesic`、`geodesicSkipped`                                                                  | 标签能量重排          |
+| same-file expansion   | `expansionEnabled` / `fullDocumentExpansionEnabled`                          |                         `false` | sibling chunks / parent document                     | `expansionStats`                                                                               | 上下文或全文补全      |
+| association           | `associatorEnabled`                                                          |                         `false` | co-occurrence + vector store                         | `associatorStats`、`associationChannel`、`associationOf`                                       | 标签/向量相关记忆     |
+| external rerank / RRF | `externalRerankEnabled` + `ctx.reranker`                                     |                         `false` | 外部 Chat API                                        | `reranked`、`rerankSkipped`、`rerankFailure`、`rerankError`、`rerankScore`、`externalRrfScore` | Rerank/Rerank+ 后处理 |
+| time decay            | `timeDecayEnabled`                                                           |                         `false` | file timestamps                                      | candidate `decay`                                                                              | 新旧记忆排序          |
+| dedupe/truncate       | `dedupeEnabled` / `truncateEnabled`                                          | dedupe `true`，truncate `false` | candidate vectors                                    | `dedupeStats`、`truncationStats`                                                               | 结果清理              |
+| relation graph/filter | `retrievalPlan.filters` / `expansion.related` / `sameDocument` / `associate` |        filters 按请求，扩展关闭 | SQLite metadata、关系图、标签/向量                   | `retrievalFilter`、`relationExpansion`、`associatorStats`、`finalCandidates`                   | 范围约束和关联补全    |
 
 ### 开关与实际信号
 
@@ -62,9 +62,11 @@
   `associatorStats.fromVector` 用于区分两条来源。
 - `retrievalPlan.postprocess.minScore` 是截断阶段的分数下限，在外部重排和时间衰减之后
   执行；`maxResults` 与 `maxContentLength` 再限制数量和正文长度。
-- external rerank 只有同时有显式开关和 `ctx.reranker` 时才调用。服务失败、响应无
-  合法分数或配置缺失时保留原排序，并设置 `rerankSkipped`；可诊断的错误文本在
-  `rerankError`，绝不应把 API key 写入日志。`mode: "rrf"` 会把融合分数作为后续
+- external rerank 只有同时有显式开关和 `ctx.reranker` 时才调用。provider 失败、响应无
+  合法分数或配置缺失时保留原排序，并设置 `rerankSkipped`；provider 异常使用
+  `rerankFailure: "provider_error"`，兼容字段 `rerankError` 也只写这个安全码，不返回
+  第三方异常原文、URL、响应体或异常中携带的查询内容。`lifecycle`/`concurrency` 控制错误继续抛出。
+  `mode: "rrf"` 会把融合分数作为后续
   truncate、time decay 和最终格式化的有效 `score`，同时保留 `originalScore` 和
   `externalRrfScore` 诊断。
 
@@ -171,7 +173,7 @@ ExpansionStats
 `SearchEnvelope` 的 `results` 之外，还可以读取 `vectorResults`、`bm25Results`、
 `epa`、`pyramid`、`tagMemo`、`riverMemo`、`tagExpansion`、`vectorReshape`、
 `geodesic`、`associatorStats`、`dedupeStats`、`truncationStats`、`expansionStats`、
-`reranked`、`rerankSkipped` 和 `rerankError`。单条 `SearchResult` 还会保留
+`reranked`、`rerankSkipped`、`rerankFailure` 和兼容字段 `rerankError`。单条 `SearchResult` 还会保留
 `associationChannel`、`associationOf` 和 `rerankScore`（有值时出现）。
 
 ## 50 文件真实嵌入 Demo
@@ -196,8 +198,9 @@ corepack pnpm demo:real-embed -- --external-rerank --top-k 5
 ```
 
 候选会包含截断正文、标题、标签和相对路径，可能暴露个人知识库内容并产生第三方
-API 费用；请只对允许外发的语料使用。外部失败只标记 `rerankSkipped`/`rerankError`，
-不会抹掉 baseline 或 local 结果。运行前提、环境变量、输出 JSON 和重跑行为见
+API 费用；请只对允许外发的语料使用。普通 provider 失败只标记
+`rerankSkipped`/`rerankFailure: "provider_error"`，不会抹掉 baseline 或 local 结果；
+运行前提、环境变量、输出 JSON 和重跑行为见
 [real-embed 示例](../examples/real-embed/README.md)。
 
 ## 相关文档

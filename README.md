@@ -24,9 +24,10 @@ corepack pnpm build:test
 node dist-test/examples/demo/main.js
 ```
 
-演示会读取 `data/content/` 中的三篇 MDX 文件，执行初始化、摄入、搜索、删除和
-关闭流程，并把演示用的数据库和索引写入 `data/memoria/demo/`。源文件不会被
-覆盖。详细说明见 [examples/demo/README.md](examples/demo/README.md)。
+演示会按固定清单读取 `data/content/` 中的三篇 MDX 文件，执行初始化、摄入、搜索、
+删除和关闭流程，并把演示用的数据库和索引写入 `data/memoria/demo/`；不会把同目录
+下的 `recall-demo/` 语料摄入。源文件不会被覆盖。详细说明见
+[examples/demo/README.md](examples/demo/README.md)。
 
 ## 最小接入示例
 

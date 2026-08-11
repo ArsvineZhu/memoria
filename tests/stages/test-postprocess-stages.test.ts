@@ -422,6 +422,51 @@ test("ExternalRerankerStage propagates stable-read reentrancy errors", async () 
   );
 });
 
+test("ExternalRerankerStage propagates lifecycle control errors", async () => {
+  const stage = new ExternalRerankerStage();
+  const ctx = new PipelineContext({
+    config: {
+      externalRerankEnabled: true,
+      reranker: async () => {
+        throw new MemoriaError("lifecycle", "close is not allowed here");
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      stage.process(
+        { query: "q", mergedCandidates: [{ chunkId: 1, score: 0.5 }] },
+        ctx,
+      ),
+    (error: unknown) => error instanceof MemoriaError && error.code === "lifecycle",
+  );
+});
+
+test("ExternalRerankerStage hides provider exception details", async () => {
+  const stage = new ExternalRerankerStage();
+  const secret = "https://provider.example/rerank?api_key=secret-query";
+  const ctx = new PipelineContext({
+    config: {
+      externalRerankEnabled: true,
+      reranker: async () => {
+        throw new Error(`provider failed: ${secret}`);
+      },
+    },
+  });
+
+  const out = await stage.process(
+    { query: "private query", mergedCandidates: [{ chunkId: 1, score: 0.5 }] },
+    ctx,
+  );
+
+  assert.equal(out.rerankSkipped, true);
+  assert.equal(out.rerankFailure, "provider_error");
+  assert.equal(out.rerankError, "provider_error");
+  assert.equal(JSON.stringify(out).includes(secret), false);
+  assert.equal(JSON.stringify(out).includes("private query"), true);
+});
+
 // ── TimeDecayStage ──────────────────────────────────────────────────────
 
 test("TimeDecayStage ranks newer chunks above older ones at equal score", async () => {

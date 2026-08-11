@@ -498,6 +498,7 @@ function summarizeTrace(output: SearchEnvelope): Record<string, unknown> {
     expansionStats: output.expansionStats ?? null,
     reranked: output.reranked === true,
     rerankSkipped: output.rerankSkipped === true,
+    rerankFailure: output.rerankFailure ?? null,
     rerankError: output.rerankError ?? null,
   };
 }

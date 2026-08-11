@@ -71,7 +71,8 @@ corepack pnpm demo:real-embed -- --external-rerank --top-k 5
 `[{"chunkId": number, "score": number}]`。最多发送 20 个候选，每个候选只包含
 `chunkId`、相对路径、标题、标签和截断正文。未知 ID、重复 ID 和非法分数会被丢弃，
 分数会限制到 `[0, 1]`。外部服务失败时 demo 保留 baseline/local 结果，并在
-`rerankSkipped` 与 `rerankError` 中说明原因；不会打印 API key。发送正文到第三方
+`rerankSkipped` 与 `rerankFailure: "provider_error"` 中说明原因；兼容字段
+`rerankError` 也只写安全码，不会打印 API key 或第三方异常原文。发送正文到第三方
 服务可能产生隐私风险和 API 费用，请只在允许的语料上开启。
 
 ## CLI 参数

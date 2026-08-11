@@ -60,8 +60,8 @@ SQLite 中的文件、正文、标签和向量 BLOB 是可查询的权威数据�
 运行时输出，已被 Git 忽略，不要手工编辑。SQLite 使用 WAL 时，`.sqlite-wal` 和
 `.sqlite-shm` 必须与主库一起备份；删除它们可能丢失尚未检查点的数据。
 
-关闭 `persistTagIndex` 时，旧的 `global_tags` 文件会被忽略并由 authority 重建，
-不会被程序删除；相关恢复和重建边界见 [持久化说明](../docs/PERSISTENCE.md)。
+关闭 `persistTagIndex` 时，旧的 `global_tags` 文件会失效并被程序删除，内存索引
+再由 authority 重建；相关恢复和重建边界见 [持久化说明](../docs/PERSISTENCE.md)。
 
 路径如何由 `dataPath` 派生、如何覆盖，以及索引恢复的具体过程，见
 [../docs/CONFIGURATION.md](../docs/CONFIGURATION.md) 和

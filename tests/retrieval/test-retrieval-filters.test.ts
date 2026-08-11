@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 
 import RetrievalFilterResolverStage from "../../src/stages/retrieval/retrieval-filter.js";
 import CandidateFilterStage from "../../src/stages/retrieval/candidate-filter.js";
+import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
 import type { PipelineContextLike, PipelineData } from "../../src/types.js";
 
 function makeContext(): PipelineContextLike {
@@ -81,4 +82,59 @@ test("candidate filter removes postprocess additions outside the resolved set", 
     (out.mergedCandidates || []).map((candidate) => candidate.chunkId),
     [11],
   );
+});
+
+test("SQLite retrieval scope resolves with one joined authority query", async () => {
+  const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: 4 });
+  await store.replaceDocumentState({
+    file: {
+      path: "research/active.mdx",
+      diaryName: "research",
+      checksum: "a",
+      mtime: 1_725_000_000_000,
+      size: 1,
+      documentId: "active",
+      metadataJson: JSON.stringify({ status: "active" }),
+    },
+    chunks: [{ chunkIndex: 0, content: "active", vector: null }],
+    tags: [],
+    orderedTagNames: [],
+  });
+  await store.replaceDocumentState({
+    file: {
+      path: "private/secret.mdx",
+      diaryName: "private",
+      checksum: "b",
+      mtime: 1_725_000_000_000,
+      size: 1,
+      documentId: "secret",
+      metadataJson: JSON.stringify({ status: "active" }),
+    },
+    chunks: [{ chunkIndex: 0, content: "secret", vector: null }],
+    tags: [],
+    orderedTagNames: [],
+  });
+  store.getAllChunks = async () => {
+    throw new Error("full corpus scan is forbidden");
+  };
+  store.getFileByChunkId = async () => {
+    throw new Error("per-chunk N+1 lookup is forbidden");
+  };
+
+  try {
+    const out = await new RetrievalFilterResolverStage().process(
+      {
+        retrievalFilters: {
+          spaces: ["research"],
+          metadata: { status: "active" },
+        },
+        resolvedIndexNames: ["research"],
+      },
+      { config: {}, metadataStore: store },
+    );
+    assert.equal((out.allowedChunkIds as Set<number>).size, 1);
+    assert.equal((out.allowedDocumentKeys as Set<string>).has("document:active"), true);
+  } finally {
+    store.close();
+  }
 });

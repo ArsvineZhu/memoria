@@ -44,7 +44,7 @@ function loadDatabaseCtor(): typeof BetterSqlite3 | null {
     const loaded = requireFromStore("better-sqlite3") as
       typeof BetterSqlite3 | { default?: typeof BetterSqlite3 };
     DatabaseCtor = typeof loaded === "function" ? loaded : (loaded.default ?? null);
-  } catch (_) {
+  } catch {
     DatabaseCtor = null;
   }
   return DatabaseCtor;

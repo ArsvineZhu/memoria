@@ -227,15 +227,8 @@ function assertBoolean(value: unknown, path: string): void {
   }
 }
 
-function assertEnum<T extends string>(
-  value: unknown,
-  path: string,
-  values: readonly T[],
-): void {
-  if (
-    value !== undefined &&
-    (typeof value !== "string" || !values.includes(value as T))
-  ) {
+function assertEnum(value: unknown, path: string, values: readonly string[]): void {
+  if (value !== undefined && (typeof value !== "string" || !values.includes(value))) {
     invalidPlanParameter(path, `expected one of ${values.join(", ")}`);
   }
 }

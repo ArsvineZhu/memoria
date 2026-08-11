@@ -153,7 +153,7 @@ class ResidualPyramid {
       let tagResults;
       try {
         tagResults = await searchFn(currentResidual, this.config.topK);
-      } catch (e) {
+      } catch {
         break;
       }
       if (!tagResults || tagResults.length === 0) break;
@@ -245,7 +245,7 @@ class ResidualPyramid {
           residual: new Float32Array(result.residual.map((x) => x)),
           basisCoefficients: new Float32Array(result.basisCoefficients.map((x) => x)),
         };
-      } catch (e) {
+      } catch {
         // Fall through to JS
       }
     }
@@ -285,7 +285,7 @@ class ResidualPyramid {
           );
         }
         return { magnitudes: result.magnitudes.map((x) => x), directions };
-      } catch (e) {
+      } catch {
         // Fall through to JS
       }
     }

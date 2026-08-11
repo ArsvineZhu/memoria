@@ -55,6 +55,7 @@ function loadNativeModule(): VexusNativeModule {
       throw new Error(
         `Unable to load rust-vexus-lite native binding. ` +
           `Source path failed: ${sourceMessage}; compiled path failed: ${compiledMessage}`,
+        { cause: compiledError },
       );
     }
   }

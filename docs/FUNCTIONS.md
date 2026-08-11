@@ -32,7 +32,7 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 
 ## 2. 六类阶段族（真实 stage 类名）
 
-### 2.1 Ingestion（摄入：文本读取与分块，8 阶段固定链）
+### 2.1 Ingestion（摄入：文本读取与分块，9 阶段固定链）
 
 `IngestPipeline` 串行执行：
 
@@ -43,9 +43,10 @@ skipped`（未变更文件为 `skipped:true`，不重嵌入）。
 | 3    | `ChunkerStage`             | `text-chunker.ts`                 | 按句子切块（`split(/(?<=[。？！.!?\n])/)`），tiktoken 计数，超长句强制切分，相邻块按 overlapTokens 重叠                                                                                                |
 | 4    | `ChunkEmbedderStage`       | `chunk-embedder.ts`               | 块批量嵌入；失败（null）项剔除，块序保持                                                                                                                                                               |
 | 5    | `TagEmbedderStage`         | `tag-embedder.ts`                 | 标签批量嵌入                                                                                                                                                                                           |
-| 6    | `MetadataWriterStage`      | `metadata-writer.ts`              | SQLite 写入：正常路径原子替换 file/chunks/tags/file_tags；仅标签变化时要求 `replaceDocumentTags` 原子更新并保留 chunks；旧块 id 输出为 `removedChunkIds`；可选 kv_store 检查点                         |
-| 7    | `VectorIndexerStage`       | `vector-indexer.ts`               | 向量写入：日记索引（名 = diaryName）+ `global_tags` 标签索引；先删遗留后 upsert（幂等重嵌）；触发延迟落盘                                                                                              |
-| 8    | `CooccurrenceBuilderStage` | `co-occurrence-builder.ts`        | 默认有意跳过（不重建派生图）；`cooccurrenceRebuild` 开启时重建共现矩阵，TagMemo 也可由调用方将 `buildCooccurrenceMatrix()` 结果注入 `ctx.tagGraph`                                                     |
+| 6    | `RelationExtractorStage`   | `relation-extractor.ts`           | 纯计算：从不可变源快照提取显式关系，输出 `explicitRelations` 与 `relationSourceRevision`，不写 metadata store                                                                                          |
+| 7    | `MetadataWriterStage`      | `metadata-writer.ts`              | SQLite 写入：关系图启用时通过 `replaceDocumentAuthority` 同事务替换 file/chunks/tags/file_tags/source relations；旧块和孤儿 tag id 供派生索引清理；可选 kv_store 检查点                                |
+| 8    | `VectorIndexerStage`       | `vector-indexer.ts`               | 向量写入：日记索引（名 = diaryName）+ `global_tags` 标签索引；先删遗留和孤儿 tag 后 upsert（幂等重嵌）；触发延迟落盘                                                                                   |
+| 9    | `CooccurrenceBuilderStage` | `co-occurrence-builder.ts`        | 默认有意跳过（不重建派生图）；`cooccurrenceRebuild` 开启时重建共现矩阵，TagMemo 也可由调用方将 `buildCooccurrenceMatrix()` 结果注入 `ctx.tagGraph`                                                     |
 
 分块参数：`chunkMaxTokens`（默认 600，别名 `maxTokens`）、`chunkOverlapTokens`
 （默认 96，别名 `overlapTokens`）；超长单句由 `forceSplitLongText` 硬切。
@@ -107,11 +108,11 @@ discovery > `Root` fallback。`resolvedIndexNames: []` 是明确空 scope，vect
 
 ### 2.6 Storage（存储：SQLite 元数据 + Rust 向量）
 
-| 组件                                 | 文件                                 | 要点                                                                                                                                                                                                                                                         |
-| ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SqliteMetadataStore`                | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async                                                                                                                                |
-| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；clean restore 验证后注册磁盘索引，dirty/stale 时严格 reconciliation；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex=false` 失效旧 `global_tags` 文件并从 authority 局部重建 |
-| `VectorStore` / `MetadataStore` 接口 | `interfaces/`                        | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；恢复要求 `rebuildDerivedState(plan)`，或同时提供 `resetDerivedState + replaceIndex`；SQLite 标签-only 更新使用可选 `replaceDocumentTags`                                           |
+| 组件                                 | 文件                                 | 要点                                                                                                                                                                                                                                                                             |
+| ------------------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SqliteMetadataStore`                | `providers/sqlite-metadata-store.ts` | better-sqlite3；WAL / NORMAL / 外键开；表：`files` / `chunks`（FK 级联）/ `tags` / `file_tags` / `kv_store`；接口方法全 async                                                                                                                                                    |
+| `VexusVectorStore`                   | `providers/vexus-vector-store.ts`    | Rust N-API `VexusIndex`（usearch）；内存 Map 管理命名索引；clean restore 验证后注册磁盘索引，dirty/stale 时严格 reconciliation；延迟保存（`indexSaveDelay` / `tagIndexSaveDelay`）；`persistTagIndex=false` 失效旧 `global_tags` 文件并从 authority 局部重建                     |
+| `VectorStore` / `MetadataStore` 接口 | `interfaces/`                        | 抽象契约：`add/addBatch/search/remove/loadIndex/saveIndex/getIndexStats`；恢复要求 `rebuildDerivedState(plan)`，或同时提供 `resetDerivedState + replaceIndex`；SQLite authority 写入使用 `replaceDocumentAuthority/deleteDocumentAuthority`，active tag 读取使用 `getActiveTags` |
 
 验证视角：`tests/providers/test-sqlite-metadata-store.test.ts`、
 `test-vexus-vector-store.test.ts`。

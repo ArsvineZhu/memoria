@@ -8,6 +8,7 @@ import type {
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
+import { relationDocumentKey } from "../../retrieval/relation-graph.js";
 
 interface RetrievalFilters {
   spaces?: readonly string[];
@@ -26,7 +27,7 @@ function parseMetadata(value: unknown): UnknownRecord {
   try {
     const parsed: unknown = JSON.parse(value);
     return isRecord(parsed) ? parsed : {};
-  } catch (_) {
+  } catch {
     return {};
   }
 }
@@ -116,14 +117,11 @@ class RetrievalFilterResolverStage extends Stage {
       return { ...info, retrievalFilters: filters || undefined };
 
     const store = ctx.metadataStore;
-    if (
-      !store ||
-      typeof store.getAllChunks !== "function" ||
-      typeof store.getFileByChunkId !== "function"
-    ) {
+    if (!store) {
       return {
         ...info,
         allowedChunkIds: new Set<number>(),
+        allowedDocumentKeys: new Set<string>(),
         retrievalFilter: { matchedChunks: 0, unavailable: true },
       };
     }
@@ -140,9 +138,53 @@ class RetrievalFilterResolverStage extends Stage {
         : Array.isArray(info.resolvedIndexNames)
           ? new Set(info.resolvedIndexNames.map((name) => String(name)))
           : null;
+
+    if (typeof store.resolveRetrievalScope === "function") {
+      try {
+        const resolved = await store.resolveRetrievalScope(
+          filters,
+          allowedSpaces ? [...allowedSpaces] : undefined,
+        );
+        return {
+          ...info,
+          retrievalFilters: filters,
+          allowedChunkIds: new Set(resolved.allowedChunkIds),
+          allowedDocumentKeys: new Set(resolved.allowedDocumentKeys),
+          retrievalFilter: {
+            matchedChunks: resolved.allowedChunkIds.length,
+            requestedDocumentIds: documentIds?.size || 0,
+            hasTimeRange:
+              filters.recordedAfter !== undefined ||
+              filters.recordedBefore !== undefined,
+            hasMetadata: !!filters.metadata,
+          },
+        };
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "persistence",
+          "Metadata store failed while resolving retrieval filters.",
+          { retryable: true },
+        );
+      }
+    }
+
+    if (
+      typeof store.getAllChunks !== "function" ||
+      typeof store.getFileByChunkId !== "function"
+    ) {
+      return {
+        ...info,
+        retrievalFilters: filters,
+        allowedChunkIds: new Set<number>(),
+        allowedDocumentKeys: new Set<string>(),
+        retrievalFilter: { matchedChunks: 0, unavailable: true },
+      };
+    }
     const after = epochSeconds(filters?.recordedAfter);
     const before = epochSeconds(filters?.recordedBefore);
     const allowed = new Set<number>();
+    const allowedDocumentKeys = new Set<string>();
     let chunks;
     try {
       chunks = await store.getAllChunks();
@@ -161,6 +203,7 @@ class RetrievalFilterResolverStage extends Stage {
           continue;
         if (filters?.metadata && !matchesMetadata(file, filters.metadata)) continue;
         allowed.add(chunkId);
+        allowedDocumentKeys.add(relationDocumentKey(file));
       }
     } catch (error) {
       throw asMemoriaError(
@@ -175,6 +218,7 @@ class RetrievalFilterResolverStage extends Stage {
       ...info,
       retrievalFilters: filters,
       allowedChunkIds: allowed,
+      allowedDocumentKeys,
       retrievalFilter: {
         matchedChunks: allowed.size,
         requestedDocumentIds: documentIds?.size || 0,

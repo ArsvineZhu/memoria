@@ -157,3 +157,89 @@ test("relation expansion applies the resolved hard scope before adding links", a
     [11],
   );
 });
+
+test("forbidden intermediate relation nodes cannot propagate into an allowed target", async () => {
+  let stored: string | null = null;
+  const files = new Map([
+    [
+      1,
+      {
+        id: 1,
+        path: "a.mdx",
+        diary_name: "research",
+        checksum: "a",
+        mtime: 1,
+        size: 1,
+      },
+    ],
+    [
+      2,
+      { id: 2, path: "b.mdx", diary_name: "private", checksum: "b", mtime: 1, size: 1 },
+    ],
+    [
+      3,
+      {
+        id: 3,
+        path: "c.mdx",
+        diary_name: "research",
+        checksum: "c",
+        mtime: 1,
+        size: 1,
+      },
+    ],
+  ]);
+  const chunks = new Map([
+    [11, { id: 11, file_id: 1, content: "a" }],
+    [21, { id: 21, file_id: 2, content: "b" }],
+    [31, { id: 31, file_id: 3, content: "c" }],
+  ]);
+  const metadataStore = {
+    getKv: async () => stored,
+    setKv: async (_key: string, value: string) => {
+      stored = value;
+    },
+    getFileByChunkId: async (id: number) =>
+      files.get(chunks.get(id)?.file_id || 0) || null,
+    getChunksByFileId: async (id: number) =>
+      [...chunks.values()].filter((chunk) => chunk.file_id === id),
+    getFileByPath: async (path: string) =>
+      [...files.values()].find((file) => file.path === path) || null,
+  } as unknown as MetadataStoreContract;
+  await new RelationGraphStore(metadataStore).replaceSourceRelations(
+    "path:a.mdx",
+    extractMdxRelations("[B](b.mdx)", "a.mdx", "path:a.mdx"),
+  );
+  await new RelationGraphStore(metadataStore).replaceSourceRelations(
+    "path:b.mdx",
+    extractMdxRelations("[C](c.mdx)", "b.mdx", "path:b.mdx"),
+  );
+  assert.deepEqual(
+    await new RelationGraphStore(metadataStore).relatedDocumentKeys(
+      ["path:b.mdx"],
+      1,
+      new Set(["path:a.mdx", "path:c.mdx"]),
+    ),
+    new Map(),
+  );
+
+  const out = await new RelationExpansionStage().process(
+    {
+      mergedCandidates: [{ chunkId: 11, score: 1 }],
+      allowedChunkIds: new Set([11, 31]),
+      allowedDocumentKeys: new Set(["path:a.mdx", "path:c.mdx"]),
+    },
+    {
+      config: {
+        relationExpansionEnabled: true,
+        relationMaxHops: 2,
+        relationMaxAdded: 5,
+      },
+      metadataStore,
+    },
+  );
+
+  assert.deepEqual(
+    out.mergedCandidates?.map((candidate) => candidate.chunkId),
+    [11],
+  );
+});

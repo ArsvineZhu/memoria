@@ -11,6 +11,12 @@ import { decodeVectorBlob } from "./utils/vector-codec.js";
 
 const TAG_INDEX_NAME = "global_tags";
 
+async function loadActiveTags(metadataStore: MetadataStoreContract) {
+  return typeof metadataStore.getActiveTags === "function"
+    ? metadataStore.getActiveTags()
+    : metadataStore.getAllTags();
+}
+
 export type { VectorReconciliationPlan } from "./types.js";
 
 interface ReconciliationOptions {
@@ -65,7 +71,7 @@ export async function buildTagVectorIndexEntries(
 ): Promise<VectorIndexEntry[]> {
   try {
     const entries: VectorIndexEntry[] = [];
-    for (const tag of await metadataStore.getAllTags()) {
+    for (const tag of await loadActiveTags(metadataStore)) {
       if (tag.vector == null) continue;
       const vector = decodeVectorBlob(tag.vector, dimension, `tag ${tag.id}`, {
         logPrefix: "Memoria tag-index recovery",
@@ -101,7 +107,7 @@ export async function buildVectorReconciliationPlan(
 ): Promise<VectorReconciliationPlan> {
   try {
     const rows = await loadIndexableChunks(metadataStore);
-    const tags = await metadataStore.getAllTags();
+    const tags = await loadActiveTags(metadataStore);
     const expectedIndexNames = await loadExpectedIndexNames(
       metadataStore,
       tags.length > 0,

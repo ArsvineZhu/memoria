@@ -16,7 +16,6 @@ import type {
   ChunkRow,
   DatabaseLike,
   EpaAnalysis,
-  EpaProjectResult,
   FileInput,
   FileRow,
   MemoryConfig,
@@ -56,7 +55,7 @@ type CompatChunk = {
   mtime: number | null;
   vector: Float32Array | null;
 };
-type MutationOperation = () => unknown | Promise<unknown>;
+type MutationOperation = () => unknown;
 type EpaCache = { epa: EPA; dimension: number; indexedAt: number | null };
 type IndexLike = { stats(): UnknownRecord };
 type DateIndexEntry = {
@@ -114,7 +113,12 @@ function compatQueryInput(
       ? rawVector
       : undefined;
   const input: PipelineData = {
-    query: typeof query.text === "string" ? query.text : String(query.query || ""),
+    query:
+      typeof query.text === "string"
+        ? query.text
+        : typeof query.query === "string"
+          ? query.query
+          : "",
     ...(queryVector ? { queryVector } : {}),
     mergedCandidates: [...candidates],
     options,
@@ -344,7 +348,7 @@ class KnowledgeBaseAdapter {
         try {
           const stats = index.stats();
           vectors += Number(stats && stats.totalVectors) || 0;
-        } catch (e) {
+        } catch {
           // A single index must not break the whole profile.
         }
       }
@@ -425,7 +429,7 @@ class KnowledgeBaseAdapter {
     }
     // Text search falls back to the engine pipeline.
     return this.engine.search(
-      String(arg1 || ""),
+      typeof arg1 === "string" ? arg1 : "",
       typeof arg2 === "object" && arg2 !== null && !Array.isArray(arg2)
         ? (arg2 as SearchOptions)
         : {},
@@ -448,7 +452,7 @@ class KnowledgeBaseAdapter {
     try {
       const names = await engine.metadataStore.getDistinctDiaryNames();
       return names && names.length ? names : ["Root"];
-    } catch (e) {
+    } catch {
       return ["Root"];
     }
   }
@@ -496,7 +500,7 @@ class KnowledgeBaseAdapter {
           query,
           Math.max(1, Math.round(k)),
         );
-      } catch (e) {
+      } catch {
         continue;
       }
       for (const hit of results || []) {
@@ -515,7 +519,7 @@ class KnowledgeBaseAdapter {
       let chunk: ChunkRow | null = null;
       try {
         chunk = await store.getChunkById(chunkId);
-      } catch (e) {
+      } catch {
         continue;
       }
       const row: FileRow | null =
@@ -526,9 +530,9 @@ class KnowledgeBaseAdapter {
         try {
           const tags = await store.getFileTags(row.id);
           tagNames = Array.isArray(tags)
-            ? tags.map((t) => (t && t.name) || String(t))
+            ? tags.map((t) => (t && typeof t.name === "string" ? t.name : ""))
             : [];
-        } catch (e) {
+        } catch {
           tagNames = [];
         }
       }
@@ -579,7 +583,7 @@ class KnowledgeBaseAdapter {
     if (store && typeof store.buildCooccurrenceMatrix === "function") {
       try {
         return await store.buildCooccurrenceMatrix();
-      } catch (_) {
+      } catch {
         // The caller still receives the original candidates and an explicit
         // unavailable diagnostic from the compatibility rerank method.
       }
@@ -591,12 +595,18 @@ class KnowledgeBaseAdapter {
     configOverrides: UnknownRecord,
     tagGraph?: Map<number, Map<number, number>>,
   ): PipelineContextLike {
+    const base = this.engine.ctx;
     return {
-      ...(this.engine.ctx || {}),
       config: { ...this.engine.config, ...configOverrides },
       embeddingProvider: this.engine.embeddingProvider,
       vectorStore: this.engine.vectorStore,
       metadataStore: this.engine.metadataStore,
+      vexusIndex: base?.vexusIndex,
+      epa: base?.epa,
+      riverStateStore: base?.riverStateStore,
+      checkpointState: base?.checkpointState,
+      reranker: base?.reranker,
+      queryInterpreter: base?.queryInterpreter,
       ...(tagGraph ? { tagGraph } : {}),
     } as PipelineContextLike;
   }
@@ -625,7 +635,7 @@ class KnowledgeBaseAdapter {
       )) as unknown as SearchResult[];
     } catch (error) {
       console.warn(
-        `[KnowledgeBaseAdapter] deduplicateResults failed at stage=${String(options.stage || "unknown")}; ` +
+        `[KnowledgeBaseAdapter] deduplicateResults failed at stage=${typeof options.stage === "string" ? options.stage : "unknown"}; ` +
           `falling back to exact deduplication: ${error instanceof Error ? error.message : String(error)}`,
       );
       try {
@@ -691,7 +701,7 @@ class KnowledgeBaseAdapter {
         entropy: Number(projection.entropy) || 1,
         dominantAxes: projection.dominantAxes || [],
       };
-    } catch (e) {
+    } catch {
       return fallback;
     }
   }
@@ -706,7 +716,13 @@ class KnowledgeBaseAdapter {
     const engine = this.engine;
     const store = engine && engine.metadataStore;
     const dimension = Number(engine && engine.config && engine.config.dimension) || 0;
-    if (!store || typeof store.getAllTags !== "function" || dimension <= 0) return null;
+    if (
+      !store ||
+      (typeof store.getActiveTags !== "function" &&
+        typeof store.getAllTags !== "function") ||
+      dimension <= 0
+    )
+      return null;
 
     if (
       this._epaCache &&
@@ -718,8 +734,11 @@ class KnowledgeBaseAdapter {
 
     let tags: TagRow[] = [];
     try {
-      tags = await store.getAllTags();
-    } catch (e) {
+      tags =
+        typeof store.getActiveTags === "function"
+          ? await store.getActiveTags()
+          : await store.getAllTags();
+    } catch {
       return null;
     }
     const withVectors = (tags || []).filter(
@@ -733,7 +752,7 @@ class KnowledgeBaseAdapter {
         clusterCount: Math.min(64, withVectors.length),
         maxBasisDim: Math.min(64, dimension),
       });
-    } catch (e) {
+    } catch {
       return null;
     }
 
@@ -777,7 +796,7 @@ class KnowledgeBaseAdapter {
     });
     const output = await new NativeMemoRuntimeStage().process(
       {
-        query: String(controls.queryText || ""),
+        query: typeof controls.queryText === "string" ? controls.queryText : "",
         queryVector: source,
         ...(coreTags.length > 0 ? { coreTags: [...coreTags] } : {}),
       },
@@ -1029,7 +1048,7 @@ class KnowledgeBaseAdapter {
         updated_at?: number | null;
         mtime?: number | null;
       }>;
-    } catch (e) {
+    } catch {
       return [];
     }
 
@@ -1087,7 +1106,7 @@ class KnowledgeBaseAdapter {
       const vector = vectors && vectors[0];
       if (vector == null) return null;
       return vector instanceof Float32Array ? vector : new Float32Array(vector);
-    } catch (e) {
+    } catch {
       return null;
     }
   }
@@ -1107,7 +1126,7 @@ class KnowledgeBaseAdapter {
         { vector?: Buffer | Float32Array | null } | undefined;
       if (!row || row.vector == null) return null;
       return this._decodeChunkVector(row.vector);
-    } catch (e) {
+    } catch {
       return null;
     }
   }
@@ -1159,7 +1178,7 @@ class KnowledgeBaseAdapter {
         if (typeof statement.all === "function") {
           rows.push(...(statement.all(...batch) as ChunkQueryRow[]));
         }
-      } catch (e) {
+      } catch {
         continue;
       }
     }

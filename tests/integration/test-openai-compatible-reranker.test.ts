@@ -38,7 +38,7 @@ test("OpenAI-compatible reranker sends the fixed Chat API contract", async () =>
     candidateLimit: 20,
     maxContentChars: 5,
     fetchImpl: async (url, init) => {
-      requestedUrl = String(url);
+      requestedUrl = typeof url === "string" ? url : "request";
       requestedInit = init;
       return response({
         choices: [
@@ -67,7 +67,9 @@ test("OpenAI-compatible reranker sends the fixed Chat API contract", async () =>
     "content-type": "application/json",
   });
 
-  const body = JSON.parse(String(requestedInit?.body));
+  const body = JSON.parse(
+    typeof requestedInit?.body === "string" ? requestedInit.body : "{}",
+  );
   assert.equal(body.model, "rerank-model");
   assert.equal(body.temperature, 0);
   assert.deepEqual(body.messages[0], {

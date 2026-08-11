@@ -2,10 +2,6 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-
 import PipelineContext from "../../src/core/context.js";
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
 import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
@@ -154,6 +150,18 @@ test("EPAProjectorStage: builds basis on the fly from metadataStore tags", async
     { name: "society", vector: encodeVectorBlob(vec(0, 0, 1, 0)) },
     { name: "culture", vector: encodeVectorBlob(vec(1, 1, 0, 0)) },
   ]);
+  const fileId = await metaStore.upsertFile({
+    path: "epa-active-tags.md",
+    diaryName: "epa",
+    checksum: "epa-active-tags",
+    mtime: 1,
+    size: 1,
+  });
+  const activeTags = await metaStore.getAllTags();
+  await metaStore.setFileTags(
+    fileId!,
+    activeTags.map((tag) => tag.id),
+  );
 
   const ctx = new PipelineContext({
     config: { epaProjectionEnabled: true, dimension: dim },
@@ -634,7 +642,7 @@ test("VectorReshaperStage: re-ranks candidates by cosine with the query", async 
 
 test("VectorReshaperStage: missing chunk vector degrades gracefully", async () => {
   const stage = new VectorReshaperStage();
-  const { metaStore, c1, c2 } = await seedReshapeStore();
+  const { metaStore, c2 } = await seedReshapeStore();
   const ctx = new PipelineContext({
     config: { vectorReshapeEnabled: true, dimension: dim },
     metadataStore: metaStore,
@@ -805,7 +813,7 @@ test("GeodesicRerankerStage uses stored file tags and passes through empty field
 // ── Cross-stage integration ─────────────────────────────────────────────
 
 test("memo pipeline: candidate-merger → tag-expander → vector-reshaper → epa-projector", async () => {
-  const { metaStore, vectorStore, c1, c2 } = await seedExpansionStore();
+  const { metaStore, vectorStore, c1 } = await seedExpansionStore();
 
   const mergerCtx = new PipelineContext({ config: {} });
   const mergeOut = await new CandidateMergerStage().process(

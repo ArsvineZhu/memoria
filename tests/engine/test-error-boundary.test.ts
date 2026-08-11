@@ -8,7 +8,6 @@ import { createMemoryEngine } from "../../src/index.js";
 import { MemoriaError } from "../../src/errors.js";
 import type {
   EmbeddingProviderContract,
-  MemoryEngineOptions,
   VectorLike,
   VectorStoreContract,
 } from "../../src/types.js";
@@ -106,7 +105,7 @@ async function dispose(
   if (engine.state !== "closed") {
     try {
       await engine.close();
-    } catch (_) {
+    } catch {
       // The test may intentionally make close fail.
     }
   }
@@ -447,7 +446,7 @@ test("close wraps non-Memoria failures as lifecycle errors", async () => {
         return true;
       },
     );
-    assert.equal(engine.state, "ready");
+    assert.equal(engine.state, "closing");
   } finally {
     await dispose(engine, metadataStore);
   }
@@ -483,7 +482,7 @@ test("SQLite metadata close failure remains retryable through the engine", async
       return true;
     },
   );
-  assert.equal(engine.state, "ready");
+  assert.equal(engine.state, "closing");
   assert.equal(metadataStore._closed, false);
 
   await engine.close();

@@ -122,8 +122,8 @@ test("IngestPipeline exposes the default ingestion stage chain with names", () =
       "chunker",
       "chunkEmbedder",
       "tagEmbedder",
+      "relationExtractor",
       "metadataWriter",
-      "relationGraphWriter",
       "vectorIndexer",
       "cooccurrenceBuilder",
     ],
@@ -320,15 +320,19 @@ test("IngestPipeline ingests a file: metadata, chunks, tags and vectors", async 
   assert.ok(chunks.length >= 1, "at least one chunk row");
   assert.ok(chunks[0].content.includes("Alpha project kickoff"));
   assert.deepStrictEqual(
-    await metadataStore.getChunksByFileId(row!.id).then((cs) => cs.map((c) => c.id)),
-    chunks.map((c) => c.id),
+    await metadataStore
+      .getChunksByFileId(row!.id)
+      .then((cs) => cs.map((c) => c.id).sort((left, right) => left - right)),
+    chunks.map((c) => c.id).sort((left, right) => left - right),
   );
 
   const fileTags = await metadataStore.getFileTags(row!.id);
-  assert.deepStrictEqual(fileTags.map((ft) => ft.name).sort(), [
-    "alpha-arch",
-    "alpha-plan",
-  ]);
+  assert.deepStrictEqual(
+    fileTags
+      .map((ft) => ft.name)
+      .sort((left, right) => (left ?? "").localeCompare(right ?? "")),
+    ["alpha-arch", "alpha-plan"],
+  );
 
   const hits = await vectorStore.search("diary1", embedVectorFor("alpha query"), 5);
   assert.ok(hits.length >= 1, "vector index should return the ingested chunk");

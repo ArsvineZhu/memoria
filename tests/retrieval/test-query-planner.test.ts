@@ -132,3 +132,21 @@ test("graph readiness failure does not take down ordinary planning", async () =>
     permissionScopeReady: true,
   });
 });
+
+test("graph readiness uses aggregate relation stats instead of materializing the graph", async () => {
+  const readiness = await readGraphReadiness({
+    config: { dbPath: ":memory:" },
+    metadataStore: {
+      getRelationReadinessStats: async () => ({
+        explicitLinks: 3,
+        activeInferredLinks: 2,
+      }),
+      listRelations: async () => {
+        throw new Error("full relation materialization is forbidden");
+      },
+    } as never,
+  });
+  assert.equal(readiness.explicitLinks, 3);
+  assert.equal(readiness.activeInferredLinks, 2);
+  assert.equal(readiness.candidatePathCount, 1);
+});

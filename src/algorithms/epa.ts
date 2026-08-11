@@ -153,7 +153,7 @@ class EPA {
         probabilities = new Float32Array(result.probabilities.map((x) => x));
         entropy = result.entropy;
         totalEnergy = result.totalEnergy;
-      } catch (e) {
+      } catch {
         // Fall through to JS
       }
     }

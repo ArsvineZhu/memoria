@@ -87,7 +87,7 @@ class FileReaderStage extends Stage {
       let statsAfter;
       try {
         statsAfter = await fs.promises.stat(filePath);
-      } catch (e) {
+      } catch {
         statsAfter = null;
       }
       if (
@@ -131,7 +131,9 @@ class FileReaderStage extends Stage {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to parse MDX front matter for ${filePath}: ${message}`);
+      throw new Error(`Failed to parse MDX front matter for ${filePath}: ${message}`, {
+        cause: error,
+      });
     }
 
     const checksum = crypto.createHash("md5").update(content).digest("hex");

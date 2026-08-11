@@ -106,21 +106,21 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
    `documentId`、`revision`、source 与 metadata；文件快照由 `FilesystemIngestionAdapter`
    在交给引擎前读取并做稳定性检查；target 同时提供文件与逻辑两组方法时优先
    `flushBatch/handleDelete`，从而保留 `relPath` 与 diary 语义。随后按源码注册顺序执行摄入阶段；
-   `RelationGraphWriterStage` 从不可变源快照抽取显式链接并写入派生关系图，随后
-   `CooccurrenceBuilderStage`（默认有意跳过派生图重建，开启 `cooccurrenceRebuild` 或由调用方
-   注入 `ctx.tagGraph` 时才提供共现图）。**双写盘次序**：内置
-   `SqliteMetadataStore` 的 `MetadataWriterStage` 通过单事务
-   `replaceDocumentState()` 原子替换 file/chunks/tags/file_tags，并增加 metadata
-   generation、置 `vector_dirty=1`；标签-only 更新使用
-   `replaceDocumentTags()` 原子改写 metadata/tags/file_tags 并保留 chunks，缺少
-   该能力时在写入前失败。第三方旧 store 才走兼容 CRUD 路径。随后
+   `RelationExtractorStage` 只从不可变源快照计算显式链接，不写 store；随后由
+   `MetadataWriterStage` 通过 `replaceDocumentAuthority()` 在同一 SQLite transaction
+   原子替换 file/chunks/tags/file_tags 与 source relations，并更新 metadata/relation
+   generation、置 `vector_dirty=1`。关系图启用而 provider 缺少该 capability 时在写入前
+   失败，不退回非原子多步写入。关系图关闭的兼容路径才使用 `replaceDocumentState()`；
+   不重建正文的 tag-only/metadata-only 更新也复用 authority capability。
+   `CooccurrenceBuilderStage` 默认有意跳过派生图重建，开启 `cooccurrenceRebuild` 或由调用方
+   注入 `ctx.tagGraph` 时才提供共现图。随后
    `VectorIndexerStage` 更新向量（先删遗留向量再 upsert，日记索引 + global_tags
    标签索引），并触发 `scheduleIndexSave`（延迟落盘）。检索增强阶段的开关、依赖和
    实际诊断字段见 [检索能力矩阵](RETRIEVAL_FEATURES.md)。
 4. **shutdown**：`close()` 等待 keyed mutation queue，flush 全部内存向量索引；
    只有 flush 成功且 vector state 完整时才把 generation 标记 clean，之后关闭内置
    SQLite。任一步 flush/close failure 都会形成 lifecycle failure；若资源仍可重试，
-   引擎回到 `ready`，不会伪装成 clean/closed。
+   引擎保持 `closing`，不会伪装成 `ready`；下一次 `close()` 只重试仍未成功关闭的资源。
 
 ### 可靠性不变量（MemoryEngine 与 TDBEngine 共用）
 

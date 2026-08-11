@@ -9,12 +9,12 @@ class Pipeline<
   Input extends PipelineData = PipelineData,
   Output extends PipelineData = PipelineData,
 > {
-  readonly stages: Stage<PipelineData, PipelineData>[];
+  readonly stages: Stage[];
   name?: string;
   /**
    * @param {import('./stage.js').Stage[]} stages
    */
-  constructor(stages: Stage<PipelineData, PipelineData>[] = []) {
+  constructor(stages: Stage[] = []) {
     this.stages = stages;
   }
 
@@ -37,7 +37,7 @@ class Pipeline<
    * @param {import('./stage.js').Stage} stage
    * @returns {Pipeline}
    */
-  pipe(stage: Stage<PipelineData, PipelineData>): Pipeline<Input, Output> {
+  pipe(stage: Stage): Pipeline<Input, Output> {
     return new Pipeline<Input, Output>([...this.stages, stage]);
   }
 
@@ -47,10 +47,7 @@ class Pipeline<
    * @param {import('./stage.js').Stage} newStage
    * @returns {Pipeline}
    */
-  replace(
-    stageName: string,
-    newStage: Stage<PipelineData, PipelineData>,
-  ): Pipeline<Input, Output> {
+  replace(stageName: string, newStage: Stage): Pipeline<Input, Output> {
     return new Pipeline<Input, Output>(
       this.stages.map((s) => (s.name === stageName ? newStage : s)),
     );

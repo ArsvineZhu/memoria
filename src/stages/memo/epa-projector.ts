@@ -121,7 +121,10 @@ class EPAProjectorStage extends Stage {
     }
     let tags: TagRow[] = [];
     try {
-      tags = await metadataStore.getAllTags();
+      tags =
+        typeof metadataStore.getActiveTags === "function"
+          ? await metadataStore.getActiveTags()
+          : await metadataStore.getAllTags();
     } catch (e) {
       throw asMemoriaError(
         e,
@@ -180,7 +183,7 @@ class EPAProjectorStage extends Stage {
     try {
       projection = epa.project(queryVector);
       resonance = epa.detectCrossDomainResonance(queryVector);
-    } catch (e) {
+    } catch {
       return this._emptyQueryAnalysis();
     }
     return {
@@ -212,9 +215,9 @@ class EPAProjectorStage extends Stage {
           if (!dimension) continue;
           vector = decodeVectorBlob(row.vector, dimension, `chunk:${chunkId}`);
         }
-      } catch (_e) {
+      } catch (error) {
         throw asMemoriaError(
-          _e,
+          error,
           "persistence",
           "Metadata store failed while loading a chunk vector for EPA search.",
           { retryable: true },
@@ -224,7 +227,7 @@ class EPAProjectorStage extends Stage {
       let projection;
       try {
         projection = epa.project(vector);
-      } catch (_e) {
+      } catch {
         continue;
       }
       results.push({

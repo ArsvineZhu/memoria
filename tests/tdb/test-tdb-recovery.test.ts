@@ -568,7 +568,7 @@ test("TDBEngine clean reopen restores persisted indexes without rebuilding", asy
   await first.initialize();
   await first.upsertText("clean persisted", { library: "facts", path: "clean.md" });
   await first.close();
-  await firstVector.flushPendingSaves();
+  firstVector.flushPendingSaves();
   firstStore.close();
 
   const secondStore = new TDBStore({ dbPath });
@@ -599,7 +599,7 @@ test("TDBEngine clean reopen restores persisted indexes without rebuilding", asy
   await second.initialize();
   assert.equal(replaceCalls, 0);
   await second.close();
-  await secondVector.flushPendingSaves();
+  secondVector.flushPendingSaves();
   secondStore.close();
 });
 
@@ -636,7 +636,7 @@ test("TDBEngine recovery removes obsolete persisted library indexes", async () =
     path: "old.md",
   });
   await first.close();
-  await firstVector.flushPendingSaves();
+  firstVector.flushPendingSaves();
   await firstStore.deleteDocumentState("obsolete", "old.md");
   firstStore.close();
 
@@ -665,6 +665,6 @@ test("TDBEngine recovery removes obsolete persisted library indexes", async () =
   assert.equal(secondVector.indices.size, 0);
   assert.equal((await second.search("obsolete library content")).results.length, 0);
   await second.close();
-  await secondVector.flushPendingSaves();
+  secondVector.flushPendingSaves();
   secondStore.close();
 });

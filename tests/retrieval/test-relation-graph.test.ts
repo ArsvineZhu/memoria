@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 
 import {
   extractMdxRelations,
+  type MemoryRelation,
   RelationGraphStore,
   relationDocumentKey,
 } from "../../src/retrieval/relation-graph.js";
@@ -120,4 +121,54 @@ test("relation graph persists source links and adds reversible derived links", a
   assert.equal(snapshot.schema, "memoria-relation-graph-v1");
   assert.equal(snapshot.relations.length, 2);
   assert.ok(String(stored).includes("co-retrieval"));
+});
+
+test("adjacency providers without generations do not retain stale graph reads", async () => {
+  let relations: MemoryRelation[] = [
+    {
+      id: "a-b",
+      from: "path:a.mdx",
+      to: "path:b.mdx",
+      kind: "explicit-link",
+      origin: "source",
+      confidence: 1,
+      weight: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      status: "active",
+      active: true,
+    },
+  ];
+  const metadataStore = {
+    getAdjacentRelations: async (keys: readonly string[]) =>
+      relations.filter(
+        (relation) => keys.includes(relation.from) || keys.includes(relation.to),
+      ),
+  } as unknown as MetadataStoreContract;
+  const graph = new RelationGraphStore(metadataStore);
+
+  assert.equal(
+    (await graph.relatedDocumentKeys(["path:a.mdx"], 1)).has("path:b.mdx"),
+    true,
+  );
+  relations = [
+    ...relations,
+    {
+      id: "a-c",
+      from: "path:a.mdx",
+      to: "path:c.mdx",
+      kind: "derived-link",
+      origin: "derived",
+      confidence: 1,
+      weight: 1,
+      createdAt: 2,
+      updatedAt: 2,
+      status: "active",
+      active: true,
+    },
+  ];
+  assert.equal(
+    (await graph.relatedDocumentKeys(["path:a.mdx"], 1)).has("path:c.mdx"),
+    true,
+  );
 });

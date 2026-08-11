@@ -262,7 +262,7 @@ function findRuntimeExportDrift() {
 }
 
 function main() {
-  const documents = collectDocuments().sort();
+  const documents = collectDocuments().sort((left, right) => left.localeCompare(right));
   const errors = [...documents.flatMap(findBrokenLinks), ...findRuntimeExportDrift()];
 
   if (errors.length > 0) {

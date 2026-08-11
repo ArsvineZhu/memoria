@@ -137,7 +137,7 @@ function tokenizeQuery(normalized: string): string[] {
   for (const match of normalized.matchAll(/[\u4e00-\u9fff]+/g)) {
     const run = match[0];
     tokens.push(run);
-    const chars = [...run];
+    const chars = Array.from(run);
     // Include short CJK phrases so the profile retains meaningful concepts
     // without requiring a language-specific tokenizer.
     for (let width = 2; width <= Math.min(8, chars.length); width += 1) {
@@ -166,7 +166,7 @@ function extractConcepts(
       .filter((segment) => segment.length >= 2);
     for (const segment of segments) {
       cjkConcepts.push(segment);
-      const chars = [...segment];
+      const chars = Array.from(segment);
       for (let width = 2; width <= Math.min(8, chars.length); width += 1) {
         for (let index = 0; index + width <= chars.length; index += 1) {
           cjkConcepts.push(chars.slice(index, index + width).join(""));
@@ -463,14 +463,22 @@ export async function readGraphReadiness(
 ): Promise<GraphReadiness> {
   let explicitLinks = 0;
   let activeInferredLinks = 0;
-  if (typeof ctx.metadataStore?.listRelations === "function") {
+  if (typeof ctx.metadataStore?.getRelationReadinessStats === "function") {
+    try {
+      const stats = await ctx.metadataStore.getRelationReadinessStats();
+      explicitLinks = Number(stats.explicitLinks) || 0;
+      activeInferredLinks = Number(stats.activeInferredLinks) || 0;
+    } catch {
+      // Relation readiness is auxiliary to semantic/vector retrieval.
+    }
+  } else if (typeof ctx.metadataStore?.listRelations === "function") {
     try {
       const relations = await ctx.metadataStore.listRelations();
       for (const relation of relations) {
         if (relation.origin === "source") explicitLinks += 1;
         else activeInferredLinks += 1;
       }
-    } catch (_) {
+    } catch {
       // Relation readiness is auxiliary to semantic/vector retrieval. A
       // provider-specific graph read failure must not take down ordinary
       // search; the topology stage will expose its own safe skip if needed.

@@ -1,7 +1,6 @@
 "use strict";
 
 import type {
-  EmbeddingVector,
   MetadataStoreContract,
   TdbCorpusChunk,
   TdbStoreContract,
@@ -36,7 +35,7 @@ function tokenize(text: string): string[] {
   const words = raw.match(/[a-z0-9_][a-z0-9_.:/@#-]*/g) || [];
   const cjkTokens = [];
   for (const run of raw.match(/[\u4e00-\u9fff]+/g) || []) {
-    const chars = [...run];
+    const chars = Array.from(run);
     if (chars.length === 1) {
       cjkTokens.push(at(chars, 0, "CJK characters"));
       continue;
@@ -251,7 +250,7 @@ class TriviumDBAdapter {
 
   async _keywordHits(
     queryText: string,
-    options: UnknownRecord,
+    _options: UnknownRecord,
   ): Promise<TriviumSearchHit[]> {
     if (!this.metadataStore || typeof this.metadataStore.getAllChunks !== "function") {
       return [];
@@ -262,7 +261,7 @@ class TriviumDBAdapter {
     let chunks: TdbCorpusChunk[] = [];
     try {
       chunks = await this.metadataStore.getAllChunks();
-    } catch (_) {
+    } catch {
       return [];
     }
     if (!chunks || chunks.length === 0) return [];
@@ -297,7 +296,7 @@ class TriviumDBAdapter {
       }
       if (total > 0) scored.push({ id: doc.id, score: total });
     }
-    scored.sort((a, b) => b.score - a.score || a.id - b.id);
+    scored.sort((left, right) => right.score - left.score || left.id - right.id);
     return scored;
   }
 
@@ -341,7 +340,7 @@ class TriviumDBAdapter {
         capacity: Number(stats && stats.capacity) || 0,
         dimension: Number(stats && stats.dimension) || this.dimension,
       };
-    } catch (_) {
+    } catch {
       return { index: indexName, size: 0, capacity: 0, dimension: this.dimension };
     }
   }

@@ -3,12 +3,7 @@
 import { createHash } from "node:crypto";
 import * as posixPath from "node:path/posix";
 
-import type {
-  FileRow,
-  MemoryRelationRecord,
-  MetadataStoreContract,
-  UnknownRecord,
-} from "../types.js";
+import type { FileRow, MemoryRelationRecord, MetadataStoreContract } from "../types.js";
 
 export type RelationKind = "explicit-link" | "derived-link" | "tag" | "sequence";
 export type RelationOrigin = "source" | "derived";
@@ -31,6 +26,15 @@ export interface RelatedChunk {
 }
 
 const RELATION_GRAPH_KEY = "memoria.relation_graph.v1";
+
+interface RelationReadCache {
+  adjacencyGeneration: number | null;
+  adjacency: Map<string, MemoryRelation[]>;
+  fullGraphGeneration: number | null;
+  fullGraph: MemoryRelation[] | null;
+}
+
+const relationReadCaches = new WeakMap<object, RelationReadCache>();
 
 function normalizePath(value: string): string {
   return posixPath.normalize(value.replaceAll("\\", "/")).replace(/^\.\//, "");
@@ -86,7 +90,7 @@ function internalTarget(target: string, sourcePath: string): ParsedTarget | null
   let decoded = trimmed;
   try {
     decoded = decodeURIComponent(trimmed);
-  } catch (_) {
+  } catch {
     // Keep the literal target when a malformed escape is present.
   }
   const [withoutAnchor = "", rawAnchor = ""] = decoded.split("#", 2);
@@ -246,7 +250,7 @@ function asSnapshot(value: unknown): RelationGraphSnapshot {
           ? relation.status
           : "active",
       active:
-        relation.active !== false &&
+        (relation.active ?? true) &&
         relation.status !== "stale" &&
         relation.status !== "rejected",
     })),
@@ -263,9 +267,22 @@ export class RelationGraphStore {
   };
   private tail: Promise<void> = Promise.resolve();
   private legacyMigrationAttempted = false;
+  private readonly readCache: RelationReadCache;
 
   constructor(metadataStore: MetadataStoreContract) {
     this.metadataStore = metadataStore;
+    const existing = relationReadCaches.get(metadataStore as object);
+    if (existing) {
+      this.readCache = existing;
+    } else {
+      this.readCache = {
+        adjacencyGeneration: null,
+        adjacency: new Map(),
+        fullGraphGeneration: null,
+        fullGraph: null,
+      };
+      relationReadCaches.set(metadataStore as object, this.readCache);
+    }
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -293,7 +310,7 @@ export class RelationGraphStore {
         if (typeof legacyRaw === "string") {
           try {
             legacyValue = JSON.parse(legacyRaw);
-          } catch (_) {
+          } catch {
             legacyValue = null;
           }
         }
@@ -346,7 +363,7 @@ export class RelationGraphStore {
     if (typeof raw === "string") {
       try {
         parsed = JSON.parse(raw);
-      } catch (_) {
+      } catch {
         return this.fallback;
       }
     }
@@ -423,19 +440,14 @@ export class RelationGraphStore {
           weight: Math.max(0, Number(candidate.weight) || 0),
           createdAt: previous?.createdAt ?? candidate.createdAt ?? now,
           updatedAt: now,
-          status:
-            candidate.active === false
-              ? candidate.status === "rejected"
-                ? "rejected"
-                : "stale"
-              : "active",
-          active: candidate.active !== false && candidate.status !== "rejected",
+          status: !(candidate.active ?? true)
+            ? candidate.status === "rejected"
+              ? "rejected"
+              : "stale"
+            : "active",
+          active: (candidate.active ?? true) && candidate.status !== "rejected",
         };
-        if (
-          !previous ||
-          next.confidence >= previous.confidence ||
-          next.active === false
-        ) {
+        if (!previous || next.confidence >= previous.confidence || !next.active) {
           byId.set(id, next);
         }
       }
@@ -484,44 +496,95 @@ export class RelationGraphStore {
   async relatedDocumentKeys(
     starts: readonly string[],
     maxHops = 1,
+    allowedDocumentKeys?: ReadonlySet<string>,
   ): Promise<
     Map<string, { distance: number; relationIds: string[]; confidence: number }>
   > {
-    const snapshot = await this.load();
     const limit = Math.max(0, Math.min(8, Math.trunc(maxHops)));
-    const adjacent = new Map<string, Array<MemoryRelation>>();
-    for (const relation of snapshot.relations) {
-      if (!relation.active || relation.status !== "active") continue;
-      const forward = adjacent.get(relation.from) || [];
-      forward.push(relation);
-      adjacent.set(relation.from, forward);
-      const backward = adjacent.get(relation.to) || [];
-      backward.push({ ...relation, from: relation.to, to: relation.from });
-      adjacent.set(relation.to, backward);
-    }
-
-    for (const edges of adjacent.values()) {
-      edges.sort(
-        (left, right) =>
-          Number(right.origin === "source") - Number(left.origin === "source") ||
-          Number(right.confidence) - Number(left.confidence) ||
-          Number(right.weight) - Number(left.weight) ||
-          left.id.localeCompare(right.id),
-      );
-    }
-
     const found = new Map<
       string,
       { distance: number; relationIds: string[]; confidence: number }
     >();
-    let frontier = [...new Set(starts)].map((key) => ({
-      key,
-      distance: 0,
-      relationIds: [] as string[],
-      confidence: 1,
-    }));
+    let frontier = [...new Set(starts)]
+      .filter((key) => !allowedDocumentKeys || allowedDocumentKeys.has(key))
+      .map((key) => ({
+        key,
+        distance: 0,
+        relationIds: [] as string[],
+        confidence: 1,
+      }));
     const bestDistance = new Map(frontier.map((item) => [item.key, 0]));
     for (let distance = 1; distance <= limit && frontier.length > 0; distance += 1) {
+      const adjacent = new Map<string, Array<MemoryRelation>>();
+      const sourceKeys = frontier.map((item) => item.key);
+      const sourceKeySet = new Set(sourceKeys);
+      let relations: MemoryRelation[];
+      if (typeof this.metadataStore.getAdjacentRelations === "function") {
+        const generation =
+          typeof this.metadataStore.getRelationGeneration === "function"
+            ? await this.metadataStore.getRelationGeneration()
+            : null;
+        const cacheable = generation !== null;
+        if (cacheable && generation !== this.readCache.adjacencyGeneration) {
+          this.readCache.adjacencyGeneration = generation;
+          this.readCache.adjacency.clear();
+        }
+        const cacheKey = [...new Set(sourceKeys)].sort().join("\u0000");
+        const cached = cacheable ? this.readCache.adjacency.get(cacheKey) : undefined;
+        if (cached) {
+          relations = cached;
+        } else {
+          relations = await this.metadataStore.getAdjacentRelations(sourceKeys);
+          if (cacheable) {
+            this.readCache.adjacency.set(
+              cacheKey,
+              relations.map((relation) => ({ ...relation })),
+            );
+          }
+        }
+      } else {
+        const generation =
+          typeof this.metadataStore.getRelationGeneration === "function"
+            ? await this.metadataStore.getRelationGeneration()
+            : null;
+        if (
+          !this.readCache.fullGraph ||
+          typeof this.metadataStore.getRelationGeneration !== "function" ||
+          generation !== this.readCache.fullGraphGeneration
+        ) {
+          this.readCache.fullGraph = (await this.load()).relations.map((relation) => ({
+            ...relation,
+          }));
+          this.readCache.fullGraphGeneration = generation;
+        }
+        relations = this.readCache.fullGraph;
+      }
+      for (const relation of relations) {
+        if (!relation.active || relation.status !== "active") continue;
+        if (sourceKeySet.has(relation.from)) {
+          if (!allowedDocumentKeys || allowedDocumentKeys.has(relation.to)) {
+            const forward = adjacent.get(relation.from) || [];
+            forward.push(relation);
+            adjacent.set(relation.from, forward);
+          }
+        }
+        if (sourceKeySet.has(relation.to)) {
+          if (!allowedDocumentKeys || allowedDocumentKeys.has(relation.from)) {
+            const backward = adjacent.get(relation.to) || [];
+            backward.push({ ...relation, from: relation.to, to: relation.from });
+            adjacent.set(relation.to, backward);
+          }
+        }
+      }
+      for (const edges of adjacent.values()) {
+        edges.sort(
+          (left, right) =>
+            Number(right.origin === "source") - Number(left.origin === "source") ||
+            Number(right.confidence) - Number(left.confidence) ||
+            Number(right.weight) - Number(left.weight) ||
+            left.id.localeCompare(right.id),
+        );
+      }
       const next: typeof frontier = [];
       for (const source of frontier) {
         for (const relation of adjacent.get(source.key) || []) {
@@ -567,6 +630,7 @@ export class RelationGraphStore {
     seedChunkIds: readonly number[],
     maxHops = 1,
     maxAdded = 100,
+    allowedDocumentKeys?: ReadonlySet<string>,
   ): Promise<RelatedChunk[]> {
     const store = this.metadataStore;
     if (typeof store.getFileByChunkId !== "function") return [];
@@ -575,7 +639,11 @@ export class RelationGraphStore {
       const file = await store.getFileByChunkId(Number(chunkId));
       if (file) starts.push(relationDocumentKey(file));
     }
-    const related = await this.relatedDocumentKeys(starts, maxHops);
+    const related = await this.relatedDocumentKeys(
+      starts,
+      maxHops,
+      allowedDocumentKeys,
+    );
     const results: RelatedChunk[] = [];
     for (const [documentKey, detail] of related) {
       const file = await this.resolveFile(documentKey);

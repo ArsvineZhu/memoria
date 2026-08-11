@@ -121,7 +121,7 @@ test("adapter text search inherits the engine default retrieval plan", async () 
 });
 
 test("removeDocument deletes the file from metadata + vector indices", async () => {
-  const { adapter, engine, root } = makeAdapter();
+  const { adapter, root } = makeAdapter();
   await adapter.initialize();
   const { abs1 } = await seedDiary(adapter, root);
 
@@ -136,7 +136,7 @@ test("removeDocument deletes the file from metadata + vector indices", async () 
 });
 
 test("deduplicateResults removes exact duplicates keeping the best score", async () => {
-  const { adapter, engine, root } = makeAdapter();
+  const { adapter, root } = makeAdapter();
   await adapter.initialize();
   await seedDiary(adapter, root);
 
@@ -390,7 +390,7 @@ test("getVectorByText embeds arbitrary text", async () => {
 test("getVectorByChunkId decodes a stored chunk vector", async () => {
   const { adapter, root } = makeAdapter();
   await adapter.initialize();
-  const { abs1 } = await seedDiary(adapter, root);
+  await seedDiary(adapter, root);
 
   const hits = await adapter.search("diaryA", new Array(DIM).fill(0.5), 3, 0);
   assert.ok(hits.length >= 1);

@@ -354,8 +354,7 @@ function computeWeightedPCA(
   }
 
   // 5. Map back to original dimension: U_pca = X^T * v / sqrt(lambda)
-  const U = eigenvectors.map((ev, idx) => {
-    const lambda = at(eigenvalues, idx, "eigenvalues");
+  const U = eigenvectors.map((ev) => {
     const basis = new Float32Array(dim);
     for (let i = 0; i < n; i++) {
       const weight = at(ev, i, "eigenvector");

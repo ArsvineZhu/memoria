@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import {
   clusterTags,
   computeWeightedPCA,
-  powerIteration,
   selectBasisDimension,
 } from "../../src/algorithms/svd.js";
 import { at } from "../../src/utils/numerical.js";

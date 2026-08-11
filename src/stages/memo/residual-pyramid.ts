@@ -111,11 +111,11 @@ class ResidualPyramidStage extends Stage {
     if (!metadataStore) return async () => [];
 
     // Preferred: batch id lookup when the store exposes it.
-    const getTagsByIds = metadataStore.getTagsByIds;
-    if (typeof getTagsByIds === "function") {
+    const getTagsByIds = metadataStore.getTagsByIds?.bind(metadataStore);
+    if (getTagsByIds) {
       return async (ids: readonly number[]) => {
         try {
-          const rows = await getTagsByIds.call(metadataStore, ids);
+          const rows = await getTagsByIds(ids);
           return (rows || []).filter(
             (row): row is TagRow & { vector: Buffer } => row.vector != null,
           );
@@ -134,7 +134,10 @@ class ResidualPyramidStage extends Stage {
     if (typeof metadataStore.getAllTags === "function") {
       return async (ids: readonly number[]) => {
         try {
-          const tags = await metadataStore.getAllTags();
+          const tags =
+            typeof metadataStore.getActiveTags === "function"
+              ? await metadataStore.getActiveTags()
+              : await metadataStore.getAllTags();
           const byId = new Map((tags || []).map((t) => [Number(t.id), t]));
           return (ids || [])
             .map((id) => byId.get(Number(id)))

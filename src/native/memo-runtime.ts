@@ -59,7 +59,7 @@ function parseJsonRecord(value: unknown): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(value);
     return isRecord(parsed) ? parsed : null;
-  } catch (_) {
+  } catch {
     return null;
   }
 }

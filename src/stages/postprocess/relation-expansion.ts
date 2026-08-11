@@ -24,6 +24,8 @@ class RelationExpansionStage extends Stage {
       : null;
     const allowedChunkIds =
       info.allowedChunkIds instanceof Set ? info.allowedChunkIds : null;
+    let allowedDocumentKeys =
+      info.allowedDocumentKeys instanceof Set ? info.allowedDocumentKeys : null;
     if (
       config.relationExpansionEnabled !== true ||
       candidates.length === 0 ||
@@ -56,6 +58,18 @@ class RelationExpansionStage extends Stage {
       };
     }
 
+    if (
+      !allowedDocumentKeys &&
+      resolvedScope &&
+      typeof ctx.metadataStore.resolveRetrievalScope === "function"
+    ) {
+      const scope = await ctx.metadataStore.resolveRetrievalScope(
+        { spaces: [...resolvedScope] },
+        [...resolvedScope],
+      );
+      allowedDocumentKeys = new Set(scope.allowedDocumentKeys);
+    }
+
     const seedCount = Math.max(
       1,
       Math.min(
@@ -82,6 +96,7 @@ class RelationExpansionStage extends Stage {
       seeds.map((candidate) => Number(candidate.chunkId)).filter(Number.isFinite),
       maxHops,
       maxAdded,
+      allowedDocumentKeys || undefined,
     );
     const existing = new Set(
       scopedCandidates.map((candidate) => Number(candidate.chunkId)),

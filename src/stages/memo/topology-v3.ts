@@ -40,7 +40,7 @@ function nativeValue(value: unknown): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(value);
     return isRecord(parsed) ? parsed : null;
-  } catch (_) {
+  } catch {
     return null;
   }
 }
@@ -91,7 +91,8 @@ function queryState(info: PipelineData): Record<string, unknown> {
         return {
           id: number(record.id),
           hop: number(record.hop),
-          sourceType: String(record.sourceType || "unknown"),
+          sourceType:
+            typeof record.sourceType === "string" ? record.sourceType : "unknown",
         };
       })
     : [];
@@ -177,17 +178,17 @@ async function allowedFileIds(
   candidates: readonly ChunkCandidate[],
   ctx: PipelineContextLike,
 ): Promise<number[]> {
-  const getFile = ctx.metadataStore?.getFileByChunkId;
-  if (typeof getFile !== "function") return [];
+  const getFile = ctx.metadataStore?.getFileByChunkId?.bind(ctx.metadataStore);
+  if (!getFile) return [];
   const ids = new Set<number>();
   for (const candidate of candidates) {
     const chunkId = Number(candidate.chunkId);
     if (!Number.isFinite(chunkId)) continue;
     try {
-      const file = await getFile.call(ctx.metadataStore, chunkId);
+      const file = await getFile(chunkId);
       const id = Number(file?.id);
       if (Number.isFinite(id)) ids.add(id);
-    } catch (_) {
+    } catch {
       // Native projection is optional. A failed auxiliary lookup must not
       // invalidate already materialised candidates.
     }
@@ -256,6 +257,8 @@ class TopologyV3Stage extends Stage {
       return {
         ...info,
         topologyV3Skipped: true,
+        topologyV3Failure: "artifact_unavailable",
+        topologyV3Error: "artifact_unavailable",
         topologyV3SkipReason: !dbPath
           ? "native Topology V3 requires a file-backed SQLite database"
           : "native Topology V3 index is unavailable",
@@ -277,7 +280,8 @@ class TopologyV3Stage extends Stage {
           topologyV3Skipped: true,
           topologyV3SkipReason:
             "reason" in built ? built.reason : "native artifact unavailable",
-          topologyV3Error: "error" in built ? built.error : undefined,
+          topologyV3Failure: "artifact_unavailable",
+          topologyV3Error: "artifact_unavailable",
         };
       }
     }
@@ -291,6 +295,8 @@ class TopologyV3Stage extends Stage {
         ...info,
         topologyV3Skipped: true,
         topologyV3SkipReason: "query vector dimension is not native-compatible",
+        topologyV3Failure: "invalid_result",
+        topologyV3Error: "invalid_result",
       };
     }
 
@@ -335,6 +341,8 @@ class TopologyV3Stage extends Stage {
           ...info,
           topologyV3Skipped: true,
           topologyV3SkipReason: "native Topology V3 returned invalid JSON",
+          topologyV3Failure: "invalid_result",
+          topologyV3Error: "invalid_result",
         };
       }
       const ranked = nativeResults
@@ -375,12 +383,13 @@ class TopologyV3Stage extends Stage {
         topologyV3: output,
         topologyV3Skipped: false,
       };
-    } catch (error) {
+    } catch {
       return {
         ...info,
         topologyV3Skipped: true,
         topologyV3SkipReason: "native Topology V3 failed",
-        topologyV3Error: error instanceof Error ? error.message : String(error),
+        topologyV3Failure: "native_backend_failed",
+        topologyV3Error: "native_backend_failed",
       };
     }
   }

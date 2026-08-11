@@ -25,8 +25,11 @@ import type {
   MemoryRelationRecord,
   RelationListOptions,
   MemoryRelationStatus,
+  RetrievalScopeFilters,
+  RetrievalScopeResolution,
   UnknownRecord,
 } from "../types.js";
+import { relationDocumentKey } from "../retrieval/relation-graph.js";
 
 const requireFromProvider = createRequire(import.meta.url);
 let DatabaseCtor: typeof BetterSqlite3 | null = null;
@@ -37,7 +40,7 @@ function loadDatabaseCtor(): typeof BetterSqlite3 | null {
     const loaded = requireFromProvider("better-sqlite3") as
       typeof BetterSqlite3 | { default?: typeof BetterSqlite3 };
     DatabaseCtor = typeof loaded === "function" ? loaded : (loaded.default ?? null);
-  } catch (_) {
+  } catch {
     DatabaseCtor = null;
   }
   return DatabaseCtor;
@@ -57,9 +60,75 @@ function parseRelationJson(value: string | null | undefined): UnknownRecord | nu
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as UnknownRecord)
       : null;
-  } catch (_) {
+  } catch {
     return null;
   }
+}
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseMetadataJson(value: string | null | undefined): UnknownRecord {
+  if (!value) return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function metadataPath(value: UnknownRecord, pathValue: string): unknown {
+  return pathValue.split(".").reduce<unknown>((current, key) => {
+    return isRecord(current) ? current[key] : undefined;
+  }, value);
+}
+
+function equalMetadata(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((item, index) => equalMetadata(item, right[index]))
+    );
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) =>
+          Object.prototype.hasOwnProperty.call(right, key) &&
+          equalMetadata(left[key], right[key]),
+      )
+    );
+  }
+  return false;
+}
+
+function matchesMetadataJson(
+  value: string | null | undefined,
+  expected: Record<string, unknown>,
+): boolean {
+  const metadata = parseMetadataJson(value);
+  return Object.entries(expected).every(([key, expectedValue]) => {
+    const actual = metadataPath(metadata, key);
+    return Array.isArray(actual) && !Array.isArray(expectedValue)
+      ? actual.some((item) => equalMetadata(item, expectedValue))
+      : equalMetadata(actual, expectedValue);
+  });
+}
+
+function scopeEpochSeconds(value: number | string | undefined): number | null {
+  if (value === undefined) return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return Math.abs(value) > 1e12 ? value / 1000 : value;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed / 1000 : null;
 }
 
 function relationFromRow(row: RelationQueryRow): MemoryRelationRecord {
@@ -416,10 +485,12 @@ class SqliteMetadataStore extends MetadataStore {
       ["rivermemo_artifacts", "published_at", "INTEGER"],
     ];
     for (const [table, name, definition] of additiveMigrations) {
-      const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      const tableColumns = this.db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all() as Array<{
         name: string;
       }>;
-      if (!columns.some((column) => column.name === name)) {
+      if (!tableColumns.some((column) => column.name === name)) {
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
       }
     }
@@ -645,6 +716,11 @@ class SqliteMetadataStore extends MetadataStore {
       }
 
       const fileTagIds: number[] = [];
+      const previousTagIds = (
+        this.db
+          .prepare("SELECT tag_id FROM file_tags WHERE file_id = ?")
+          .all(fileId) as Array<{ tag_id: number }>
+      ).map((row) => Number(row.tag_id));
       for (const tagName of orderedTagNames) {
         let tagId = tagIdsByName.get(tagName);
         if (tagId === undefined) {
@@ -666,12 +742,19 @@ class SqliteMetadataStore extends MetadataStore {
       });
 
       const metadataGeneration = this._incrementMetadataGenerationInTransaction();
+      const orphanedTagIds = previousTagIds.filter((tagId) => {
+        const row = this.db
+          .prepare("SELECT 1 AS present FROM file_tags WHERE tag_id = ? LIMIT 1")
+          .get(tagId) as { present?: number } | undefined;
+        return !row?.present;
+      });
       return {
         fileId,
         tagIds,
         metadataGeneration,
         previousIndexName,
         currentIndexName: file.diaryName,
+        orphanedTagIds,
       };
     })();
   }
@@ -731,11 +814,14 @@ class SqliteMetadataStore extends MetadataStore {
   }
 
   override async deleteFile(fileId: number): Promise<void> {
-    const deleteFile = this.db.prepare("DELETE FROM files WHERE id = ?");
-    this.db.transaction(() => {
-      const result = deleteFile.run(fileId);
-      if (Number(result.changes) > 0) this._incrementMetadataGenerationInTransaction();
-    })();
+    const row = this.db
+      .prepare("SELECT path, document_id FROM files WHERE id = ?")
+      .get(fileId) as { path?: string; document_id?: string | null } | undefined;
+    if (!row?.path) return;
+    await this.deleteDocumentAuthority({
+      path: row.path,
+      documentId: row.document_id || undefined,
+    });
   }
 
   // ── Chunk CRUD ──────────────────────────────────────────────
@@ -768,6 +854,22 @@ class SqliteMetadataStore extends MetadataStore {
   }
 
   async replaceDocumentState(
+    replacement: DocumentStateReplacement,
+  ): Promise<DocumentStateReplacementResult> {
+    return this._replaceDocumentStateInternal(replacement);
+  }
+
+  async replaceDocumentAuthority(
+    replacement: DocumentStateReplacement & {
+      relationSourceKey: string;
+      relationSourceRevision: string;
+      explicitRelations: readonly MemoryRelationRecord[];
+    },
+  ): Promise<DocumentStateReplacementResult> {
+    return this._replaceDocumentStateInternal(replacement);
+  }
+
+  private async _replaceDocumentStateInternal(
     replacement: DocumentStateReplacement,
   ): Promise<DocumentStateReplacementResult> {
     const { file, chunks, tags, orderedTagNames } = replacement;
@@ -827,20 +929,30 @@ class SqliteMetadataStore extends MetadataStore {
         fileId = Number(info.lastInsertRowid);
       }
 
+      const preserveChunks = replacement.preserveChunks === true;
+      const existingChunkIds = preserveChunks
+        ? (
+            this.db
+              .prepare("SELECT id FROM chunks WHERE file_id = ? ORDER BY chunk_index")
+              .all(fileId) as Array<{ id: number }>
+          ).map((row) => Number(row.id))
+        : [];
       const deleteChunks = this.db.prepare("DELETE FROM chunks WHERE file_id = ?");
-      deleteChunks.run(fileId);
+      if (!preserveChunks) deleteChunks.run(fileId);
       const insertChunk = this.db.prepare(
         "INSERT INTO chunks (file_id, chunk_index, content, vector) VALUES (?, ?, ?, ?)",
       );
-      const chunkIds: number[] = [];
-      for (const chunk of chunks) {
-        const info = insertChunk.run(
-          fileId,
-          chunk.chunkIndex,
-          chunk.content,
-          chunk.vector ?? null,
-        );
-        chunkIds.push(Number(info.lastInsertRowid));
+      const chunkIds: number[] = [...existingChunkIds];
+      if (!preserveChunks) {
+        for (const chunk of chunks) {
+          const info = insertChunk.run(
+            fileId,
+            chunk.chunkIndex,
+            chunk.content,
+            chunk.vector ?? null,
+          );
+          chunkIds.push(Number(info.lastInsertRowid));
+        }
       }
 
       const insertTag = this.db.prepare(
@@ -863,26 +975,109 @@ class SqliteMetadataStore extends MetadataStore {
         tagIdsByName.set(tag.name, tagId);
       }
 
-      const fileTagIds: number[] = [];
-      for (const tagName of orderedTagNames) {
-        let tagId = tagIdsByName.get(tagName);
-        if (tagId === undefined) {
-          const stored = selectTag.get(tagName) as
-            { id: number; vector?: Buffer | null } | undefined;
-          if (stored?.vector != null) tagId = Number(stored.id);
+      const previousTagIds = (
+        this.db
+          .prepare("SELECT tag_id FROM file_tags WHERE file_id = ?")
+          .all(fileId) as Array<{ tag_id: number }>
+      ).map((row) => Number(row.tag_id));
+      const preserveTags = replacement.preserveTags === true;
+      const fileTagIds: number[] = preserveTags ? [...previousTagIds] : [];
+      if (!preserveTags) {
+        for (const tagName of orderedTagNames) {
+          let tagId = tagIdsByName.get(tagName);
+          if (tagId === undefined) {
+            const stored = selectTag.get(tagName) as
+              { id: number; vector?: Buffer | null } | undefined;
+            if (stored?.vector != null) tagId = Number(stored.id);
+          }
+          if (tagId !== undefined) fileTagIds.push(tagId);
         }
-        if (tagId !== undefined) fileTagIds.push(tagId);
       }
 
-      this.db.prepare("DELETE FROM file_tags WHERE file_id = ?").run(fileId);
-      const insertFileTag = this.db.prepare(
-        "INSERT INTO file_tags (file_id, tag_id, position) VALUES (?, ?, ?)",
-      );
-      fileTagIds.forEach((tagId, index) => {
-        insertFileTag.run(fileId, tagId, index + 1);
-      });
+      if (!preserveTags) {
+        this.db.prepare("DELETE FROM file_tags WHERE file_id = ?").run(fileId);
+        const insertFileTag = this.db.prepare(
+          "INSERT INTO file_tags (file_id, tag_id, position) VALUES (?, ?, ?)",
+        );
+        fileTagIds.forEach((tagId, index) => {
+          insertFileTag.run(fileId, tagId, index + 1);
+        });
+      }
+
+      if (replacement.relationSourceKey) {
+        const relationKeys = new Set<string>([
+          replacement.relationSourceKey,
+          relationDocumentKey({ path: replacement.file.path }),
+          ...(existing
+            ? [
+                relationDocumentKey(existing),
+                relationDocumentKey({ path: existing.path }),
+              ]
+            : []),
+        ]);
+        const staleRelations = this.db.prepare(
+          `UPDATE memory_relations
+           SET status = 'stale', active = 0, updated_at = ?
+           WHERE from_key = ? AND origin = 'source' AND active = 1`,
+        );
+        for (const relationKey of relationKeys) {
+          staleRelations.run(now * 1000, relationKey);
+        }
+
+        const insertRelation = this.db.prepare(`
+          INSERT INTO memory_relations (
+            id, from_key, to_key, kind, origin, confidence, weight, evidence,
+            provenance_json, source_revision, algorithm_version,
+            source_span_start, source_span_end, target_anchor, status, active,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'source', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            from_key = excluded.from_key,
+            to_key = excluded.to_key,
+            kind = excluded.kind,
+            origin = 'source',
+            confidence = excluded.confidence,
+            weight = excluded.weight,
+            evidence = excluded.evidence,
+            provenance_json = excluded.provenance_json,
+            source_revision = excluded.source_revision,
+            algorithm_version = excluded.algorithm_version,
+            source_span_start = excluded.source_span_start,
+            source_span_end = excluded.source_span_end,
+            target_anchor = excluded.target_anchor,
+            status = 'active',
+            active = 1,
+            updated_at = excluded.updated_at
+        `);
+        for (const relation of replacement.explicitRelations ?? []) {
+          insertRelation.run(
+            relation.id,
+            replacement.relationSourceKey,
+            relation.to,
+            relation.kind,
+            Math.max(0, Math.min(1, Number(relation.confidence) || 0)),
+            Math.max(0, Number(relation.weight) || 0),
+            relation.evidence ?? null,
+            relation.provenance ? JSON.stringify(relation.provenance) : null,
+            replacement.relationSourceRevision ?? null,
+            relation.algorithmVersion ?? null,
+            relation.sourceSpan?.start ?? null,
+            relation.sourceSpan?.end ?? null,
+            relation.targetAnchor ?? null,
+            Number(relation.createdAt) || now * 1000,
+            now * 1000,
+          );
+        }
+        this._incrementRelationGenerationInTransaction();
+      }
 
       const metadataGeneration = this._incrementMetadataGenerationInTransaction();
+      const orphanedTagIds = previousTagIds.filter((tagId) => {
+        const row = this.db
+          .prepare("SELECT 1 AS present FROM file_tags WHERE tag_id = ? LIMIT 1")
+          .get(tagId) as { present?: number } | undefined;
+        return !row?.present;
+      });
 
       return {
         fileId,
@@ -892,10 +1087,74 @@ class SqliteMetadataStore extends MetadataStore {
         metadataGeneration,
         previousIndexName,
         currentIndexName: file.diaryName,
+        orphanedTagIds,
       };
     })();
 
     return result;
+  }
+
+  async deleteDocumentAuthority(input: {
+    path: string;
+    documentId?: string;
+    relationSourceKeys?: readonly string[];
+  }): Promise<{
+    removed: boolean;
+    fileId: number | null;
+    chunkIds: number[];
+    orphanedTagIds: number[];
+  }> {
+    return this.db.transaction(() => {
+      const existing =
+        (input.documentId
+          ? (this.db
+              .prepare("SELECT * FROM files WHERE document_id = ?")
+              .get(input.documentId) as FileQueryRow | undefined)
+          : undefined) ||
+        (this.db.prepare("SELECT * FROM files WHERE path = ?").get(input.path) as
+          FileQueryRow | undefined);
+      if (!existing) {
+        return { removed: false, fileId: null, chunkIds: [], orphanedTagIds: [] };
+      }
+
+      const chunkIds = (
+        this.db
+          .prepare("SELECT id FROM chunks WHERE file_id = ? ORDER BY id")
+          .all(existing.id) as Array<{ id: number }>
+      ).map((row) => Number(row.id));
+      const tagIds = (
+        this.db
+          .prepare("SELECT tag_id FROM file_tags WHERE file_id = ?")
+          .all(existing.id) as Array<{ tag_id: number }>
+      ).map((row) => Number(row.tag_id));
+
+      const relationKeys = new Set<string>([
+        relationDocumentKey(existing),
+        relationDocumentKey({ path: existing.path }),
+        ...(input.relationSourceKeys || []),
+      ]);
+      const staleRelations = this.db.prepare(
+        `UPDATE memory_relations
+         SET status = 'stale', active = 0, updated_at = ?
+         WHERE from_key = ? AND origin = 'source' AND active = 1`,
+      );
+      for (const relationKey of relationKeys) {
+        staleRelations.run(Date.now(), relationKey);
+      }
+      if (relationKeys.size > 0) this._incrementRelationGenerationInTransaction();
+
+      this.db.prepare("DELETE FROM file_tags WHERE file_id = ?").run(existing.id);
+      this.db.prepare("DELETE FROM chunks WHERE file_id = ?").run(existing.id);
+      this.db.prepare("DELETE FROM files WHERE id = ?").run(existing.id);
+      const orphanedTagIds = tagIds.filter((tagId) => {
+        const row = this.db
+          .prepare("SELECT 1 AS present FROM file_tags WHERE tag_id = ? LIMIT 1")
+          .get(tagId) as { present?: number } | undefined;
+        return !row?.present;
+      });
+      this._incrementMetadataGenerationInTransaction();
+      return { removed: true, fileId: existing.id, chunkIds, orphanedTagIds };
+    })();
   }
 
   override async getChunksByFileId(fileId: number): Promise<ChunkRow[]> {
@@ -969,6 +1228,76 @@ class SqliteMetadataStore extends MetadataStore {
     }));
   }
 
+  async resolveRetrievalScope(
+    filters: RetrievalScopeFilters,
+    indexNames?: readonly string[],
+  ): Promise<RetrievalScopeResolution> {
+    if (Array.isArray(filters.spaces) && filters.spaces.length === 0) {
+      return { allowedChunkIds: [], allowedDocumentKeys: [] };
+    }
+    if (Array.isArray(indexNames) && indexNames.length === 0) {
+      return { allowedChunkIds: [], allowedDocumentKeys: [] };
+    }
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    const spaces = filters.spaces ?? indexNames;
+    if (spaces && spaces.length > 0) {
+      where.push(`f.diary_name IN (${spaces.map(() => "?").join(", ")})`);
+      params.push(...spaces.map(String));
+    }
+    if (filters.documentIds && filters.documentIds.length === 0) {
+      return { allowedChunkIds: [], allowedDocumentKeys: [] };
+    }
+    if (filters.documentIds && filters.documentIds.length > 0) {
+      where.push(`f.document_id IN (${filters.documentIds.map(() => "?").join(", ")})`);
+      params.push(...filters.documentIds.map(String));
+    }
+    const after = scopeEpochSeconds(filters.recordedAfter);
+    const before = scopeEpochSeconds(filters.recordedBefore);
+    if (after !== null) {
+      where.push("COALESCE(f.updated_at, f.mtime) >= ?");
+      params.push(after);
+    }
+    if (before !== null) {
+      where.push("COALESCE(f.updated_at, f.mtime) <= ?");
+      params.push(before);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT c.id AS chunk_id, f.path, f.document_id, f.metadata_json
+         FROM chunks c
+         JOIN files f ON f.id = c.file_id
+         ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+         ORDER BY c.id`,
+      )
+      .all(...params) as Array<{
+      chunk_id: number;
+      path: string;
+      document_id?: string | null;
+      metadata_json?: string | null;
+    }>;
+    const allowedChunkIds: number[] = [];
+    const allowedDocumentKeys = new Set<string>();
+    for (const row of rows) {
+      if (
+        filters.metadata &&
+        !matchesMetadataJson(row.metadata_json, filters.metadata)
+      ) {
+        continue;
+      }
+      allowedChunkIds.push(Number(row.chunk_id));
+      allowedDocumentKeys.add(
+        relationDocumentKey({
+          documentId: row.document_id,
+          path: row.path,
+        }),
+      );
+    }
+    return { allowedChunkIds, allowedDocumentKeys: [...allowedDocumentKeys] };
+  }
+
   async getIndexableChunks(): Promise<IndexableChunkRow[]> {
     const rows = this.db
       .prepare(
@@ -995,16 +1324,29 @@ class SqliteMetadataStore extends MetadataStore {
     const names = (
       this.db
         .prepare(
-          "SELECT DISTINCT diary_name FROM files WHERE diary_name IS NOT NULL AND diary_name != '' ORDER BY diary_name",
+          `SELECT DISTINCT f.diary_name
+           FROM files f
+           JOIN chunks c ON c.file_id = f.id
+           WHERE f.diary_name IS NOT NULL
+             AND f.diary_name != ''
+             AND c.vector IS NOT NULL
+           ORDER BY f.diary_name`,
         )
         .all() as Array<{ diary_name?: string | null }>
     )
       .map((row) => row.diary_name || "")
       .filter(Boolean);
-    const tagRow = this.db.prepare("SELECT 1 AS present FROM tags LIMIT 1").get() as
-      { present?: number } | undefined;
+    const tagRow = this.db
+      .prepare(
+        `SELECT 1 AS present
+         FROM tags t
+         JOIN file_tags ft ON ft.tag_id = t.id
+         WHERE t.vector IS NOT NULL
+         LIMIT 1`,
+      )
+      .get() as { present?: number } | undefined;
     if (tagRow?.present) names.push("global_tags");
-    return [...new Set(names)].sort();
+    return [...new Set(names)].sort((left, right) => left.localeCompare(right));
   }
 
   // ── Tag CRUD ────────────────────────────────────────────────
@@ -1046,6 +1388,22 @@ class SqliteMetadataStore extends MetadataStore {
 
   override async getAllTags(): Promise<TagRow[]> {
     const rows = this.db.prepare("SELECT id, name, vector FROM tags ORDER BY id").all();
+    return (rows as TagQueryRow[]).map((r: TagQueryRow) => ({
+      id: r.id,
+      name: r.name,
+      vector: r.vector || null,
+    }));
+  }
+
+  async getActiveTags(): Promise<TagRow[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT t.id, t.name, t.vector
+         FROM tags t
+         JOIN file_tags ft ON ft.tag_id = t.id
+         ORDER BY t.id`,
+      )
+      .all();
     return (rows as TagQueryRow[]).map((r: TagQueryRow) => ({
       id: r.id,
       name: r.name,
@@ -1252,7 +1610,7 @@ class SqliteMetadataStore extends MetadataStore {
         const requestedStatus: MemoryRelationStatus =
           relation.status === "rejected"
             ? "rejected"
-            : relation.active === false || relation.status === "stale"
+            : !(relation.active ?? true) || relation.status === "stale"
               ? "stale"
               : "active";
         const confidence = Math.max(0, Math.min(1, Number(relation.confidence) || 0));
@@ -1323,6 +1681,42 @@ class SqliteMetadataStore extends MetadataStore {
       where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""
     } ORDER BY updated_at ASC, id ASC`;
     const rows = this.db.prepare(sql).all(...values) as RelationQueryRow[];
+    return rows.map(relationFromRow);
+  }
+
+  async getRelationReadinessStats(): Promise<{
+    explicitLinks: number;
+    activeInferredLinks: number;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT origin, COUNT(*) AS count
+         FROM memory_relations
+         WHERE active = 1 AND status = 'active'
+         GROUP BY origin`,
+      )
+      .all() as Array<{ origin: string; count: number }>;
+    return {
+      explicitLinks: Number(rows.find((row) => row.origin === "source")?.count) || 0,
+      activeInferredLinks:
+        Number(rows.find((row) => row.origin === "derived")?.count) || 0,
+    };
+  }
+
+  async getAdjacentRelations(
+    documentKeys: readonly string[],
+  ): Promise<MemoryRelationRecord[]> {
+    const keys = [...new Set(documentKeys.map(String).filter(Boolean))];
+    if (keys.length === 0) return [];
+    const placeholders = keys.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM memory_relations
+         WHERE active = 1 AND status = 'active'
+           AND (from_key IN (${placeholders}) OR to_key IN (${placeholders}))
+         ORDER BY updated_at ASC, id ASC`,
+      )
+      .all(...keys, ...keys) as RelationQueryRow[];
     return rows.map(relationFromRow);
   }
 

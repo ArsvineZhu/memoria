@@ -465,7 +465,6 @@ class SearchPipeline extends Pipeline {
     );
     const queryPlanOverride = planResolution.requestedPlan;
     const hasQueryPlanOverride = planResolution.queryOverrideApplied;
-    const inheritRetrievalDefaults = planResolution.defaultsInherited;
     const decision = planResolution;
     const baseConfig = mergeConfig(this.config, ctx && ctx.config);
     const plannedConfig = applyRetrievalPlan(decision.plan);
@@ -547,7 +546,9 @@ class SearchPipeline extends Pipeline {
       const reasonKey = `${key.slice(0, -"Skipped".length)}SkipReason`;
       const reason = output[reasonKey];
       fallbacks.push(
-        `${key.slice(0, -"Skipped".length)}: ${String(reason || "skipped")}`,
+        `${key.slice(0, -"Skipped".length)}: ${
+          typeof reason === "string" ? reason : "skipped"
+        }`,
       );
     }
     return {

@@ -6,11 +6,11 @@ import TagExtractorStage from "../stages/ingestion/tag-extractor.js";
 import ChunkerStage from "../stages/ingestion/text-chunker.js";
 import ChunkEmbedderStage from "../stages/ingestion/chunk-embedder.js";
 import TagEmbedderStage from "../stages/ingestion/tag-embedder.js";
+import RelationExtractorStage from "../stages/ingestion/relation-extractor.js";
 import MetadataWriterStage from "../stages/ingestion/metadata-writer.js";
-import RelationGraphWriterStage from "../stages/ingestion/relation-graph-writer.js";
 import VectorIndexerStage from "../stages/ingestion/vector-indexer.js";
 import CooccurrenceBuilderStage from "../stages/ingestion/co-occurrence-builder.js";
-import type { MemoryConfigOverrides, PipelineData } from "../types.js";
+import type { MemoryConfigOverrides } from "../types.js";
 import Stage from "../core/stage.js";
 
 interface PipelineOptions {
@@ -65,13 +65,11 @@ class IngestPipeline extends Pipeline {
       new ChunkerStage(),
       new ChunkEmbedderStage(),
       new TagEmbedderStage(),
+      ...(_config.relationGraphEnabled !== false ? [new RelationExtractorStage()] : []),
       new MetadataWriterStage(),
       new VectorIndexerStage(),
       new CooccurrenceBuilderStage(),
     ];
-    if (_config.relationGraphEnabled !== false) {
-      stages.splice(6, 0, new RelationGraphWriterStage());
-    }
     return stages;
   }
 }

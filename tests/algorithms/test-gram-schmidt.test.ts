@@ -38,7 +38,7 @@ test("orthogonalize produces orthogonal basis (Modified Gram-Schmidt)", () => {
     new Float32Array([1, 1, 0]),
     new Float32Array([1, 1, 1]),
   ];
-  const { basis, basisCoefficients } = orthogonalize(vectors, dim);
+  const { basis } = orthogonalize(vectors, dim);
 
   // Each basis vector should be unit length
   for (const b of basis) {

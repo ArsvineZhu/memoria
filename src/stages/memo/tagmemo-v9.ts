@@ -10,10 +10,7 @@ import type {
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 import { propagate } from "../../algorithms/wave-propagation.js";
-import type {
-  WavePropagationResult,
-  WaveSourceInput,
-} from "../../algorithms/wave-propagation.js";
+import type { WaveSourceInput } from "../../algorithms/wave-propagation.js";
 
 /**
  * TagMemoV9Stage — TagMemo v9 spike propagation over the tag graph.
@@ -188,7 +185,10 @@ class TagMemoV9Stage extends Stage {
     }
     let rows;
     try {
-      rows = await metadataStore.getAllTags();
+      rows =
+        typeof metadataStore.getActiveTags === "function"
+          ? await metadataStore.getActiveTags()
+          : await metadataStore.getAllTags();
     } catch (e) {
       throw asMemoriaError(
         e,

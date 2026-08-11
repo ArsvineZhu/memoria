@@ -5,11 +5,8 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { createRequire } from "node:module";
 
 import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
-
-const require = createRequire(import.meta.url);
 
 const DIM = 4;
 const CAPACITY = 100;
@@ -219,7 +216,7 @@ test("saveIndex and loadIndex roundtrip", async () => {
         fs.unlinkSync(path.join(tmpDir, f));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -264,7 +261,7 @@ test("persistTagIndex invalidates old global tag files when disabled", async () 
     try {
       for (const file of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, file));
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -299,7 +296,7 @@ test("persistTagIndex true restores the global tag index", async () => {
     try {
       for (const file of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, file));
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -339,7 +336,7 @@ test("restorePersistedIndexes rejects missing, corrupt, and wrong-dimension inde
         fs.unlinkSync(path.join(tmpDir, file));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -394,7 +391,7 @@ test("restorePersistedIndexes atomically commits every loaded index", async () =
         fs.unlinkSync(path.join(tmpDir, file));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -430,7 +427,7 @@ test("restorePersistedIndexes refuses disk loading when indexLoadEnabled is fals
         fs.unlinkSync(path.join(tmpDir, file));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -477,7 +474,7 @@ test("resetDerivedState clears timers, memory, and only Memoria index files", ()
         fs.unlinkSync(path.join(tmpDir, file));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -512,7 +509,7 @@ test("scheduleIndexSave coalesces multiple calls into one timer", async () => {
         fs.unlinkSync(path.join(tmpDir, f));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -552,7 +549,7 @@ test("flushPendingSaves persists ALL indices, not only scheduled ones", async ()
         fs.unlinkSync(path.join(tmpDir, f));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -602,7 +599,7 @@ test("getOrCreateIndex lazily loads a persisted index from disk", async () => {
         fs.unlinkSync(path.join(tmpDir, f));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });
 
@@ -633,6 +630,6 @@ test("flushPendingSaves clears all timers", async () => {
         fs.unlinkSync(path.join(tmpDir, f));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });

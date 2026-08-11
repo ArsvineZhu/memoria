@@ -6,7 +6,6 @@ import type {
   PipelineData,
   QueryVector,
   VectorHit,
-  VectorResult,
   VectorStoreContract,
 } from "../../types.js";
 

@@ -204,7 +204,7 @@ test("concurrent initialize calls share one lifecycle transition", async () => {
   }
 });
 
-test("onReady observes ready state, permits reads, and rejects lifecycle reentry", async () => {
+test("onReady remains initializing, permits internal reads, and rejects lifecycle reentry", async () => {
   let callbackState: string | undefined;
   let callbackReadWasReady = false;
   const { engine, metadataStore } = makeInjectedEngine({
@@ -225,15 +225,15 @@ test("onReady observes ready state, permits reads, and rejects lifecycle reentry
 
   try {
     await engine.initialize();
-    assert.equal(callbackState, "ready");
-    assert.equal(callbackReadWasReady, true);
+    assert.equal(callbackState, "initializing");
+    assert.equal(callbackReadWasReady, false);
     assert.equal(engine.state, "ready");
   } finally {
     await closeInjected(engine, metadataStore);
   }
 });
 
-test("close waits for an onReady callback after the engine becomes ready", async () => {
+test("close waits for an onReady callback before the engine becomes ready", async () => {
   let markReadyStarted!: () => void;
   let releaseReady!: () => void;
   const readyStarted = new Promise<void>((resolve) => {
@@ -252,11 +252,15 @@ test("close waits for an onReady callback after the engine becomes ready", async
   try {
     const initializing = engine.initialize();
     await readyStarted;
-    assert.equal(engine.state, "ready");
+    assert.equal(engine.state, "initializing");
 
     const closing = engine.close();
     await Promise.resolve();
-    assert.equal(engine.state, "ready");
+    assert.equal(engine.state, "initializing");
+    await assert.rejects(
+      () => engine.search("blocked while ready hook runs"),
+      (error: unknown) => isLifecycleError(error, "search"),
+    );
 
     releaseReady();
     await initializing;

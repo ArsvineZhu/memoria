@@ -256,7 +256,7 @@ class DashScopeEmbeddingProvider extends EmbeddingProvider {
       if (data.error || data.code) {
         console.warn(
           `[DashScopeEmbedding] API error: ` +
-            `${JSON.stringify(data.error || data).substring(0, 500)}`,
+            JSON.stringify(data.error || data).substring(0, 500),
         );
         return null;
       }

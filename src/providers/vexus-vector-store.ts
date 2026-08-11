@@ -153,7 +153,7 @@ class VexusVectorStore extends VectorStore {
   _indexFileExists(indexName: string): boolean {
     try {
       return fs.existsSync(this._getIndexPath(indexName));
-    } catch (_) {
+    } catch {
       return false;
     }
   }
@@ -391,7 +391,7 @@ class VexusVectorStore extends VectorStore {
             : Number(stats.dimensions);
         if (Number.isFinite(dimensions) && dimensions !== this.dimension) return false;
         loadedIndexes.set(indexName, index);
-      } catch (_) {
+      } catch {
         return false;
       }
     }

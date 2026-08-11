@@ -70,9 +70,11 @@ class DerivedStateCoordinator {
           queueTicketConsumed = true;
           if (this._vectorMutationFailed) {
             release();
-            await this._ensureClean();
+            // Keep this mutation represented while recovery runs. If recovery
+            // fails, the finally block can then release the restored ticket.
             this._queuedMutations += 1;
             queueTicketConsumed = false;
+            await this._ensureClean();
             continue;
           }
 

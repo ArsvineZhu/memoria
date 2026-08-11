@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { TDBEngine, type TdbEngineState } from "../../src/tdb/tdb-engine.js";
+import { TDBEngine } from "../../src/tdb/tdb-engine.js";
 import TDBStore from "../../src/tdb/tdb-store.js";
 import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
 import { MemoriaError } from "../../src/errors.js";

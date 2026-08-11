@@ -29,6 +29,9 @@ interface ArtifactCacheEntry {
   state: NativeArtifactState;
 }
 
+export type NativeMemoFailure =
+  "artifact_build_failed" | "backend_unavailable" | "invalid_result";
+
 const artifactCache = new WeakMap<object, Map<string, ArtifactCacheEntry>>();
 
 /** Clear the JS artifact handle and the bound native runtime for one index. */
@@ -167,7 +170,7 @@ async function metadataGeneration(ctx: PipelineContextLike): Promise<string> {
         ? String(relations)
         : stableJson(relations);
     return `${metadataValue}|relations:${relationValue}`;
-  } catch (_) {
+  } catch {
     return "unavailable";
   }
 }
@@ -178,7 +181,7 @@ function parseNativeJson(value: unknown): UnknownRecord | null {
   try {
     const parsed: unknown = JSON.parse(value);
     return isRecord(parsed) ? parsed : null;
-  } catch (_) {
+  } catch {
     return null;
   }
 }
@@ -187,23 +190,25 @@ export async function ensureNativeMemoArtifact(
   ctx: PipelineContextLike,
   index: NativeMemoIndex,
 ): Promise<
-  { state: NativeArtifactState } | { state: null; reason: string; error?: string }
+  | { state: NativeArtifactState }
+  | { state: null; reason: string; failure: NativeMemoFailure }
 > {
   const dbPath = nativeDatabasePath(ctx);
   if (!dbPath) {
     return {
       state: null,
       reason: "native MemoRuntime requires a file-backed SQLite database",
+      failure: "backend_unavailable",
     };
   }
   let runtime;
   try {
     runtime = createMemoRuntimeFacade(index, dbPath);
-  } catch (error) {
+  } catch {
     return {
       state: null,
       reason: "native index has no Memo artifact builder",
-      error: error instanceof Error ? error.message : String(error),
+      failure: "backend_unavailable",
     };
   }
 
@@ -234,6 +239,7 @@ export async function ensureNativeMemoArtifact(
       return {
         state: null,
         reason: "native Memo artifact builder returned no artifact signature",
+        failure: "invalid_result",
       };
     }
     const state: NativeArtifactState = {
@@ -249,11 +255,11 @@ export async function ensureNativeMemoArtifact(
     };
     entries.set(dbPath, { generationKey, configKey, state });
     return { state };
-  } catch (error) {
+  } catch {
     return {
       state: null,
       reason: "native Memo artifact build failed",
-      error: error instanceof Error ? error.message : String(error),
+      failure: "artifact_build_failed",
     };
   }
 }
@@ -323,11 +329,15 @@ function coreTagNames(info: PipelineData): string[] {
   }
   const pyramidTags = info.pyramid?.levels?.[0]?.tags || [];
   for (const tag of pyramidTags) {
-    if (tag && tag.isCore === true && tag.name) names.add(String(tag.name));
+    if (tag && tag.isCore === true && typeof tag.name === "string" && tag.name) {
+      names.add(tag.name);
+    }
   }
   const ranked = info.tagMemo?.ranked || [];
   for (const tag of ranked) {
-    if (tag && tag.sourceType === "core" && tag.name) names.add(String(tag.name));
+    if (tag && tag.sourceType === "core" && typeof tag.name === "string" && tag.name) {
+      names.add(tag.name);
+    }
   }
   return [...names];
 }
@@ -337,13 +347,16 @@ export async function runNativeMemoPipeline(
   index: NativeMemoIndex,
   artifact: NativeArtifactState,
   info: PipelineData,
-): Promise<{ value: UnknownRecord } | { value: null; reason: string; error?: string }> {
+): Promise<
+  { value: UnknownRecord } | { value: null; reason: string; failure: NativeMemoFailure }
+> {
   const dimension = number(ctx.config.dimension, 0);
   const queryVector = vectorArray(info.queryVector);
   if (dimension <= 0 || queryVector.length !== dimension) {
     return {
       value: null,
       reason: `query vector dimension ${queryVector.length} does not match native dimension ${dimension}`,
+      failure: "invalid_result",
     };
   }
 
@@ -363,12 +376,16 @@ export async function runNativeMemoPipeline(
     const value = parseNativeJson(raw);
     return value
       ? { value }
-      : { value: null, reason: "native Memo pipeline returned invalid JSON" };
-  } catch (error) {
+      : {
+          value: null,
+          reason: "native Memo pipeline returned invalid JSON",
+          failure: "invalid_result",
+        };
+  } catch {
     return {
       value: null,
       reason: "native Memo pipeline failed",
-      error: error instanceof Error ? error.message : String(error),
+      failure: "backend_unavailable",
     };
   }
 }
@@ -454,6 +471,8 @@ class NativeMemoRuntimeStage extends Stage {
         ...info,
         nativeMemoSkipped: true,
         nativeMemoSkipReason: "native index unavailable",
+        nativeMemoFailure: "backend_unavailable",
+        nativeMemoError: "backend_unavailable",
       };
     }
     const artifact = await ensureNativeMemoArtifact(ctx, index);
@@ -462,7 +481,8 @@ class NativeMemoRuntimeStage extends Stage {
         ...info,
         nativeMemoSkipped: true,
         nativeMemoSkipReason: artifact.reason,
-        nativeMemoError: artifact.error,
+        nativeMemoFailure: artifact.failure,
+        nativeMemoError: artifact.failure,
       };
     }
     const result = await runNativeMemoPipeline(ctx, index, artifact.state, info);
@@ -471,7 +491,8 @@ class NativeMemoRuntimeStage extends Stage {
         ...info,
         nativeMemoSkipped: true,
         nativeMemoSkipReason: result.reason,
-        nativeMemoError: result.error,
+        nativeMemoFailure: result.failure,
+        nativeMemoError: result.failure,
         nativeMemoArtifact: artifact.state,
       };
     }
@@ -480,8 +501,8 @@ class NativeMemoRuntimeStage extends Stage {
     const hasEnhancedVector =
       enhanced.length > 0 && enhanced.length === queryVector.length;
     const queries = Array.isArray(info.queries)
-      ? info.queries.map((query, index) =>
-          index === 0 && hasEnhancedVector
+      ? info.queries.map((query, position) =>
+          position === 0 && hasEnhancedVector
             ? { ...query, vector: new Float32Array(enhanced) }
             : query,
         )

@@ -98,10 +98,10 @@ class TDBSearchPipeline extends Pipeline {
    */
   constructor(
     config: MemoryConfigOverrides = {},
-    options: TdbSearchOptions & { stages?: Stage<PipelineData, PipelineData>[] } = {},
+    options: TdbSearchOptions & { stages?: Stage[] } = {},
   ) {
     const effectiveConfig = { ...DEFAULT_TDB_GATES, ...config };
-    const stages: Stage<PipelineData, PipelineData>[] = Array.isArray(options.stages)
+    const stages: Stage[] = Array.isArray(options.stages)
       ? options.stages
       : TDBSearchPipeline.defaultStages(effectiveConfig);
     super(stages);
@@ -114,10 +114,8 @@ class TDBSearchPipeline extends Pipeline {
    * @param {object} config - effective gate config
    * @returns {import('../core/stage.js').Stage[]}
    */
-  static defaultStages(
-    config: MemoryConfigOverrides,
-  ): Stage<PipelineData, PipelineData>[] {
-    const stages: Stage<PipelineData, PipelineData>[] = [
+  static defaultStages(config: MemoryConfigOverrides): Stage[] {
+    const stages: Stage[] = [
       new TDBQueryNormalizerStage(),
       new TDBQueryEmbedderStage(),
       new SearchScopeResolverStage(),

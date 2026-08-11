@@ -1,7 +1,7 @@
 "use strict";
 
 import * as fs from "node:fs";
-import type { MemoryConfigOverrides, UnknownRecord } from "../types.js";
+import type { UnknownRecord } from "../types.js";
 
 interface RagLoaderOptions {
   path?: string;

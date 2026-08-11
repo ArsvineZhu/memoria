@@ -89,6 +89,38 @@ test("Schema includes the native Memo artifact tables", () => {
   store.close();
 });
 
+test("historical tags remain in the authority while active-tag and index expectations exclude them", async () => {
+  const store = makeStore();
+  const replacement = await store.replaceDocumentState({
+    file: {
+      path: "research/sole.mdx",
+      diaryName: "research",
+      checksum: "sole",
+      mtime: 1,
+      size: 10,
+      documentId: "sole-tag",
+    },
+    chunks: [{ chunkIndex: 0, content: "content", vector: makeBuf([1, 0, 0, 0]) }],
+    tags: [{ name: "historical", vector: makeBuf([0, 1, 0, 0]) }],
+    orderedTagNames: ["historical"],
+  });
+  assert.equal((await store.getActiveTags()).length, 1);
+  assert.ok((await store.getExpectedVectorIndexNames()).includes("global_tags"));
+
+  const removed = await store.deleteDocumentAuthority({
+    path: "research/sole.mdx",
+    documentId: "sole-tag",
+  });
+  assert.deepEqual(removed.orphanedTagIds, [replacement.tagIds[0]]);
+  assert.equal((await store.getAllTags()).length, 1);
+  assert.deepEqual(await store.getActiveTags(), []);
+  assert.equal(
+    (await store.getExpectedVectorIndexNames()).includes("global_tags"),
+    false,
+  );
+  store.close();
+});
+
 test("SQLite relation authority preserves source revisions and reversible derived state", async () => {
   const store = makeStore();
   const first = {
@@ -253,10 +285,7 @@ test("generation state starts dirty and bulk index metadata is available", async
       indexName: "diary1",
     },
   ]);
-  assert.deepEqual(await generation.getExpectedVectorIndexNames(), [
-    "diary1",
-    "global_tags",
-  ]);
+  assert.deepEqual(await generation.getExpectedVectorIndexNames(), ["diary1"]);
   assert.strictEqual(await store.countFiles(), 1);
   assert.ok((await store.getLastIndexedAt()) !== null);
   store.close();
@@ -946,6 +975,6 @@ test("Works with a file-based database", async () => {
         fs.unlinkSync(path.join(tmpDir, f));
       }
       fs.rmdirSync(tmpDir);
-    } catch (_) {}
+    } catch {}
   }
 });

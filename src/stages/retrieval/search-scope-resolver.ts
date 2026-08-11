@@ -18,7 +18,9 @@ function normalizeNames(value: unknown): string[] {
 
 function normalizeContentNames(value: unknown, tagIndexName: unknown): string[] {
   const names = normalizeNames(value);
-  const tagName = String(tagIndexName || "global_tags").trim() || "global_tags";
+  const tagName =
+    (typeof tagIndexName === "string" ? tagIndexName : "global_tags").trim() ||
+    "global_tags";
   return names.filter((name) => name !== tagName && name !== "global_tags");
 }
 

@@ -108,7 +108,7 @@ test("TDBStore upserts files, chunks and survives reopen", async (t) => {
   ]);
   assert.strictEqual(rows.length, 2);
   assert.ok(rows[0].nodeId != null);
-  await store1.close();
+  store1.close();
 
   const store2 = new TDBStore({ dbPath });
   const file = await store2.getFile("Root", "note.md");
@@ -119,7 +119,7 @@ test("TDBStore upserts files, chunks and survives reopen", async (t) => {
   const all = await store2.getAllChunks();
   assert.strictEqual(all.length, 2);
   assert.strictEqual(all[0].content, FACT_ALPHA);
-  await store2.close();
+  store2.close();
 });
 
 test("TDBStore creates parent directories for file-backed databases", (t) => {
@@ -147,7 +147,7 @@ test("TDBStore close propagates failures and remains retryable", () => {
   assert.equal(store._closed, true);
 });
 
-test("TDBStore getFileByChunkId / getChunkById resolve file context", async (t) => {
+test("TDBStore getFileByChunkId / getChunkById resolve file context", async () => {
   const store = new TDBStore({ dbPath: ":memory:" });
   const fileId = await store.upsertFile({
     library: "faq",
@@ -168,10 +168,10 @@ test("TDBStore getFileByChunkId / getChunkById resolve file context", async (t) 
   assert.strictEqual(file!.library, "faq");
   assert.deepStrictEqual(await store.listLibraries(), ["faq"]);
   assert.deepStrictEqual(await store.getDistinctDiaryNames(), ["faq"]);
-  await store.close();
+  store.close();
 });
 
-test("TDBStore deleteFile removes its chunks", async (t) => {
+test("TDBStore deleteFile removes its chunks", async () => {
   const store = new TDBStore({ dbPath: ":memory:" });
   await store.upsertFile({
     library: "R",
@@ -189,7 +189,7 @@ test("TDBStore deleteFile removes its chunks", async (t) => {
   assert.strictEqual(removed.chunkIds.length, 2);
   assert.strictEqual((await store.getChunks("R", "a.md")).length, 0);
   assert.strictEqual(await store.getFile("R", "a.md"), null);
-  await store.close();
+  store.close();
 });
 
 test("TDBStore public CRUD preserves authority generation and dirty state", async () => {
@@ -255,7 +255,7 @@ test("TDBStore low-level document replacement preserves nullable vectors", async
   assert.equal(after.metadataGeneration, before.metadataGeneration + 1);
   assert.equal(after.vectorDirty, true);
   assert.equal((await store.getChunks("facts", "nullable.md"))[0]?.vector, null);
-  await store.close();
+  store.close();
 });
 
 // ── TDBEngine: ingestion + query ───────────────────────────────────
@@ -273,6 +273,101 @@ test("TDBEngine disabled by config: initialize is a no-op and search returns []"
   assert.deepStrictEqual(out.results, []);
   assert.strictEqual(out.tdbDisabled, true);
   assert.strictEqual(fs.existsSync(path.join(dir, "no.sqlite")), false);
+});
+
+test("TDBEngine keeps closing state and retries only resources that failed to close", async (t) => {
+  const dir = makeTempDir(t, "memoria-tdb-close-retry-");
+  const engine = new TDBEngine({
+    config: baseConfig({
+      tdbRootPath: path.join(dir, "knowledge"),
+      tdbStorePath: path.join(dir, "vectors"),
+      tdbDbPath: path.join(dir, "tdb.sqlite"),
+    }),
+    embeddingProvider: fakeEmbeddingProvider,
+  });
+  await engine.initialize();
+
+  const vector = engine.vectorStore;
+  const metadata = engine.metadataStore;
+  const originalVectorClose = vector.close?.bind(vector);
+  const originalMetadataClose = metadata.close?.bind(metadata);
+  let vectorFailures = 1;
+  let metadataFailures = 0;
+  let vectorCloseCalls = 0;
+  let metadataCloseCalls = 0;
+  vector.close = async () => {
+    vectorCloseCalls += 1;
+    if (vectorFailures > 0) {
+      vectorFailures -= 1;
+      throw new Error("vector close failed");
+    }
+    await originalVectorClose?.();
+  };
+  metadata.close = async () => {
+    metadataCloseCalls += 1;
+    if (metadataFailures > 0) {
+      metadataFailures -= 1;
+      throw new Error("metadata close failed");
+    }
+    await Promise.resolve(originalMetadataClose?.());
+  };
+
+  await assert.rejects(
+    () => engine.close(),
+    (error: unknown) =>
+      error instanceof MemoriaError &&
+      (error.cause as Error | undefined)?.message === "vector close failed",
+  );
+  assert.equal(engine.state, "closing");
+  await assert.rejects(
+    () => engine.search("must reject while closing"),
+    /current state is closing/,
+  );
+  assert.equal(vectorCloseCalls, 1);
+  assert.equal(metadataCloseCalls, 1);
+
+  await engine.close();
+  assert.equal(engine.state, "closed");
+  assert.equal(vectorCloseCalls, 2);
+  assert.equal(metadataCloseCalls, 1);
+});
+
+test("TDBEngine retains a metadata store when its close fails", async (t) => {
+  const dir = makeTempDir(t, "memoria-tdb-metadata-close-");
+  const engine = new TDBEngine({
+    config: baseConfig({
+      tdbRootPath: path.join(dir, "knowledge"),
+      tdbStorePath: path.join(dir, "vectors"),
+      tdbDbPath: path.join(dir, "tdb.sqlite"),
+    }),
+    embeddingProvider: fakeEmbeddingProvider,
+  });
+  await engine.initialize();
+
+  const metadata = engine.metadataStore;
+  const originalClose = metadata.close?.bind(metadata);
+  let failures = 1;
+  let calls = 0;
+  metadata.close = async () => {
+    calls += 1;
+    if (failures > 0) {
+      failures -= 1;
+      throw new Error("metadata close failed");
+    }
+    await Promise.resolve(originalClose?.());
+  };
+
+  await assert.rejects(
+    () => engine.close(),
+    (error: unknown) =>
+      error instanceof MemoriaError &&
+      (error.cause as Error | undefined)?.message === "metadata close failed",
+  );
+  assert.equal(engine.state, "closing");
+  assert.equal(calls, 1);
+  await engine.close();
+  assert.equal(engine.state, "closed");
+  assert.equal(calls, 2);
 });
 
 test("TDB filesystem resolution rejects paths outside the configured root", async (t) => {
@@ -357,7 +452,7 @@ test("TDB result expansion rejects an authority path outside the root", async (t
   await engine.close();
 });
 
-test("TDBEngine ingests a text fact and finds it via query", async (t) => {
+test("TDBEngine ingests a text fact and finds it via query", async () => {
   const engine = new TDBEngine({
     config: baseConfig(),
     embeddingProvider: fakeEmbeddingProvider,
@@ -377,7 +472,7 @@ test("TDBEngine ingests a text fact and finds it via query", async (t) => {
   await engine.close();
 });
 
-test("TDBEngine skips unchanged re-ingestion (checksum dedupe)", async (t) => {
+test("TDBEngine skips unchanged re-ingestion (checksum dedupe)", async () => {
   const engine = new TDBEngine({
     config: baseConfig(),
     embeddingProvider: fakeEmbeddingProvider,
@@ -392,7 +487,7 @@ test("TDBEngine skips unchanged re-ingestion (checksum dedupe)", async (t) => {
   await engine.close();
 });
 
-test("TDBEngine re-ingest of changed text replaces the previous chunks", async (t) => {
+test("TDBEngine re-ingest of changed text replaces the previous chunks", async () => {
   const engine = new TDBEngine({
     config: baseConfig(),
     embeddingProvider: fakeEmbeddingProvider,
@@ -409,7 +504,7 @@ test("TDBEngine re-ingest of changed text replaces the previous chunks", async (
   await engine.close();
 });
 
-test("TDBEngine removeFile drops the fact from search", async (t) => {
+test("TDBEngine removeFile drops the fact from search", async () => {
   const engine = new TDBEngine({
     config: baseConfig(),
     embeddingProvider: fakeEmbeddingProvider,
@@ -425,7 +520,7 @@ test("TDBEngine removeFile drops the fact from search", async (t) => {
   await engine.close();
 });
 
-test("TDBEngine searchWithVector reuses a provided query vector", async (t) => {
+test("TDBEngine searchWithVector reuses a provided query vector", async () => {
   const engine = new TDBEngine({
     config: baseConfig(),
     embeddingProvider: fakeEmbeddingProvider,
@@ -441,7 +536,7 @@ test("TDBEngine searchWithVector reuses a provided query vector", async (t) => {
   await engine.close();
 });
 
-test("TDBEngine routes search through an injected TriviumDBAdapter", async (t) => {
+test("TDBEngine routes search through an injected TriviumDBAdapter", async () => {
   const vectorStore = newVectorStore();
   const trivium = new TriviumDBAdapter({
     vectorStore,
@@ -502,7 +597,7 @@ test("TDBEngine upsertFile serializes by effective destination identity", async 
   await engine.close();
 });
 
-test("TDB Trivium preserves an explicitly empty library scope", async (t) => {
+test("TDB Trivium preserves an explicitly empty library scope", async () => {
   const triviumVector = newVectorStore();
   const trivium = new TriviumDBAdapter({
     vectorStore: triviumVector,
@@ -589,7 +684,7 @@ test("TDBEngine search supports expand: hit text becomes the whole source", asyn
   await engine.close();
 });
 
-test("TDBEngine getStats reports files/chunks/libraries", async (t) => {
+test("TDBEngine getStats reports files/chunks/libraries", async () => {
   const engine = new TDBEngine({
     config: baseConfig(),
     embeddingProvider: fakeEmbeddingProvider,
@@ -638,7 +733,7 @@ test("TDBSearchPipeline is inert when tdbEnabled is false", async () => {
   assert.deepStrictEqual(out.results, []);
 });
 
-test("TDBSearchPipeline ranks the overlapping-token fact on top", async (t) => {
+test("TDBSearchPipeline ranks the overlapping-token fact on top", async () => {
   const engine = new TDBEngine({
     config: baseConfig(),
     embeddingProvider: fakeEmbeddingProvider,
@@ -661,7 +756,7 @@ test("TDBSearchPipeline ranks the overlapping-token fact on top", async (t) => {
   await engine.close();
 });
 
-test("TDB search applies one library scope to vector and BM25 retrieval", async (t) => {
+test("TDB search applies one library scope to vector and BM25 retrieval", async () => {
   const engine = new TDBEngine({
     config: baseConfig({ tdbDimension: DIM }),
     embeddingProvider: fakeEmbeddingProvider,
@@ -679,7 +774,7 @@ test("TDB search applies one library scope to vector and BM25 retrieval", async 
   await engine.close();
 });
 
-test("TDBSearchPipeline decays older facts below newer ones", async (t) => {
+test("TDBSearchPipeline decays older facts below newer ones", async () => {
   const nowSec = Math.floor(Date.now() / 1000);
   const twoDaysAgo = nowSec - 2 * 24 * 3600;
 

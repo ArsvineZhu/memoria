@@ -46,10 +46,12 @@ type RuntimeTdbStore = TdbStoreContract & {
 export type TdbEngineState =
   "created" | "initializing" | "ready" | "closing" | "closed";
 
+const unsafeLibraryChars = new RegExp(String.raw`[<>:"/\\|?*\x00-\x1F]`, "g");
+
 function safeLibraryName(name: unknown): string {
   return (
-    String(name || "Root")
-      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    (typeof name === "string" ? name : "Root")
+      .replace(unsafeLibraryChars, "_")
       .trim() || "Root"
   );
 }
@@ -136,7 +138,7 @@ class TDBEngine {
     this.name = "tdbEngine";
     this.options = options || {};
     this.config = mergeConfig(this.options.config);
-    this.enabled = this.config.tdbEnabled === true;
+    this.enabled = this.config.tdbEnabled;
     this.trivium = this.options.trivium || null;
 
     if (this.options.metadataStore) this.metadataStore = this.options.metadataStore;
@@ -238,7 +240,7 @@ class TDBEngine {
       this._initPromise = null;
       try {
         await this._disposeOwnedResources();
-      } catch (_) {
+      } catch {
         // Preserve the initialization failure; retryable owned resources stay
         // referenced by the cleanup helper when their close itself failed.
       }
@@ -334,7 +336,7 @@ class TDBEngine {
     }
     if (this._ownsMetadataStore && this.metadataStore) {
       try {
-        await this.metadataStore.close?.();
+        await Promise.resolve(this.metadataStore.close?.());
         this._ownsMetadataStore = false;
         this.metadataStore = undefined as unknown as RuntimeTdbStore;
       } catch (error) {
@@ -354,7 +356,7 @@ class TDBEngine {
     const generation = await this.metadataStore.getTdbGenerationState();
     const expected = await this.metadataStore.getExpectedVectorIndexNames();
     if (
-      generation.vectorDirty === false &&
+      !generation.vectorDirty &&
       generation.metadataGeneration === generation.vectorGeneration &&
       typeof this.vectorStore.restorePersistedIndexes === "function"
     ) {
@@ -365,7 +367,7 @@ class TDBEngine {
           this._vectorCoordinator.markClean();
           return;
         }
-      } catch (_) {
+      } catch {
         // Fall through to the SQLite rebuild plan.
       }
     }
@@ -422,7 +424,9 @@ class TDBEngine {
         entries.push({ id: row.nodeId, vector });
         indexEntries.set(row.library, entries);
       }
-      const expectedIndexNames = [...indexEntries.keys()].sort();
+      const expectedIndexNames = [...indexEntries.keys()].sort((left, right) =>
+        left.localeCompare(right),
+      );
       return {
         indexEntries,
         expectedIndexNames,
@@ -1002,7 +1006,7 @@ class TDBEngine {
           "utf-8",
         );
         out.push({ ...hit, text: full, _expanded: true });
-      } catch (_) {
+      } catch {
         out.push(hit);
       }
     }
@@ -1075,7 +1079,12 @@ class TDBEngine {
       this.state = "closing";
       await this._activeOperations.drain();
       let firstError: unknown = null;
-      if (this._vectorStateComplete && !this._vectorMutationFailed) {
+      if (
+        this._vectorStateComplete &&
+        !this._vectorMutationFailed &&
+        this.vectorStore &&
+        this.metadataStore
+      ) {
         try {
           await this.vectorStore.flushPendingSaves?.();
           await this.metadataStore.markTdbVectorStateClean();
@@ -1096,10 +1105,11 @@ class TDBEngine {
     try {
       await closing;
     } catch (error) {
-      if (this.state === "closing") {
-        this.state = "ready";
-        this._closed = false;
-      }
+      // A partial close is not a return to service.  _disposeOwnedResources
+      // clears only resources whose close succeeded, so keeping `closing`
+      // makes public operations fail and lets the next close retry only the
+      // retained resource(s).
+      this._closed = false;
       throw asMemoriaError(error, "lifecycle", "TDBEngine close failed.", {
         retryable: true,
       });

@@ -18,6 +18,8 @@ import {
 
 const DEFAULT_ALPHA = 0.3;
 const DEFAULT_MIN_GEO_SAMPLES = 4;
+type NativeGeodesicFailure =
+  "backend_unavailable" | "artifact_unavailable" | "invalid_result";
 
 type ScoredCandidate = {
   candidate: ChunkCandidate;
@@ -79,6 +81,7 @@ class GeodesicRerankerStage extends Stage {
           ...info,
           nativeGeodesicSkipped: true,
           nativeGeodesicSkipReason: native.reason,
+          nativeGeodesicFailure: native.failure,
         };
       }
     }
@@ -204,18 +207,34 @@ class GeodesicRerankerStage extends Stage {
     ctx: PipelineContextLike,
     alpha: number,
     minGeoSamples: number,
-  ): Promise<{ output?: PipelineData; reason?: string }> {
+  ): Promise<{
+    output?: PipelineData;
+    reason?: NativeGeodesicFailure;
+    failure?: NativeGeodesicFailure;
+  }> {
     const index = getNativeMemoIndex(ctx);
     const dbPath = nativeDatabasePath(ctx);
     if (!index || !dbPath || typeof index.rerankMemoDtsc !== "function") {
-      return { reason: "native DTSC reranker is unavailable" };
+      return {
+        reason: "backend_unavailable",
+        failure: "backend_unavailable",
+      };
     }
 
     let artifact = readRecord(info.nativeMemoArtifact);
     if (typeof artifact.artifactSig !== "string" || !artifact.artifactSig) {
       const built = await ensureNativeMemoArtifact(ctx, index);
       if (!built.state) {
-        return { reason: built.reason };
+        return {
+          reason:
+            built.failure === "invalid_result"
+              ? "invalid_result"
+              : "artifact_unavailable",
+          failure:
+            built.failure === "invalid_result"
+              ? "invalid_result"
+              : "artifact_unavailable",
+        };
       }
       artifact = built.state as unknown as Record<string, unknown>;
     }
@@ -286,7 +305,7 @@ class GeodesicRerankerStage extends Stage {
       const nativeResults =
         output && Array.isArray(output.results) ? output.results : null;
       if (!output || !nativeResults) {
-        return { reason: "native DTSC reranker returned invalid JSON" };
+        return { reason: "invalid_result", failure: "invalid_result" };
       }
 
       const ranked: ChunkCandidate[] = [];
@@ -365,12 +384,10 @@ class GeodesicRerankerStage extends Stage {
           nativeGeodesic: output,
         },
       };
-    } catch (error) {
+    } catch {
       return {
-        reason:
-          error instanceof Error
-            ? `native DTSC reranker failed: ${error.message}`
-            : String(error),
+        reason: "backend_unavailable",
+        failure: "backend_unavailable",
       };
     }
   }
@@ -385,7 +402,7 @@ class GeodesicRerankerStage extends Stage {
       return parsed && typeof parsed === "object" && !Array.isArray(parsed)
         ? (parsed as Record<string, unknown>)
         : null;
-    } catch (_) {
+    } catch {
       return null;
     }
   }

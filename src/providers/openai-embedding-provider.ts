@@ -116,7 +116,7 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
   _getModelCandidates(): string[] {
     const candidates: string[] = [];
     const addModel = (model: unknown): void => {
-      const normalized = String(model || "").trim();
+      const normalized = (typeof model === "string" ? model : "").trim();
       if (normalized && !candidates.includes(normalized)) {
         candidates.push(normalized);
       }
@@ -196,6 +196,7 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
         } catch (parseError) {
           throw new Error(
             `Failed to parse API response as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+            { cause: parseError },
           );
         }
 
@@ -204,8 +205,14 @@ class OpenAIEmbeddingProvider extends EmbeddingProvider {
         }
 
         if (data.error) {
-          const errorMsg = data.error.message || JSON.stringify(data.error);
-          const errorCode = data.error.code || response.status;
+          const errorMsg =
+            typeof data.error.message === "string"
+              ? data.error.message
+              : "provider_error";
+          const errorCode =
+            typeof data.error.code === "string" || typeof data.error.code === "number"
+              ? String(data.error.code)
+              : response.status;
           throw new Error(`API Error ${errorCode}: ${errorMsg}`);
         }
 

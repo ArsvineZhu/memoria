@@ -75,9 +75,11 @@ test("MDX source remains immutable while relations and retrieval trace live outs
     const envelopes = await adapter.scan();
     assert.equal(envelopes.length, 2);
 
-    const listRelations = engine.metadataStore.listRelations;
+    const listRelations = engine.metadataStore.listRelations?.bind(
+      engine.metadataStore,
+    );
     assert.ok(listRelations);
-    const relations = await listRelations.call(engine.metadataStore);
+    const relations = await listRelations();
     assert.equal(relations.length, 1);
     assert.equal(relations[0]?.origin, "source");
     assert.equal(relations[0]?.from, relationDocumentKey({ path: "notes/a.mdx" }));

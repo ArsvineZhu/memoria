@@ -285,7 +285,7 @@ class ResultDeduplicator {
         const loaded = await this.loadVector(chunkId);
         const vector = this._toValidVector(loaded);
         hydrated.push(vector ? { ...candidate, _vector: vector } : candidate);
-      } catch (_) {
+      } catch {
         // Semantic hydration is optional; sparse-only candidates remain safe.
         hydrated.push(candidate);
       }
@@ -301,16 +301,26 @@ class ResultDeduplicator {
     const normalizedText = this._normalizeText(candidate.text ?? candidate.content);
     if (normalizedText) identities.push(`text:${normalizedText}`);
 
-    const fullPath = String(
-      candidate.fullPath || candidate.sourceFile || candidate._expandedFilePath || "",
+    const fullPath = (
+      typeof candidate.fullPath === "string"
+        ? candidate.fullPath
+        : typeof candidate.sourceFile === "string"
+          ? candidate.sourceFile
+          : typeof candidate._expandedFilePath === "string"
+            ? candidate._expandedFilePath
+            : ""
     )
       .trim()
       .replace(/\\/g, "/")
       .toLowerCase();
     const chunkIndex =
       candidate.chunkIndex ?? candidate.chunk_index ?? candidate.offset;
-    if (fullPath && chunkIndex !== undefined && chunkIndex !== null) {
-      identities.push(`path-chunk:${fullPath}:${chunkIndex}`);
+    const chunkIndexText =
+      typeof chunkIndex === "string" || typeof chunkIndex === "number"
+        ? String(chunkIndex)
+        : "";
+    if (fullPath && chunkIndexText) {
+      identities.push(`path-chunk:${fullPath}:${chunkIndexText}`);
     }
 
     return identities;
@@ -436,7 +446,7 @@ class ResultDeduplicator {
   }
 
   _normalizeText(value: unknown): string {
-    return String(value || "")
+    return (typeof value === "string" ? value : "")
       .normalize("NFKC")
       .replace(/\r\n?/g, "\n")
       .replace(/[ \t]+/g, " ")

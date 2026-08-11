@@ -178,7 +178,7 @@ test("getMemoryProfile + getHealthStatus return monitoring envelopes", async () 
   assert.ok(Number.isFinite(profile.estimatedBytes));
   assert.ok(profile.estimatedBytes >= 0);
 
-  const status = await adapter.getHealthStatus();
+  const status = adapter.getHealthStatus();
   assert.strictEqual(typeof status.status, "string");
   assert.strictEqual(typeof status.healthy, "boolean");
   assert.ok(Array.isArray(status.issues));

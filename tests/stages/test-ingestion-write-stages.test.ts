@@ -14,7 +14,6 @@ import { MemoriaError } from "../../src/errors.js";
 import { decodeVectorBlob } from "../../src/utils/vector-codec.js";
 import type {
   EmbeddingProviderContract,
-  EmbeddingVector,
   MemoryConfigOverrides,
   MetadataStoreContract,
   VectorLike,
@@ -160,6 +159,31 @@ test("MetadataWriterStage keeps the CRUD compatibility path without atomic capab
     (await store.getFileTags(out.fileId!)).map((tag) => tag.name),
     ["alpha", "beta"],
   );
+});
+
+test("MetadataWriterStage refuses relation-enabled writes without atomic authority", async (t) => {
+  const store = newMetadataStore();
+  t.after(() => store.close());
+  const compatibilityStore = new Proxy(store, {
+    get(target, property, receiver) {
+      if (property === "replaceDocumentAuthority") return undefined;
+      return Reflect.get(target, property, receiver);
+    },
+  }) as unknown as MetadataStoreContract;
+
+  await assert.rejects(
+    () =>
+      new MetadataWriterStage().process(
+        fileInfo({
+          documentId: "relation-no-atomic",
+          relationSourceKey: "document:relation-no-atomic",
+          relationSourceRevision: "r1",
+        }),
+        makeCtx({ relationGraphEnabled: true }, { metadataStore: compatibilityStore }),
+      ),
+    (error: unknown) => error instanceof MemoriaError && error.code === "configuration",
+  );
+  assert.equal(await store.getFileByPath("diary1/note1.md"), null);
 });
 
 test("MetadataWriterStage writes chunk rows with vectors as BLOBs", async (t) => {
@@ -365,9 +389,19 @@ test("MetadataWriterStage upserts tags and associates only tags with vectors", a
   const out = await stage.process(input, ctx);
 
   const fileTags = await store.getFileTags(out.fileId!);
-  assert.deepStrictEqual(fileTags.map((ft) => ft.name).sort(), ["alpha", "beta"]);
+  assert.deepStrictEqual(
+    fileTags
+      .map((ft) => ft.name)
+      .sort((left, right) => (left ?? "").localeCompare(right ?? "")),
+    ["alpha", "beta"],
+  );
   const allTags = await store.getAllTags();
-  assert.deepStrictEqual(allTags.map((t) => t.name).sort(), ["alpha", "beta"]);
+  assert.deepStrictEqual(
+    allTags
+      .map((tag) => tag.name)
+      .sort((left, right) => (left ?? "").localeCompare(right ?? "")),
+    ["alpha", "beta"],
+  );
 });
 
 test("MetadataWriterStage re-associates previously stored tags without new embeddings", async (t) => {
@@ -399,7 +433,12 @@ test("MetadataWriterStage re-associates previously stored tags without new embed
   );
 
   const fileTags = await store.getFileTags(out2.fileId!);
-  assert.deepStrictEqual(fileTags.map((ft) => ft.name).sort(), ["alpha", "gamma"]);
+  assert.deepStrictEqual(
+    fileTags
+      .map((ft) => ft.name)
+      .sort((left, right) => (left ?? "").localeCompare(right ?? "")),
+    ["alpha", "gamma"],
+  );
 });
 
 test("MetadataWriterStage clears associations for a file with no tags", async (t) => {
@@ -497,7 +536,7 @@ test("VectorIndexerStage writes chunk vectors to the diary index", async (t) => 
     tagEntries: [],
   });
   const written = await writer.process(input, ctx);
-  const out = await indexer.process(written, ctx);
+  await indexer.process(written, ctx);
 
   const results = await vectorStore.search("d1", [1, 0, 0, 0], 2);
   assert.ok(results.length >= 1);
@@ -684,6 +723,11 @@ test("FileDeleterStage removes file rows, chunks, and vectors", async (t) => {
   stats = await vectorStore.getIndexStats("delete-me");
   assert.strictEqual(stats.size, 0);
   assert.deepStrictEqual(await vectorStore.search("delete-me", [1, 0, 0, 0], 2), []);
+  assert.strictEqual((await vectorStore.getIndexStats("global_tags")).size, 0);
+  assert.deepStrictEqual(
+    await vectorStore.search("global_tags", [0.1, 0.2, 0.3, 0.4], 2),
+    [],
+  );
 });
 
 test("FileDeleterStage returns deleted:false for unknown files", async (t) => {

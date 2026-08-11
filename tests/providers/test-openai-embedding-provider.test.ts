@@ -125,7 +125,8 @@ test("embedBatch returns nulls for oversize texts mixed with valid ones", async 
 
   global.fetch = (async (_url: string | URL | Request, opts?: RequestInit) => {
     fetchCallCount++;
-    const body = JSON.parse(String(opts?.body || "{}")) as { input: string[] };
+    const bodyText = typeof opts?.body === "string" ? opts.body : "{}";
+    const body = JSON.parse(bodyText) as { input: string[] };
     const inputCount = body.input.length;
 
     return {
@@ -162,7 +163,8 @@ test("embedBatch calls fetch and returns embeddings for valid texts", async () =
   const originalFetch = global.fetch;
 
   global.fetch = (async (_url: string | URL | Request, opts?: RequestInit) => {
-    const body = JSON.parse(String(opts?.body || "{}")) as { input: string[] };
+    const bodyText = typeof opts?.body === "string" ? opts.body : "{}";
+    const body = JSON.parse(bodyText) as { input: string[] };
     const inputCount = body.input.length;
 
     return {
@@ -206,7 +208,8 @@ test("embedBatch handles 429 by switching to fallback model", async () => {
 
   global.fetch = (async (_url: string | URL | Request, opts?: RequestInit) => {
     callCount++;
-    const body = JSON.parse(String(opts?.body || "{}")) as {
+    const bodyText = typeof opts?.body === "string" ? opts.body : "{}";
+    const body = JSON.parse(bodyText) as {
       model: string;
       input: string[];
     };

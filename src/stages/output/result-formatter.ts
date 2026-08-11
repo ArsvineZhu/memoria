@@ -39,7 +39,7 @@ function parseRecord(value: string | null | undefined): UnknownRecord | undefine
     return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as UnknownRecord)
       : undefined;
-  } catch (_error) {
+  } catch {
     return undefined;
   }
 }
@@ -156,7 +156,7 @@ class ResultFormatterStage extends Stage {
       try {
         const tagRows = await store.getFileTags(file.id);
         tags = Array.isArray(tagRows)
-          ? tagRows.map((t) => (t && t.name) || String(t))
+          ? tagRows.map((t) => (t && typeof t.name === "string" ? t.name : ""))
           : [];
       } catch (error) {
         throw asMemoriaError(

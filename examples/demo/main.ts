@@ -68,9 +68,7 @@ function done(msg: string): void {
 }
 
 function snippet(text: unknown, max = 80): string {
-  const flat = String(text || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const flat = (typeof text === "string" ? text : "").replace(/\s+/g, " ").trim();
   return flat.length > max ? flat.slice(0, max) + "…" : flat;
 }
 
@@ -188,9 +186,13 @@ async function chapter4(engine: MemoryEngine): Promise<void> {
         if (typeof t === "string") return t;
         if (t && typeof t === "object") {
           const item = t as { tag?: unknown; name?: unknown };
-          return String(item.tag ?? item.name ?? t);
+          return typeof item.tag === "string"
+            ? item.tag
+            : typeof item.name === "string"
+              ? item.name
+              : "";
         }
-        return String(t);
+        return "";
       })
       .join("、");
     info(`TagMemo 浪潮激活标签: ${tags}`);

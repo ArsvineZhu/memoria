@@ -391,6 +391,12 @@ export interface SearchEnvelope {
   rerankFailure?: "provider_error";
   /** Compatibility field; runtime values are stable safe error codes. */
   rerankError?: string;
+  nativeMemoFailure?:
+    "artifact_build_failed" | "backend_unavailable" | "invalid_result";
+  topologyV3Failure?:
+    "native_backend_failed" | "artifact_unavailable" | "invalid_result";
+  nativeGeodesicFailure?:
+    "backend_unavailable" | "artifact_unavailable" | "invalid_result";
   defaultRetrievalPlan?: RetrievalPlan;
   requestedRetrievalPlan?: RetrievalPlanInput;
   retrievalDecision?: {
@@ -597,6 +603,7 @@ export interface DeleteEnvelope {
   deleted: boolean;
   fileId?: number | null;
   removedChunkIds: number[];
+  orphanedTagIds?: number[];
   [key: string]: unknown;
 }
 
@@ -633,6 +640,10 @@ export interface PipelineData extends UnknownRecord {
   chunkIds?: number[];
   tagIds?: number[];
   removedChunkIds?: number[];
+  orphanedTagIds?: number[];
+  explicitRelations?: MemoryRelationRecord[];
+  relationSourceKey?: string;
+  relationSourceRevision?: string;
   query?: string;
   options?: SearchOptions;
   retrievalPlan?: RetrievalPlan;
@@ -642,6 +653,8 @@ export interface PipelineData extends UnknownRecord {
   resolvedIndexNames?: string[];
   scopeSource?: "call" | "config" | "authority" | "fallback";
   scopeWasExplicit?: boolean;
+  allowedChunkIds?: Set<number>;
+  allowedDocumentKeys?: Set<string>;
   topK?: number;
   queries?: QueryVector[];
   queryVector?: EmbeddingVector;
@@ -667,6 +680,12 @@ export interface PipelineData extends UnknownRecord {
   dedupeStats?: DedupeStats;
   truncationStats?: TruncationStats;
   expansionStats?: ExpansionStats;
+  nativeMemoFailure?:
+    "artifact_build_failed" | "backend_unavailable" | "invalid_result";
+  topologyV3Failure?:
+    "native_backend_failed" | "artifact_unavailable" | "invalid_result";
+  nativeGeodesicFailure?:
+    "backend_unavailable" | "artifact_unavailable" | "invalid_result";
 }
 
 export interface EmbeddingProviderContract {
@@ -819,6 +838,19 @@ export interface RelationListOptions {
   includeInactive?: boolean;
 }
 
+export interface RetrievalScopeFilters {
+  spaces?: readonly string[];
+  documentIds?: readonly string[];
+  recordedAfter?: number | string;
+  recordedBefore?: number | string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RetrievalScopeResolution {
+  allowedChunkIds: number[];
+  allowedDocumentKeys: string[];
+}
+
 export interface RelationStoreContract {
   replaceExplicitRelations?(
     from: string,
@@ -840,6 +872,13 @@ export interface RelationStoreContract {
   listRelations?(options?: RelationListOptions): Promise<MemoryRelationRecord[]>;
   markExplicitRelationsStale?(from: string): Promise<void>;
   getRelationGeneration?(): Promise<number>;
+  getRelationReadinessStats?(): Promise<{
+    explicitLinks: number;
+    activeInferredLinks: number;
+  }>;
+  getAdjacentRelations?(
+    documentKeys: readonly string[],
+  ): Promise<MemoryRelationRecord[]>;
 }
 
 export interface FileMetadataInput {
@@ -887,6 +926,11 @@ export interface DocumentStateReplacement {
     vector: Buffer | null;
   }[];
   orderedTagNames: readonly string[];
+  explicitRelations?: readonly MemoryRelationRecord[];
+  relationSourceKey?: string;
+  relationSourceRevision?: string;
+  preserveChunks?: boolean;
+  preserveTags?: boolean;
 }
 
 export interface DocumentStateReplacementResult {
@@ -897,6 +941,7 @@ export interface DocumentStateReplacementResult {
   metadataGeneration: number;
   previousIndexName: string | null;
   currentIndexName: string;
+  orphanedTagIds?: number[];
 }
 
 export interface DocumentTagReplacement {
@@ -911,6 +956,7 @@ export interface DocumentTagReplacementResult {
   metadataGeneration: number;
   previousIndexName: string | null;
   currentIndexName: string;
+  orphanedTagIds?: number[];
 }
 
 export interface HealthStatus {
@@ -942,6 +988,24 @@ export interface MetadataStoreContract extends RelationStoreContract {
   replaceDocumentState?(
     replacement: DocumentStateReplacement,
   ): Promise<DocumentStateReplacementResult>;
+  /** Atomic authority replacement including source-relation history. */
+  replaceDocumentAuthority?(
+    replacement: DocumentStateReplacement & {
+      relationSourceKey: string;
+      relationSourceRevision: string;
+      explicitRelations: readonly MemoryRelationRecord[];
+    },
+  ): Promise<DocumentStateReplacementResult>;
+  deleteDocumentAuthority?(input: {
+    path: string;
+    documentId?: string;
+    relationSourceKeys?: readonly string[];
+  }): Promise<{
+    removed: boolean;
+    fileId: number | null;
+    chunkIds: number[];
+    orphanedTagIds: number[];
+  }>;
   replaceDocumentTags?(
     replacement: DocumentTagReplacement,
   ): Promise<DocumentTagReplacementResult>;
@@ -956,6 +1020,11 @@ export interface MetadataStoreContract extends RelationStoreContract {
   upsertTags(tags: readonly TagMetadataInput[]): Promise<number[]>;
   getTagByName(name: string): Promise<TagRow | null>;
   getAllTags(): Promise<TagRow[]>;
+  getActiveTags?(): Promise<TagRow[]>;
+  resolveRetrievalScope?(
+    filters: RetrievalScopeFilters,
+    indexNames?: readonly string[],
+  ): Promise<RetrievalScopeResolution>;
   setFileTags(fileId: number, tagIds: readonly number[]): Promise<void>;
   getFileTags(fileId: number): Promise<FileTagRow[]>;
   getFileIdsByTagId(tagId: number): Promise<number[]>;
@@ -1016,10 +1085,10 @@ export interface TagBoostEnvelope extends UnknownRecord {
     tagBoost: number;
     tagMatchScore: number;
   };
-  energyField: unknown | null;
-  energyFieldProvenance: unknown | null;
-  artifactBundle: unknown | null;
-  preparedMemoObservation: unknown | null;
+  energyField: unknown;
+  energyFieldProvenance: unknown;
+  artifactBundle: unknown;
+  preparedMemoObservation: unknown;
 }
 
 export interface EpaDominantAxis {

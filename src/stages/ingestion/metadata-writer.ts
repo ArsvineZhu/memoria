@@ -1,6 +1,5 @@
 import type {
   ChunkEntry,
-  MetadataStoreContract,
   PipelineContextLike,
   PipelineData,
   TagEntry,
@@ -82,8 +81,118 @@ class MetadataWriterStage extends Stage {
     const needsTagUpdate = fileInfo.needsTagUpdate === true;
     const sourceJson = serializeDocumentJson(fileInfo.documentSource, "source");
     const metadataJson = serializeDocumentJson(fileInfo.documentMetadata, "metadata");
+    const hasRelationAuthority =
+      typeof fileInfo.relationSourceKey === "string" &&
+      typeof fileInfo.relationSourceRevision === "string";
+    const explicitRelations = Array.isArray(fileInfo.explicitRelations)
+      ? fileInfo.explicitRelations
+      : [];
+    if (
+      ctx.config.relationGraphEnabled === true &&
+      (!hasRelationAuthority ||
+        typeof metadataStore.replaceDocumentAuthority !== "function")
+    ) {
+      throw new MemoriaError(
+        "configuration",
+        "Relation-enabled ingestion requires relation extraction and atomic document authority support.",
+      );
+    }
+
+    const authorityReplacement = async (options: {
+      preserveChunks?: boolean;
+      preserveTags?: boolean;
+      chunks?: readonly {
+        chunkIndex: number;
+        content: string;
+        vector: Buffer | null;
+      }[];
+      tags?: readonly { name: string; vector: Buffer | null }[];
+      orderedTagNames?: readonly string[];
+    }) => {
+      if (
+        !hasRelationAuthority ||
+        typeof metadataStore.replaceDocumentAuthority !== "function"
+      ) {
+        throw new MemoriaError(
+          "configuration",
+          "Relation-enabled ingestion requires metadataStore.replaceDocumentAuthority for an atomic document and relation commit.",
+        );
+      }
+      return metadataStore.replaceDocumentAuthority({
+        file: {
+          path: relPath,
+          diaryName,
+          checksum,
+          mtime,
+          size,
+          documentId: fileInfo.documentId,
+          revision: fileInfo.revision,
+          sourceJson,
+          metadataJson,
+        },
+        chunks: options.chunks || [],
+        tags: options.tags || [],
+        orderedTagNames: options.orderedTagNames || [],
+        explicitRelations,
+        relationSourceKey: fileInfo.relationSourceKey!,
+        relationSourceRevision: fileInfo.relationSourceRevision!,
+        ...options,
+      });
+    };
 
     if (needsChunkEmbedding === false && needsTagUpdate) {
+      if (hasRelationAuthority) {
+        const tagEntries: TagEntry[] = Array.isArray(fileInfo.tagEntries)
+          ? fileInfo.tagEntries
+          : [];
+        const tagNames: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
+        if (typeof metadataStore.replaceDocumentAuthority !== "function") {
+          throw new MemoriaError(
+            "configuration",
+            "Relation-enabled tag updates require metadataStore.replaceDocumentAuthority.",
+          );
+        }
+        const replacement = await metadataStore.replaceDocumentAuthority({
+          file: {
+            path: relPath,
+            diaryName,
+            checksum,
+            mtime,
+            size,
+            documentId: fileInfo.documentId,
+            revision: fileInfo.revision,
+            sourceJson,
+            metadataJson,
+          },
+          chunks: [],
+          tags: tagEntries.map((entry) => ({
+            name: entry.name,
+            vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
+          })),
+          orderedTagNames: tagNames,
+          explicitRelations,
+          relationSourceKey: fileInfo.relationSourceKey!,
+          relationSourceRevision: fileInfo.relationSourceRevision!,
+          preserveChunks: true,
+        });
+
+        await this._maybeWriteCheckpoint(
+          fileInfo,
+          { chunkIds: replacement.chunkIds, tagIds: replacement.tagIds },
+          ctx,
+        );
+        return {
+          ...fileInfo,
+          fileId: replacement.fileId,
+          chunkIds: [],
+          tagIds: replacement.tagIds,
+          removedChunkIds: [],
+          orphanedTagIds: replacement.orphanedTagIds,
+          skipped: false,
+          previousIndexName: replacement.previousIndexName,
+          currentIndexName: replacement.currentIndexName,
+        };
+      }
       if (typeof metadataStore.replaceDocumentTags !== "function") {
         throw new MemoriaError(
           "configuration",
@@ -126,6 +235,7 @@ class MetadataWriterStage extends Stage {
         chunkIds: [],
         tagIds: replacement.tagIds,
         removedChunkIds: [],
+        orphanedTagIds: replacement.orphanedTagIds,
         skipped: false,
         previousIndexName: replacement.previousIndexName,
         currentIndexName: replacement.currentIndexName,
@@ -146,6 +256,24 @@ class MetadataWriterStage extends Stage {
     }
 
     if (needsChunkEmbedding === false && fileInfo.needsMetadataWrite === true) {
+      if (hasRelationAuthority) {
+        const replacement = await authorityReplacement({
+          preserveChunks: true,
+          preserveTags: true,
+        });
+        return {
+          ...fileInfo,
+          fileId: replacement.fileId,
+          chunkIds: [],
+          tagIds: [],
+          removedChunkIds: [],
+          orphanedTagIds: replacement.orphanedTagIds,
+          skipped: false,
+          metadataOnly: true,
+          previousIndexName: replacement.previousIndexName,
+          currentIndexName: replacement.currentIndexName,
+        };
+      }
       const existing = await metadataStore.getFileByPath(relPath);
       const previousIndexName =
         existing?.diary_name || existing?.diaryName || diaryName;
@@ -210,6 +338,30 @@ class MetadataWriterStage extends Stage {
       name: entry.name,
       vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
     }));
+    if (hasRelationAuthority) {
+      const replacement = await authorityReplacement({
+        chunks: chunkRows,
+        tags: tagRows,
+        orderedTagNames: tagNames,
+      });
+
+      await this._maybeWriteCheckpoint(
+        fileInfo,
+        { chunkIds: replacement.chunkIds, tagIds: replacement.tagIds },
+        ctx,
+      );
+
+      return {
+        ...fileInfo,
+        fileId: replacement.fileId,
+        chunkIds: replacement.chunkIds,
+        tagIds: replacement.tagIds,
+        removedChunkIds: replacement.removedChunkIds,
+        orphanedTagIds: replacement.orphanedTagIds,
+        previousIndexName: replacement.previousIndexName,
+        currentIndexName: replacement.currentIndexName,
+      };
+    }
     if (typeof metadataStore.replaceDocumentState === "function") {
       const replacement = await metadataStore.replaceDocumentState({
         file: {
@@ -240,6 +392,7 @@ class MetadataWriterStage extends Stage {
         chunkIds: replacement.chunkIds,
         tagIds: replacement.tagIds,
         removedChunkIds: replacement.removedChunkIds,
+        orphanedTagIds: replacement.orphanedTagIds,
         previousIndexName: replacement.previousIndexName,
         currentIndexName: replacement.currentIndexName,
       };

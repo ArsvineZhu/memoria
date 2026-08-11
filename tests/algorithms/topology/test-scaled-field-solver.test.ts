@@ -8,7 +8,6 @@ import {
   normalizeSource,
   effectiveSupport,
 } from "../../../src/algorithms/topology/scaled-field-solver.js";
-import type { FieldOperator } from "../../../src/algorithms/topology/scaled-field-solver.js";
 import { at } from "../../../src/utils/numerical.js";
 
 function makeLineGraph(nodeCount: number): Map<number, Map<number, number>> {
@@ -113,7 +112,7 @@ test("solveDualScaledFields converges local and transfer fields on a line graph"
   assert.ok(result.diagnostics.iterations <= 80, "iteration cap respected");
   assert.ok(result.diagnostics.localResidual < 1e-9);
   assert.ok(result.diagnostics.transferResidual < 1e-9);
-  assert.ok(result.diagnostics.operatorShared === true);
+  assert.ok(result.diagnostics.operatorShared);
 
   const sourceId = 3;
   const sourceIndex = operator.nodeIndexOf(sourceId);

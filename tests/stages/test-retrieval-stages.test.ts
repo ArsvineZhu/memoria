@@ -56,8 +56,6 @@ function makeVectorStore() {
   });
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 test("SearchScopeResolverStage gives call aliases precedence and preserves explicit empty scope", async () => {
   const stage = new SearchScopeResolverStage();
   const metadataStore = {
@@ -246,7 +244,10 @@ test("getMetadataStore getFileIdsByTagId returns file ids tagged with a tag", as
   await store.setFileTags(f1, [tag1]);
   await store.setFileTags(f2, [tag1, tag2]);
 
-  assert.deepStrictEqual((await store.getFileIdsByTagId(tag1)).sort(), [f1, f2].sort());
+  assert.deepStrictEqual(
+    (await store.getFileIdsByTagId(tag1)).sort((left, right) => left - right),
+    [f1, f2].sort((left, right) => left - right),
+  );
   assert.deepStrictEqual(await store.getFileIdsByTagId(tag2), [f2]);
 });
 
@@ -279,7 +280,7 @@ test("getMetadataStore getFileByChunkId resolves a chunk to its file row", async
     mtime: 123,
     size: 5,
   }))!;
-  const [c1, c2] = await store.insertChunks(f1, [{ chunkIndex: 0, content: "hello" }]);
+  const [c1] = await store.insertChunks(f1, [{ chunkIndex: 0, content: "hello" }]);
 
   const file = await store.getFileByChunkId(c1);
   assert.ok(file);

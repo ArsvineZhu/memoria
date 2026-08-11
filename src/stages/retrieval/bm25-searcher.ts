@@ -1,7 +1,6 @@
 import type {
   ChunkCandidate,
   ChunkRow,
-  MemoryConfig,
   PipelineContextLike,
   PipelineData,
   SearchCorpusChunk,
@@ -174,7 +173,9 @@ class BM25SearcherStage extends Stage {
       }
     }
 
-    scored.sort((a, b) => b.score - a.score || a.chunkId - b.chunkId);
+    scored.sort(
+      (left, right) => right.score - left.score || left.chunkId - right.chunkId,
+    );
     return { ...info, bm25Results: scored.slice(0, poolK) };
   }
 
@@ -228,7 +229,7 @@ class BM25SearcherStage extends Stage {
     const cjkTokens: string[] = [];
     const cjkRuns = raw.match(/[\u4e00-\u9fff]+/g) || [];
     for (const run of cjkRuns) {
-      const chars = [...run];
+      const chars = Array.from(run);
       if (chars.length === 1) {
         cjkTokens.push(at(chars, 0, "CJK characters"));
         continue;

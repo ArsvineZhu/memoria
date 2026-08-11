@@ -1,7 +1,6 @@
 import type {
   ChunkCandidate,
   EmbeddingVector,
-  FileTagRow,
   TagExpansionData,
   PipelineContextLike,
   PipelineData,
@@ -316,7 +315,10 @@ class TagExpanderStage extends Stage {
     }
     let tagPool: TagRow[] = [];
     try {
-      tagPool = await metadataStore.getAllTags();
+      tagPool =
+        typeof metadataStore.getActiveTags === "function"
+          ? await metadataStore.getActiveTags()
+          : await metadataStore.getAllTags();
     } catch (e) {
       throw asMemoriaError(
         e,

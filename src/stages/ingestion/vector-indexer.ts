@@ -69,6 +69,12 @@ class VectorIndexerStage extends Stage {
     for (const id of removedChunkIds) {
       await this._safeRemove(vectorStore, previousIndexName, id);
     }
+    const orphanedTagIds = Array.isArray(info.orphanedTagIds)
+      ? info.orphanedTagIds
+      : [];
+    for (const id of orphanedTagIds) {
+      await this._safeRemove(vectorStore, TAG_INDEX_NAME, Number(id));
+    }
 
     // 2. Add chunk vectors to the diary index.
     const chunkCount = Math.min(chunkEntries.length, chunkIds.length);
@@ -102,7 +108,10 @@ class VectorIndexerStage extends Stage {
       if (chunkCount > 0) {
         vectorStore.scheduleIndexSave(currentIndexName);
       }
-      if (tagCount > 0 && ctx.config?.persistTagIndex !== false) {
+      if (
+        (tagCount > 0 || orphanedTagIds.length > 0) &&
+        ctx.config?.persistTagIndex !== false
+      ) {
         vectorStore.scheduleIndexSave(TAG_INDEX_NAME);
       }
     }

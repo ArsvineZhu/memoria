@@ -32,6 +32,12 @@ interface ReplacementResult {
 
 type AtomicStore = SqliteMetadataStore & {
   replaceDocumentState(replacement: Replacement): Promise<ReplacementResult>;
+  deleteDocumentAuthority(input: { path: string; documentId?: string }): Promise<{
+    removed: boolean;
+    fileId: number | null;
+    chunkIds: number[];
+    orphanedTagIds: number[];
+  }>;
 };
 
 function makeBuffer(values: readonly number[]): Buffer {
@@ -157,3 +163,123 @@ for (const [step, trigger] of [
     }
   });
 }
+
+test("replaceDocumentAuthority rolls back document and source relations together", async () => {
+  const store = makeStore();
+  const fileId = await seedStore(store);
+  await store.replaceExplicitRelations("document:atomic:document", "1", [
+    {
+      id: "old-relation",
+      from: "document:atomic:document",
+      to: "path:old-target.mdx",
+      kind: "explicit-link",
+      origin: "source",
+      confidence: 1,
+      weight: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      status: "active",
+      active: true,
+    },
+  ]);
+  const before = {
+    ...(await snapshot(store, fileId)),
+    relations: await store.listRelations({ includeInactive: true }),
+    relationGeneration: await store.getRelationGeneration(),
+  };
+  store.db.exec(
+    "CREATE TRIGGER fail_atomic_relations BEFORE INSERT ON memory_relations BEGIN SELECT RAISE(ABORT, 'fault:relations'); END;",
+  );
+
+  try {
+    await assert.rejects(
+      () =>
+        store.replaceDocumentAuthority({
+          ...replacement(),
+          relationSourceKey: "document:atomic:document",
+          relationSourceRevision: "2",
+          explicitRelations: [
+            {
+              id: "new-relation",
+              from: "document:atomic:document",
+              to: "path:new-target.mdx",
+              kind: "explicit-link",
+              origin: "source",
+              confidence: 1,
+              weight: 1,
+              createdAt: 2,
+              updatedAt: 2,
+              status: "active",
+              active: true,
+            },
+          ],
+        }),
+      /fault:relations/,
+    );
+    assert.deepStrictEqual(
+      {
+        ...(await snapshot(store, fileId)),
+        relations: await store.listRelations({ includeInactive: true }),
+        relationGeneration: await store.getRelationGeneration(),
+      },
+      before,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("deleteDocumentAuthority rolls back relation stale and document delete together", async () => {
+  const store = makeStore();
+  const fileId = await seedStore(store);
+  await store.replaceExplicitRelations("document:atomic:document", "1", [
+    {
+      id: "delete-relation",
+      from: "document:atomic:document",
+      to: "path:delete-target.mdx",
+      kind: "explicit-link",
+      origin: "source",
+      confidence: 1,
+      weight: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      status: "active",
+      active: true,
+    },
+  ]);
+  const before = {
+    file: await store.getFileByDocumentId("atomic:document"),
+    chunks: await store.getChunksByFileId(fileId),
+    fileTags: await store.getFileTags(fileId),
+    relations: await store.listRelations({ includeInactive: true }),
+    metadataGeneration: await store.getKv?.("memoria.metadata_generation"),
+    relationGeneration: await store.getRelationGeneration(),
+  };
+  store.db.exec(
+    "CREATE TRIGGER fail_atomic_relation_delete BEFORE UPDATE ON memory_relations WHEN NEW.active = 0 BEGIN SELECT RAISE(ABORT, 'fault:delete-relations'); END;",
+  );
+
+  try {
+    await assert.rejects(
+      () =>
+        store.deleteDocumentAuthority({
+          path: "Logical/atomic.md",
+          documentId: "atomic:document",
+        }),
+      /fault:delete-relations/,
+    );
+    assert.deepStrictEqual(
+      {
+        file: await store.getFileByDocumentId("atomic:document"),
+        chunks: await store.getChunksByFileId(fileId),
+        fileTags: await store.getFileTags(fileId),
+        relations: await store.listRelations({ includeInactive: true }),
+        metadataGeneration: await store.getKv?.("memoria.metadata_generation"),
+        relationGeneration: await store.getRelationGeneration(),
+      },
+      before,
+    );
+  } finally {
+    store.close();
+  }
+});

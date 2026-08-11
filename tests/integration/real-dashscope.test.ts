@@ -27,7 +27,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createMemoryEngine, mergeConfig, DEFAULT_CONFIG } from "../../src/index.js";
+import { createMemoryEngine, DEFAULT_CONFIG } from "../../src/index.js";
 import KnowledgeBaseAdapter from "../../src/compat/knowledge-base-adapter.js";
 import { TDBEngine } from "../../src/tdb/tdb-engine.js";
 import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
@@ -50,7 +50,7 @@ function loadApiKey() {
     if (!match) return null;
     const value = match.split("=").slice(1).join("=").trim();
     return value.replace(/^["']|["']$/g, "") || null;
-  } catch (_) {
+  } catch {
     return null;
   }
 }
@@ -91,7 +91,7 @@ function makeTmpDir(prefix: string): string {
 function cleanupDir(dir: string): void {
   try {
     fs.rmSync(dir, { recursive: true, force: true });
-  } catch (_) {}
+  } catch {}
 }
 
 const skipOpts = { skip: !API_KEY };
@@ -191,7 +191,7 @@ test(
       // Docs are staged under <rootPath>/diaryX so the diary-name
       // resolution (relative path base = rootPath) yields "diaryX".
       const absDocs = [];
-      for (const [i, abs] of fixtureDocs().entries()) {
+      for (const [, abs] of fixtureDocs().entries()) {
         const rel = path.join("diaryX", path.basename(abs));
         const target = path.join(rootPath, rel);
         fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -209,7 +209,13 @@ test(
       assert.ok(textOut.results.length >= 1, "text search must return results");
       let quantumHit = false;
       for (const r of textOut.results) {
-        if (String(r.path || r.fullPath || "").includes("quantum-computing")) {
+        const pathValue =
+          typeof r.path === "string"
+            ? r.path
+            : typeof r.fullPath === "string"
+              ? r.fullPath
+              : "";
+        if (pathValue.includes("quantum-computing")) {
           quantumHit = true;
           break;
         }
@@ -401,7 +407,7 @@ test(
     } finally {
       try {
         await engine.close();
-      } catch (_) {}
+      } catch {}
       cleanupDir(storePath);
       cleanupDir(rootPath);
     }

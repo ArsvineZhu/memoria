@@ -117,18 +117,20 @@ WAL 模式意味着 `.sqlite-wal` / `.sqlite-shm` 伴生文件与主库同目录
 保留文件快照兼容面。两者都逐条跑 IngestPipeline，两个写入 stage 依次落库：
 
 ```
-flushBatch → … → MetadataWriterStage（SQLite 写）→ VectorIndexerStage（Rust 写）
+flushBatch → … → RelationExtractorStage（纯计算）→ MetadataWriterStage（SQLite 写）→ VectorIndexerStage（Rust 写）
 ```
 
 1. **SQLite 写**（metadata-writer.ts）：
-   内置 `SqliteMetadataStore` 暴露 `replaceDocumentState()` 时，stage 先准备
-   序列化 rows，再用一个 SQLite transaction 原子完成 file upsert、旧 chunks
-   替换、tags upsert、`file_tags` 重建与 generation/dirty 更新。旧 chunk id 在
-   transaction 内采集并返回为 `removedChunkIds`，供下一步清理向量索引。
-   仅标签变化且不重建 chunks 时，内置 store 使用可选的
-   `replaceDocumentTags()` 在一个 transaction 中更新 file metadata、tags、
-   `file_tags` 和 generation/dirty，并保留旧 chunks。缺少该能力时在写入前抛出
-   `configuration` 错误，不执行非原子多步写入；其他不涉及标签的旧兼容路径仍可使用。
+   内置 `SqliteMetadataStore` 暴露 `replaceDocumentAuthority()` 时，stage 先准备
+   序列化 rows 和 `RelationExtractorStage` 的显式关系，再用一个 SQLite transaction
+   原子完成 file upsert、旧 chunks 替换、tags upsert、`file_tags` 重建、source
+   relations 替换与 generation/dirty 更新。旧 chunk id 和孤儿 tag id 在 transaction
+   内采集并返回，供下一步清理向量索引。
+   仅标签或 metadata 变化时也复用该 authority transaction；关系图关闭的兼容路径才
+   使用 `replaceDocumentState()` / `replaceDocumentTags()`。关系图启用但缺少
+   `replaceDocumentAuthority()` 或关系提取结果时，在写入前抛出 `configuration`，不执行
+   非原子多步写入。删除同样优先使用 `deleteDocumentAuthority()`，将 source relation
+   失效、file/chunks/file_tags 删除和 generation 更新放在同一 transaction。
 2. **Rust 写**（vector-indexer.ts:28–74）：
    先按 `removedChunkIds` 删除陈旧向量（防止重嵌文件留下孤儿）；
    chunk 向量按 `diaryName`（无则 `Root`）写索引，tag 向量写

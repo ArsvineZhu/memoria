@@ -1,6 +1,5 @@
 import type {
   EmbeddingProviderContract,
-  MemoryConfig,
   MetadataStoreContract,
   PipelineContextOptions,
   VectorStoreContract,

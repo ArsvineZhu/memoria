@@ -12,7 +12,6 @@ import { MemoriaError } from "../../src/errors.js";
 import type {
   EmbeddingProviderContract,
   VectorHit,
-  VectorLike,
   VectorStoreContract,
 } from "../../src/types.js";
 
@@ -238,6 +237,35 @@ test("clean close and reopen restores persisted indexes without rebuilding", asy
   });
   await second.initialize();
   assert.equal(secondVector.restoreCalls, 1);
+  assert.equal(secondVector.replaceCalls, 0);
+  assert.deepEqual(second.lastReconciliation?.rebuiltIndexes, []);
+  await second.close();
+});
+
+test("clean empty documents do not create phantom content indexes on reopen", async () => {
+  const root = mkdtempSync(join(tmpdir(), "memoria-recovery-empty-clean-"));
+  const dbPath = join(root, "memory.sqlite");
+  const firstVector = countingVectorStore();
+  const first = createMemoryEngine({
+    dbPath,
+    config: { dimension: DIMENSION, storePath: root },
+    embeddingProvider: embeddingProvider(),
+    vectorStore: firstVector,
+  });
+  await first.initialize();
+  await first.ingest({ id: "clean:empty", content: "   \n\t" });
+  assert.deepEqual(await first.metadataStore.getExpectedVectorIndexNames?.(), []);
+  await first.close();
+
+  const secondVector = countingVectorStore({ validationResult: true });
+  const second = createMemoryEngine({
+    dbPath,
+    config: { dimension: DIMENSION, storePath: root },
+    embeddingProvider: embeddingProvider(),
+    vectorStore: secondVector,
+  });
+  await second.initialize();
+  assert.deepEqual(secondVector.restoreNames[0], []);
   assert.equal(secondVector.replaceCalls, 0);
   assert.deepEqual(second.lastReconciliation?.rebuiltIndexes, []);
   await second.close();
@@ -718,7 +746,7 @@ test("failed vector persistence does not clear dirty and remains retryable", asy
     (error: unknown) =>
       assertWrappedFailure(error, "lifecycle", "simulated persistence failure"),
   );
-  assert.equal(engine.state, "ready");
+  assert.equal(engine.state, "closing");
   assert.equal(await metadataStore.getKv?.("memoria.vector_dirty"), "1");
 
   vectorStore.flushError = undefined;

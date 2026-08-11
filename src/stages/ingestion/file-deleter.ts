@@ -7,7 +7,7 @@ import type {
 import * as path from "node:path";
 
 import Stage from "../../core/stage.js";
-import { asMemoriaError } from "../../errors.js";
+import { MemoriaError, asMemoriaError } from "../../errors.js";
 import {
   RelationGraphStore,
   relationDocumentKey,
@@ -25,8 +25,8 @@ import {
  *    removing an already-absent vector never throws
  *  - scheduleIndexSave is triggered on the affected diary index
  *
- * Note: tag rows and the global tag index are intentionally left untouched
- * (tags are shared across files in the original design).
+ * Note: shared tag rows remain untouched; an orphaned tag vector is removed
+ * from the derived global tag index when its last file association disappears.
  *
  * Config (ctx.config):
  *   - rootPath: used to convert an absolute input.path into the stored
@@ -74,6 +74,48 @@ class FileDeleterStage extends Stage {
     const diaryName = row.diary_name || row.diaryName || "Root";
     const oldChunks = await metadataStore.getChunksByFileId(row.id);
     const removedChunkIds = oldChunks.map((c) => c.id);
+
+    const deleteDocumentAuthority =
+      metadataStore.deleteDocumentAuthority?.bind(metadataStore);
+    if (typeof deleteDocumentAuthority === "function") {
+      const removed = await deleteDocumentAuthority({
+        path: relPath,
+        documentId: info.documentId || row.document_id || undefined,
+        relationSourceKeys: [
+          relationDocumentKey(row),
+          relationDocumentKey({ path: row.path }),
+        ],
+      });
+      if (!removed.removed) return { ...info, deleted: false };
+
+      if (ctx.vectorStore) {
+        for (const id of removed.chunkIds) {
+          await this._safeRemove(ctx.vectorStore, diaryName, id);
+        }
+        for (const id of removed.orphanedTagIds) {
+          await this._safeRemove(ctx.vectorStore, "global_tags", id);
+        }
+        if (typeof ctx.vectorStore.scheduleIndexSave === "function") {
+          if (removed.chunkIds.length > 0) ctx.vectorStore.scheduleIndexSave(diaryName);
+          if (removed.orphanedTagIds.length > 0)
+            ctx.vectorStore.scheduleIndexSave("global_tags");
+        }
+      }
+      return {
+        ...info,
+        deleted: true,
+        fileId: removed.fileId,
+        removedChunkIds: removed.chunkIds,
+        orphanedTagIds: removed.orphanedTagIds,
+      };
+    }
+
+    if (ctx.config?.relationGraphEnabled === true) {
+      throw new MemoriaError(
+        "configuration",
+        "Relation-enabled deletion requires metadataStore.deleteDocumentAuthority for an atomic document and relation commit.",
+      );
+    }
 
     if (
       typeof metadataStore.markExplicitRelationsStale === "function" ||

@@ -3,7 +3,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as path from "node:path";
 
-import { DEFAULT_CONFIG, mergeConfig } from "./config/default-config.js";
+import { mergeConfig } from "./config/default-config.js";
 import { loadRagParams } from "./config/rag-params-loader.js";
 import PipelineContext from "./core/context.js";
 import ActiveOperationRegistry from "./core/active-operation-registry.js";
@@ -73,6 +73,8 @@ export type EngineState = "created" | "initializing" | "ready" | "closing" | "cl
 interface LifecycleContext {
   phase: "onReady";
 }
+
+const AUTHORITY_ALIAS_CHANGED = Symbol("authority-alias-changed");
 
 function isRecord(value: unknown): value is UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -299,12 +301,15 @@ class MemoryEngine {
         this.searchPipeline = new SearchPipeline(this.config, rebuiltSearchOptions);
       }
       this.lastReconciliation = await this._recoverIndexes();
-      this.state = "ready";
       if (this.options.onReady && typeof this.options.onReady === "function") {
         await this._lifecycleContext.run({ phase: "onReady" }, () =>
           this.options.onReady!(this),
         );
       }
+      // Initialization is externally committed only after the ready hook has
+      // completed. The hook may use the prepared engine internally, while
+      // outside callers continue to observe `initializing` until this point.
+      this.state = "ready";
     })();
     this._initPromise = initialization;
 
@@ -315,7 +320,7 @@ class MemoryEngine {
       this._initPromise = null;
       try {
         await this._disposeOwnedResources(true);
-      } catch (_) {
+      } catch {
         // Preserve the initialization failure; cleanup is best effort.
       }
       this.ctx = undefined as unknown as PipelineContext;
@@ -402,8 +407,9 @@ class MemoryEngine {
   }
 
   private _assertReady(operation: string): void {
+    const inReadyHook = this._lifecycleContext.getStore()?.phase === "onReady";
     if (
-      this.state !== "ready" ||
+      (this.state !== "ready" && !(inReadyHook && this.state === "initializing")) ||
       !this.metadataStore ||
       !this.vectorStore ||
       !this.embeddingProvider ||
@@ -435,7 +441,7 @@ class MemoryEngine {
         : null;
     if (
       generationState &&
-      generationState.vectorDirty === false &&
+      !generationState.vectorDirty &&
       generationState.metadataGeneration === generationState.vectorGeneration &&
       typeof this.vectorStore.restorePersistedIndexes === "function"
     ) {
@@ -444,8 +450,7 @@ class MemoryEngine {
           ? await this.metadataStore.getExpectedVectorIndexNames()
           : [...(this.vectorStore.indices?.keys() ?? [])];
       const hasNonPersistedTagIndex =
-        this.config.persistTagIndex === false &&
-        expectedIndexNames.includes("global_tags");
+        !this.config.persistTagIndex && expectedIndexNames.includes("global_tags");
       const persistedIndexNames = hasNonPersistedTagIndex
         ? expectedIndexNames.filter((name) => name !== "global_tags")
         : expectedIndexNames;
@@ -463,7 +468,7 @@ class MemoryEngine {
             await this.vectorStore.replaceIndex("global_tags", tagEntries);
           }
         }
-      } catch (_) {
+      } catch {
         valid = false;
       }
       if (valid) {
@@ -559,7 +564,7 @@ class MemoryEngine {
     }
     if (metadataOwned && metadataStore && typeof metadataStore.close === "function") {
       try {
-        await metadataStore.close();
+        await Promise.resolve(metadataStore.close());
         this._ownsMetadataStore = false;
         this.metadataStore = undefined as unknown as RuntimeMetadataStore;
       } catch (error) {
@@ -588,7 +593,7 @@ class MemoryEngine {
   ): Promise<T> {
     const keys = (Array.isArray(key) ? [...key] : [key])
       .filter((value) => value.length > 0)
-      .sort();
+      .sort((left, right) => left.localeCompare(right));
     const queueKeys = [...new Set(keys.length > 0 ? keys : ["__default__"])];
     const previous = queueKeys.map(
       (queueKey) => this._mutationTails.get(queueKey) || Promise.resolve(),
@@ -650,6 +655,93 @@ class MemoryEngine {
       keys.push(`document:${normalizeDocumentId(input.documentId)}`);
     }
     return [...new Set(keys)].sort();
+  }
+
+  /** Resolve all known path/document aliases for one authoritative row. */
+  private async _resolveAuthorityMutationKeys(input: {
+    path: string;
+    relPath?: string;
+    documentId?: string;
+  }): Promise<string[]> {
+    const keys = new Set<string>();
+    const addAlias = (alias: {
+      path?: string | null;
+      relPath?: string | null;
+      documentId?: string | null;
+    }) => {
+      const filePath = alias.path || alias.relPath || "";
+      if (filePath) {
+        keys.add(this._fileMutationKey(filePath, alias.relPath || undefined));
+      }
+      if (typeof alias.documentId === "string" && alias.documentId.length > 0) {
+        keys.add(`document:${normalizeDocumentId(alias.documentId)}`);
+      }
+    };
+
+    addAlias(input);
+    const store = this.metadataStore;
+    const rows: Array<
+      NonNullable<Awaited<ReturnType<MetadataStoreContract["getFileByPath"]>>>
+    > = [];
+    const requestedPath = input.relPath || input.path;
+    if (requestedPath && typeof store?.getFileByPath === "function") {
+      const lookupPath = normalizeMutationPath(
+        this.config.rootPath && path.isAbsolute(requestedPath)
+          ? path.relative(this.config.rootPath, requestedPath)
+          : requestedPath,
+      );
+      const row = await store.getFileByPath(lookupPath);
+      if (row) rows.push(row);
+    }
+    if (input.documentId && typeof store?.getFileByDocumentId === "function") {
+      const row = await store.getFileByDocumentId(
+        normalizeDocumentId(input.documentId),
+      );
+      if (row && !rows.some((candidate) => candidate.id === row.id)) rows.push(row);
+    }
+    for (const row of rows) {
+      addAlias({
+        path: row.path,
+        relPath: row.path,
+        documentId: row.document_id,
+      });
+    }
+    return [...keys].sort();
+  }
+
+  /**
+   * Serialize an authority mutation across every currently known alias.
+   * Re-read the authority row after acquiring the first key set so a create
+   * or rename that wins the TOCTOU window causes a safe retry with the
+   * expanded set instead of an interleaved mutation.
+   */
+  private async _runAuthorityMutation<T>(
+    input: { path: string; relPath?: string; documentId?: string },
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    let keys = await this._resolveAuthorityMutationKeys(input);
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const result = await this._runSerializedMutation<
+        T | typeof AUTHORITY_ALIAS_CHANGED
+      >(keys, async () => {
+        const resolved = await this._resolveAuthorityMutationKeys(input);
+        const current = new Set(keys);
+        if (resolved.some((key) => !current.has(key))) {
+          return AUTHORITY_ALIAS_CHANGED;
+        }
+        return operation();
+      });
+      if (result === AUTHORITY_ALIAS_CHANGED) {
+        keys = await this._resolveAuthorityMutationKeys(input);
+        continue;
+      }
+      return result;
+    }
+    throw new MemoriaError(
+      "concurrency",
+      "Authority aliases changed repeatedly while serializing a mutation.",
+      { retryable: true },
+    );
   }
 
   /** Rebuild derived vector indices from the metadata/content authority. */
@@ -734,27 +826,24 @@ class MemoryEngine {
       const entries = normalizeFiles(files);
       const results: IngestEnvelope[] = [];
       for (const entry of entries) {
-        const result = await this._runSerializedMutation(
-          this._canonicalMutationKeys(entry),
-          async () => {
-            return this.ingestPipeline.run(
-              {
-                path: entry.path,
-                relPath: entry.relPath,
-                content: entry.content,
-                sourceContent: entry.sourceContent,
-                mtime: entry.mtime,
-                size: entry.size,
-                documentId: entry.documentId,
-                revision: entry.revision,
-                documentSource: entry.documentSource,
-                documentMetadata: entry.documentMetadata,
-                diaryName: entry.diaryName,
-              },
-              this.ctx,
-            );
-          },
-        );
+        const result = await this._runAuthorityMutation(entry, async () => {
+          return this.ingestPipeline.run(
+            {
+              path: entry.path,
+              relPath: entry.relPath,
+              content: entry.content,
+              sourceContent: entry.sourceContent,
+              mtime: entry.mtime,
+              size: entry.size,
+              documentId: entry.documentId,
+              revision: entry.revision,
+              documentSource: entry.documentSource,
+              documentMetadata: entry.documentMetadata,
+              diaryName: entry.diaryName,
+            },
+            this.ctx,
+          );
+        });
         results.push(result as IngestEnvelope);
         if (result && !result.skipped && result.fileId != null) {
           this._lastIndexedAt = Date.now();
@@ -791,41 +880,45 @@ class MemoryEngine {
     }
 
     try {
-      return await this._runSerializedMutation(`document:${documentId}`, async () => {
-        const revision =
-          document.revision === undefined ? undefined : String(document.revision);
-        const storagePath = logicalDocumentPath(documentId);
-        const mtime = Number.isFinite(document.updatedAt)
-          ? Number(document.updatedAt)
-          : 0;
-        const size = Buffer.byteLength(document.content, "utf8");
-        const result = (await this.ingestPipeline.run(
-          {
-            path: storagePath,
-            relPath: storagePath,
-            content: document.content,
-            mtime,
-            size,
-            diaryName: "Logical",
+      const storagePath = logicalDocumentPath(documentId);
+      return await this._runAuthorityMutation(
+        { path: storagePath, relPath: storagePath, documentId },
+        async () => {
+          const revision =
+            document.revision === undefined ? undefined : String(document.revision);
+          const mtime = Number.isFinite(document.updatedAt)
+            ? Number(document.updatedAt)
+            : 0;
+          const size = Buffer.byteLength(document.content, "utf8");
+          const result = (await this.ingestPipeline.run(
+            {
+              path: storagePath,
+              relPath: storagePath,
+              content: document.content,
+              mtime,
+              size,
+              diaryName: "Logical",
+              documentId,
+              revision,
+              documentSource: document.source,
+              documentMetadata: document.metadata,
+            },
+            this.ctx,
+          )) as IngestEnvelope;
+
+          if (!result.skipped && result.fileId != null)
+            this._lastIndexedAt = Date.now();
+          return {
+            ...result,
             documentId,
             revision,
+            source: document.source,
+            metadata: document.metadata,
             documentSource: document.source,
             documentMetadata: document.metadata,
-          },
-          this.ctx,
-        )) as IngestEnvelope;
-
-        if (!result.skipped && result.fileId != null) this._lastIndexedAt = Date.now();
-        return {
-          ...result,
-          documentId,
-          revision,
-          source: document.source,
-          metadata: document.metadata,
-          documentSource: document.source,
-          documentMetadata: document.metadata,
-        };
-      });
+          };
+        },
+      );
     } catch (error) {
       throw asMemoriaError(error, "ingestion", "MemoryEngine ingestion failed.", {
         retryable: true,
@@ -862,26 +955,29 @@ class MemoryEngine {
   ): Promise<MemoryDocumentDeleteResult> {
     try {
       const normalizedId = normalizeDocumentId(documentId);
-      return await this._runSerializedMutation(`document:${normalizedId}`, async () => {
-        const storagePath = logicalDocumentPath(normalizedId);
-        let row = null;
-        if (typeof this.metadataStore.getFileByDocumentId === "function") {
-          row = await this.metadataStore.getFileByDocumentId(normalizedId);
-        } else {
-          row = await this.metadataStore.getFileByPath(storagePath);
-        }
+      const storagePath = logicalDocumentPath(normalizedId);
+      return await this._runAuthorityMutation(
+        { path: storagePath, relPath: storagePath, documentId: normalizedId },
+        async () => {
+          let row = null;
+          if (typeof this.metadataStore.getFileByDocumentId === "function") {
+            row = await this.metadataStore.getFileByDocumentId(normalizedId);
+          } else {
+            row = await this.metadataStore.getFileByPath(storagePath);
+          }
 
-        const result = (await this.deletePipeline.run(
-          {
-            path: row?.path || storagePath,
-            relPath: row?.path || storagePath,
-            documentId: normalizedId,
-            diaryName: row?.diary_name || row?.diaryName || "Logical",
-          },
-          this.ctx,
-        )) as DeleteEnvelope;
-        return { ...result, documentId: normalizedId };
-      });
+          const result = (await this.deletePipeline.run(
+            {
+              path: row?.path || storagePath,
+              relPath: row?.path || storagePath,
+              documentId: normalizedId,
+              diaryName: row?.diary_name || row?.diaryName || "Logical",
+            },
+            this.ctx,
+          )) as DeleteEnvelope;
+          return { ...result, documentId: normalizedId };
+        },
+      );
     } catch (error) {
       throw asMemoriaError(error, "persistence", "MemoryEngine remove failed.", {
         retryable: true,
@@ -969,20 +1065,17 @@ class MemoryEngine {
   ): Promise<DeleteEnvelope> {
     try {
       const source: FileInput = typeof input === "string" ? { path: input } : input;
-      return (await this._runSerializedMutation(
-        this._canonicalMutationKeys(source),
-        async () => {
-          return (await this.deletePipeline.run(
-            {
-              path: source.path,
-              relPath: source.relPath,
-              documentId: source.documentId,
-              diaryName: source.diaryName,
-            },
-            this.ctx,
-          )) as DeleteEnvelope;
-        },
-      )) as DeleteEnvelope;
+      return (await this._runAuthorityMutation(source, async () => {
+        return (await this.deletePipeline.run(
+          {
+            path: source.path,
+            relPath: source.relPath,
+            documentId: source.documentId,
+            diaryName: source.diaryName,
+          },
+          this.ctx,
+        )) as DeleteEnvelope;
+      })) as DeleteEnvelope;
     } catch (error) {
       throw asMemoriaError(error, "persistence", "MemoryEngine delete failed.", {
         retryable: true,
@@ -1186,10 +1279,10 @@ class MemoryEngine {
     try {
       await closing;
     } catch (error) {
-      if (this.state === "closing") {
-        this.state = "ready";
-        this._closed = false;
-      }
+      // A failed partial close is not a usable ready state.  The disposal
+      // helper retains resources whose close failed, so a later close can
+      // retry them while public operations remain rejected in `closing`.
+      this._closed = false;
       throw asMemoriaError(error, "lifecycle", "MemoryEngine close failed.", {
         retryable: true,
       });

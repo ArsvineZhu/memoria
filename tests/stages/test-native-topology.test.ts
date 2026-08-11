@@ -202,6 +202,43 @@ test("native Memo runtime is explicitly skipped for JavaScript-only in-memory st
   assert.equal(native.artifactBuildCount, 0);
 });
 
+test("native backend failures expose only stable diagnostic codes", async () => {
+  const secret = "secret-key=ABC /Users/private/db.sqlite";
+  const memoFailure = {
+    async rebuildMemoArtifact() {
+      throw new Error(secret);
+    },
+  };
+  const memoContext = makeContext(memoFailure as never);
+  const memoOutput = await new NativeMemoRuntimeStage().process(
+    { query: "private query", queryVector: new Float32Array([1, 0]) },
+    memoContext,
+  );
+  assert.equal(memoOutput.nativeMemoFailure, "artifact_build_failed");
+  assert.equal(memoOutput.nativeMemoError, "artifact_build_failed");
+  assert.equal(JSON.stringify(memoOutput).includes(secret), false);
+
+  const topologyFailure = {
+    async rerankRivermemoTopologyV3() {
+      throw new Error(secret);
+    },
+  };
+  const topologyContext = makeContext(topologyFailure as never);
+  const topologyOutput = await new TopologyV3Stage().process(
+    {
+      query: "private query",
+      queryVector: new Float32Array([1, 0]),
+      nativeMemoArtifact: { artifactSig: "artifact-1" },
+      nativeMemo: {},
+      mergedCandidates: [{ chunkId: 7, score: 0.6 }],
+    },
+    topologyContext,
+  );
+  assert.equal(topologyOutput.topologyV3Failure, "native_backend_failed");
+  assert.equal(topologyOutput.topologyV3Error, "native_backend_failed");
+  assert.equal(JSON.stringify(topologyOutput).includes(secret), false);
+});
+
 test("TagMemo plus uses the shared native DTSC readout", async () => {
   const native = makeNative();
   const ctx = makeContext(native);

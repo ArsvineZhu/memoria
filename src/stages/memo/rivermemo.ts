@@ -92,7 +92,7 @@ class RiverMemoStage extends Stage {
     const flows = state.flows;
 
     const nodeTotals = new Map<number, number>();
-    for (const [key, flowRow] of flows.entries()) {
+    for (const [, flowRow] of flows.entries()) {
       const targetId = Number(flowRow && flowRow.targetId);
       if (Number.isFinite(targetId)) {
         nodeTotals.set(
@@ -172,7 +172,7 @@ class RiverMemoStage extends Stage {
     let raw: string | Record<string, unknown> | null = null;
     try {
       raw = await store.getKv(RIVER_STATE_KEY);
-    } catch (e) {
+    } catch {
       raw = null;
     }
     if (!raw) return { tick: 0, flows: new Map() };
@@ -203,7 +203,7 @@ class RiverMemoStage extends Stage {
         }),
       );
       return { tick: Number(parsed.tick) || 0, flows };
-    } catch (e) {
+    } catch {
       return { tick: 0, flows: new Map() };
     }
   }

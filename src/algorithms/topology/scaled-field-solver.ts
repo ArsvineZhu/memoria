@@ -215,10 +215,6 @@ function buildRowOperator(
   };
 }
 
-function rowSumIsZero(row: OperatorRow): boolean {
-  return !(row.rowSum > 0);
-}
-
 /**
  * Scatter the source field into a normalized unit-mass Float64 vector over
  * the operator's node space.

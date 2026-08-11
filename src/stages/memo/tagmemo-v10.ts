@@ -1,10 +1,8 @@
 import type {
   ChunkCandidate,
-  MemoryConfig,
   PipelineContextLike,
   PipelineData,
   TagMemoData,
-  UnknownRecord,
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
@@ -88,7 +86,7 @@ class TagMemoV10Stage extends Stage {
     let operator: FieldOperator;
     try {
       operator = buildRowOperator(tagGraph);
-    } catch (e) {
+    } catch {
       return { ...info, tagMemoV10Skipped: true };
     }
 
@@ -235,7 +233,10 @@ class TagMemoV10Stage extends Stage {
     }
     let rows;
     try {
-      rows = await metadataStore.getAllTags();
+      rows =
+        typeof metadataStore.getActiveTags === "function"
+          ? await metadataStore.getActiveTags()
+          : await metadataStore.getAllTags();
     } catch (e) {
       throw asMemoriaError(
         e,

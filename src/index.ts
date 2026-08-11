@@ -71,12 +71,7 @@ import {
   RelationGraphStore,
   relationDocumentKey,
 } from "./retrieval/relation-graph.js";
-import QueryBuilder, {
-  ExpansionBuilder,
-  PostprocessBuilder,
-  RerankBuilder,
-  ScopeBuilder,
-} from "./retrieval/query-builder.js";
+import QueryBuilder from "./retrieval/query-builder.js";
 
 export {
   // Core

@@ -497,7 +497,7 @@ test("TimeDecayStage ranks newer chunks above older ones at equal score", async 
 
 test("TimeDecayStage half-life controls how fast age penalizes scores", async () => {
   const stage = new TimeDecayStage();
-  const { store, oldChunk, newChunk } = await seedMemoryFiles();
+  const { store, oldChunk } = await seedMemoryFiles();
 
   const short = await stage.process(
     { mergedCandidates: [{ chunkId: oldChunk, score: 1 }] },
@@ -750,7 +750,7 @@ test("ExpanderStage is gated off by default", async () => {
     mtime: 1,
     size: 1,
   }))!;
-  const [c1, c2] = await store.insertChunks(f1, [
+  const [c1] = await store.insertChunks(f1, [
     { chunkIndex: 0, content: "zero" },
     { chunkIndex: 1, content: "one" },
   ]);

@@ -186,7 +186,11 @@ class FilesystemIngestionAdapter {
         for (const envelope of envelopes) {
           if (envelope.skipped === true) result.unchanged += 1;
           else if (envelope.error) {
-            result.errors.push({ path: relativePath, error: String(envelope.error) });
+            result.errors.push({
+              path: relativePath,
+              error:
+                typeof envelope.error === "string" ? envelope.error : "ingest_error",
+            });
           } else {
             result.ingested += 1;
           }

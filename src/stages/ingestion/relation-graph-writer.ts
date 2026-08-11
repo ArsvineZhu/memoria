@@ -7,6 +7,10 @@ import {
   RelationGraphStore,
   relationDocumentKey,
 } from "../../retrieval/relation-graph.js";
+import {
+  isStructuredDocumentFormat,
+  resolveDocumentFormat,
+} from "../../utils/document-format.js";
 
 /** Persist derived link traces while leaving the source document untouched. */
 class RelationGraphWriterStage extends Stage {
@@ -37,22 +41,21 @@ class RelationGraphWriterStage extends Stage {
     });
     const sourceContent =
       typeof info.sourceContent === "string" ? info.sourceContent : info.content;
+    const format = resolveDocumentFormat(info.format, info.relPath || info.path);
     const sourceRevision =
       typeof info.revision === "string" && info.revision.length > 0
         ? info.revision
         : createHash("sha256").update(sourceContent, "utf8").digest("hex");
-    const relations = extractMdxRelations(
-      sourceContent,
-      info.relPath,
-      from,
-      sourceRevision,
-    );
+    const relations = isStructuredDocumentFormat(format)
+      ? extractMdxRelations(sourceContent, info.relPath, from, sourceRevision)
+      : [];
     const snapshot = await new RelationGraphStore(store).replaceSourceRelations(
       from,
       relations,
     );
     return {
       ...info,
+      format,
       relationGraph: {
         schema: snapshot.schema,
         revision: snapshot.revision,

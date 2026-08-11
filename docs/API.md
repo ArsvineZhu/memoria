@@ -180,8 +180,11 @@ MdxFrontmatter
 - `getStats()` — Promise<{files, chunks, tags, diaries, lastIndexed, vectorStats, healthy, initialized}>
 - `close()` — Promise<void>；幂等
 
-`MemoryDocumentInput` 至少包含 `{ id: string, content: string }`，可选 `revision`、
-`source` 与 JSON-safe `metadata`。文件系统入口位于 `memoria/adapters/filesystem`，
+`MemoryDocumentInput` 至少包含 `{ id: string, content: string }`，可选 `format`、
+`sourceContent`、`revision`、`source` 与 JSON-safe `metadata`。`format` 可取
+`"text" | "markdown" | "mdx"`；逻辑文档未指定时是 `text`，不会根据正文猜测格式。
+只有 `markdown`/`mdx` 解析 front matter 和静态关系；文件入口则按显式格式优先、扩展名
+其次解析。文件系统入口位于 `memoria/adapters/filesystem`，
 错误类型位于 `memoria/errors`；文件适配器位于 `memoria/adapters/filesystem`，两者都不增加根入口运行时导出。
 
 ### 默认计划、查询覆盖与链式 Builder

@@ -21,6 +21,7 @@ interface LogicalDocumentInput {
   source?: UnknownRecord;
   revision?: string;
   metadata?: UnknownRecord;
+  format?: "text" | "markdown" | "mdx";
 }
 
 interface LogicalEngine {
@@ -66,6 +67,8 @@ function makeEngine(): {
     getStats(): Promise<UnknownRecord>;
     metadataStore: {
       getFileByDocumentId?: (id: string) => Promise<UnknownRecord | null>;
+      getChunksByFileId?: (fileId: number) => Promise<UnknownRecord[]>;
+      listRelations?: (options?: UnknownRecord) => Promise<UnknownRecord[]>;
     };
   };
   root: string;
@@ -81,6 +84,8 @@ function makeEngine(): {
       getStats(): Promise<UnknownRecord>;
       metadataStore: {
         getFileByDocumentId?: (id: string) => Promise<UnknownRecord | null>;
+        getChunksByFileId?: (fileId: number) => Promise<UnknownRecord[]>;
+        listRelations?: (options?: UnknownRecord) => Promise<UnknownRecord[]>;
       };
     },
     root,
@@ -288,6 +293,64 @@ test("logical metadata-only update avoids re-embedding and vector mutation", asy
     await engine.close();
     for (const timer of vectorStore.saveTimers.values()) clearTimeout(timer);
     vectorStore.saveTimers.clear();
+  }
+});
+
+test("logical text keeps front matter and links as literal content", async () => {
+  const { engine } = makeEngine();
+  await engine.initialize();
+  const content = "---\ntitle: literal\n---\nBody [other](other.mdx)";
+  const result = await engine.ingest({ id: "logical:text", content });
+  const row = await engine.metadataStore.getFileByDocumentId?.("logical:text");
+  assert.ok(row);
+  assert.equal(row.metadata_json, null);
+  const chunks = await engine.metadataStore.getChunksByFileId?.(Number(row.id));
+  assert.ok(chunks?.some((chunk) => chunk.content === content));
+  assert.deepEqual(await engine.metadataStore.listRelations?.(), []);
+  await (engine as unknown as { close(): Promise<void> }).close();
+  assert.equal(result.documentId, "logical:text");
+});
+
+test("explicit logical MDX enables front matter and source relations", async () => {
+  const { engine } = makeEngine();
+  await engine.initialize();
+  const raw = "---\ntitle: literal\n---\nBody [other](other.mdx)";
+  await engine.ingest({ id: "logical:mdx", content: raw, format: "mdx" });
+  const row = await engine.metadataStore.getFileByDocumentId?.("logical:mdx");
+  assert.ok(row);
+  assert.deepEqual(JSON.parse(String(row.metadata_json)), { title: "literal" });
+  const chunks = await engine.metadataStore.getChunksByFileId?.(Number(row.id));
+  assert.ok(chunks?.some((chunk) => chunk.content === "Body [other](other.mdx)"));
+  const relations = await engine.metadataStore.listRelations?.();
+  assert.equal(relations?.length, 1);
+  await (engine as unknown as { close(): Promise<void> }).close();
+});
+
+test("text re-ingestion clears source relations without rewriting the source", async () => {
+  const { engine } = makeEngine();
+  await engine.initialize();
+  try {
+    await engine.ingest({
+      id: "logical:relation-clear",
+      content: "Body [other](other.mdx)",
+      format: "mdx",
+    });
+    assert.equal((await engine.metadataStore.listRelations?.())?.length, 1);
+
+    const literal = "Body [other](other.mdx)";
+    await engine.upsert({
+      id: "logical:relation-clear",
+      content: literal,
+      format: "text",
+    });
+    assert.deepEqual(await engine.metadataStore.listRelations?.(), []);
+    const history = await engine.metadataStore.listRelations?.({
+      includeInactive: true,
+    });
+    assert.equal(history?.length, 1);
+    assert.equal(history?.[0]?.active, false);
+  } finally {
+    await (engine as unknown as { close(): Promise<void> }).close();
   }
 });
 

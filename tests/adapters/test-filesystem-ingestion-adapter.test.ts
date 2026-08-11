@@ -48,6 +48,7 @@ test("filesystem adapter owns reading and delegates snapshots to the engine", as
   const [snapshot] = target.ingested[0] ?? [];
   assert.ok(snapshot);
   assert.equal(snapshot.content, "adapter-owned content");
+  assert.equal((snapshot as FileInput & { format?: string }).format, "markdown");
   assert.equal(snapshot.relPath, "notes/one.md");
   assert.equal(snapshot.path, filePath);
   assert.equal(snapshot.size, Buffer.byteLength("adapter-owned content"));
@@ -90,6 +91,10 @@ test("filesystem adapter prefers file snapshots when both target contracts exist
   assert.equal(logicalDeletes, 0);
   assert.equal(fileSnapshots.length, 1);
   assert.equal(fileSnapshots[0]?.[0]?.content, "Body only");
+  assert.equal(
+    (fileSnapshots[0]?.[0] as (FileInput & { format?: string }) | undefined)?.format,
+    "mdx",
+  );
   assert.equal(
     fileSnapshots[0]?.[0]?.sourceContent,
     "---\ntags:\n  - coffee\n---\nBody only",
@@ -142,6 +147,11 @@ test("filesystem adapter maps files to the logical ingestion contract", async ()
   assert.ok(document);
   assert.equal(document.id, "filesystem:notes/one.md");
   assert.equal(document.content, "logical content");
+  assert.equal((document as typeof document & { format?: string }).format, "markdown");
+  assert.equal(
+    (document as typeof document & { sourceContent?: string }).sourceContent,
+    "logical content",
+  );
   assert.equal(
     document.revision,
     createHash("sha256").update("logical content").digest("hex"),
@@ -158,7 +168,7 @@ test("filesystem adapter maps files to the logical ingestion contract", async ()
   assert.deepEqual(removed, ["filesystem:notes/one.md"]);
 });
 
-test("filesystem adapter parses only case-insensitive MDX front matter and hashes raw source", async () => {
+test("filesystem adapter parses structured front matter and hashes raw source", async () => {
   const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-"));
   const filePath = join(root, "notes", "one.MDX");
   await mkdir(join(root, "notes"), { recursive: true });
@@ -199,6 +209,7 @@ test("filesystem adapter parses only case-insensitive MDX front matter and hashe
   const [document] = ingested;
   assert.ok(document);
   assert.equal(document.content, "Body text");
+  assert.equal((document as typeof document & { format?: string }).format, "mdx");
   assert.equal(document.revision, createHash("sha256").update(raw).digest("hex"));
   assert.deepEqual(document.metadata, {
     title: "Demo",

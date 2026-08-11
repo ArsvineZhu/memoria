@@ -121,9 +121,11 @@ source: personal-journal
 今天手冲咖啡：水温约 93 度，粉水比 1:15。
 ```
 
-没有 front matter 的 `.md` 文件仍然可以读取；只要文本以标准 front matter 开头，文件
-和逻辑文档都会按同一规则解析。只改标题或标签时，系统会尽量复用正文向量，不重复
-计算正文嵌入。
+文件格式由调用方显式 `format`、文件扩展名或默认值决定：`.mdx` 是 `mdx`，`.md` 是
+`markdown`，无扩展名的逻辑文档默认是 `text`。只有 `markdown`/`mdx` 才会解析开头的
+YAML front matter 和静态关系；逻辑文档若要使用这些能力，请传入
+`format: "mdx"`（或 `"markdown"`）。`format: "text"` 可覆盖文件扩展名，保持正文
+完全不解析。只改标题或标签时，系统会尽量复用正文向量，不重复计算正文嵌入。
 数据目录的备份和清理规则见
 [data/README.md](data/README.md)。
 

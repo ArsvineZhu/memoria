@@ -7,6 +7,7 @@ import type {
 
 import Stage from "../../core/stage.js";
 import { MemoriaError } from "../../errors.js";
+import { relationDocumentAliases } from "../../retrieval/relation-graph.js";
 import { encodeVectorBlob } from "../../utils/vector-codec.js";
 import { serializeDocumentJson } from "../../utils/logical-document.js";
 
@@ -140,6 +141,36 @@ class MetadataWriterStage extends Stage {
       });
     };
 
+    // A logical document has no persisted format column. When an incoming
+    // text snapshot is otherwise unchanged, inspect active source edges so a
+    // previous structured ingest is still replaced by the empty text
+    // authority instead of being silently skipped.
+    let refreshTextRelations = false;
+    if (
+      fileInfo.format === "text" &&
+      ctx.config.relationGraphEnabled === true &&
+      hasRelationAuthority
+    ) {
+      const relationKeys = relationDocumentAliases({
+        documentId: fileInfo.documentId,
+        path: relPath,
+      });
+      if (typeof metadataStore.listRelations !== "function") {
+        refreshTextRelations = true;
+      } else {
+        for (const relationKey of relationKeys) {
+          const activeRelations = await metadataStore.listRelations({
+            from: relationKey,
+            origins: ["source"],
+          });
+          if (activeRelations.length > 0) {
+            refreshTextRelations = true;
+            break;
+          }
+        }
+      }
+    }
+
     if (needsChunkEmbedding === false && needsTagUpdate) {
       if (hasRelationAuthority) {
         const tagEntries: TagEntry[] = Array.isArray(fileInfo.tagEntries)
@@ -243,7 +274,9 @@ class MetadataWriterStage extends Stage {
     }
 
     // Caller-supplied skip: neither content nor persisted file metadata changed.
-    if (needsChunkEmbedding === false && fileInfo.needsMetadataWrite !== true) {
+    const needsMetadataOnlyCommit =
+      fileInfo.needsMetadataWrite === true || refreshTextRelations;
+    if (needsChunkEmbedding === false && !needsMetadataOnlyCommit) {
       const existing = await metadataStore.getFileByPath(relPath);
       return {
         ...fileInfo,
@@ -255,7 +288,7 @@ class MetadataWriterStage extends Stage {
       };
     }
 
-    if (needsChunkEmbedding === false && fileInfo.needsMetadataWrite === true) {
+    if (needsChunkEmbedding === false && needsMetadataOnlyCommit) {
       if (hasRelationAuthority) {
         const replacement = await authorityReplacement({
           preserveChunks: true,

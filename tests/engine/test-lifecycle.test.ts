@@ -307,6 +307,69 @@ test("failed initialization cleans owned state and returns to created", async ()
   }
 });
 
+test("failed initialization drains an onReady search before closing owned resources", async () => {
+  let markSearchStarted!: () => void;
+  let releaseSearch!: () => void;
+  const searchStarted = new Promise<void>((resolve) => {
+    markSearchStarted = resolve;
+  });
+  const searchBarrier = new Promise<void>((resolve) => {
+    releaseSearch = resolve;
+  });
+  let search: Promise<unknown> | undefined;
+  let metadataCloseCalls = 0;
+  const engine = createMemoryEngine({
+    dbPath: ":memory:",
+    config: { dimension: DIM, indexNames: ["Root"] },
+    vectorStore: makeVectorStore(),
+    embeddingProvider: makeEmbeddingProvider(),
+    onReady: async (value) => {
+      const ready = value as ReturnType<typeof createMemoryEngine>;
+      const metadata = ready.metadataStore;
+      if (typeof metadata.getSearchCorpus !== "function") {
+        throw new Error("metadata search corpus capability is required");
+      }
+      const originalCorpus = metadata.getSearchCorpus.bind(metadata);
+      metadata.getSearchCorpus = async (...args) => {
+        markSearchStarted();
+        await searchBarrier;
+        return originalCorpus(...args);
+      };
+      const originalClose = metadata.close?.bind(metadata);
+      metadata.close = async () => {
+        metadataCloseCalls += 1;
+        await Promise.resolve(originalClose?.());
+      };
+      search = ready.search("search started by ready hook");
+      await searchStarted;
+      throw new Error("ready hook failed after starting search");
+    },
+  });
+
+  try {
+    const initializing = engine.initialize();
+    const initializationRejection = assert.rejects(
+      () => initializing,
+      (error: unknown) =>
+        error instanceof MemoriaError &&
+        error.code === "configuration" &&
+        (error.cause as Error | undefined)?.message ===
+          "ready hook failed after starting search",
+    );
+    await searchStarted;
+    await Promise.resolve();
+    assert.equal(metadataCloseCalls, 0);
+    releaseSearch();
+    await search;
+    await initializationRejection;
+    assert.equal(metadataCloseCalls, 1);
+    assert.equal(engine.state, "created");
+  } finally {
+    releaseSearch();
+    if (engine.state !== "closed") await engine.close();
+  }
+});
+
 test("close is idempotent and does not close injected providers", async () => {
   const created = makeInjectedEngine();
   try {

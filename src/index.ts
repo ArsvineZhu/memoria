@@ -219,6 +219,7 @@ export type {
   MemoryConfig,
   MemoryConfigOverrides,
   MemoryDocumentDeleteResult,
+  MemoryDocumentFormat,
   MemoryDocumentIngestResult,
   MemoryDocumentInput,
   MemoryDocumentSource,

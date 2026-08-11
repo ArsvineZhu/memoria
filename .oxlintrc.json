@@ -14,16 +14,24 @@
   "rules": {
     "no-debugger": "error",
     "no-constant-condition": "error",
-    "no-unsafe-finally": "error"
+    "no-unsafe-finally": "error",
+    "eslint/no-underscore-dangle": "off",
+    "typescript/no-unsafe-type-assertion": "off",
+    "typescript/no-unnecessary-type-conversion": "off",
+    "typescript/no-unnecessary-type-assertion": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/no-new-array": "off",
+    "unicorn/no-useless-fallback-in-spread": "off",
+    "unicorn/consistent-function-scoping": "off"
   },
   "categories": {
-    "correctness": "off",
+    "correctness": "error",
     "nursery": "off",
     "pedantic": "off",
     "perf": "off",
     "restriction": "off",
     "style": "off",
-    "suspicious": "off"
+    "suspicious": "error"
   },
   "overrides": [
     {

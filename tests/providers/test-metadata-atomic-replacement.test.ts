@@ -20,6 +20,8 @@ interface Replacement {
   chunks: readonly { chunkIndex: number; content: string; vector: Buffer | null }[];
   tags: readonly { name: string; vector: Buffer | null }[];
   orderedTagNames: readonly string[];
+  preserveChunks?: boolean;
+  preserveTags?: boolean;
 }
 
 interface ReplacementResult {
@@ -102,6 +104,27 @@ function replacement(): Replacement {
   };
 }
 
+function preserveReplacement(): Replacement {
+  return {
+    file: {
+      path: "Logical/atomic.md",
+      diaryName: "Logical",
+      checksum: "old-checksum",
+      mtime: 2,
+      size: 11,
+      documentId: "atomic:document",
+      revision: "2",
+      sourceJson: '{"source":"new"}',
+      metadataJson: '{"version":2}',
+    },
+    chunks: [],
+    tags: [],
+    orderedTagNames: [],
+    preserveChunks: true,
+    preserveTags: true,
+  };
+}
+
 async function snapshot(store: SqliteMetadataStore, fileId: number) {
   return {
     file: await store.getFileByDocumentId("atomic:document"),
@@ -140,6 +163,37 @@ test("replaceDocumentState atomically replaces file, chunks, tags, and file_tags
   const alpha = await store.getTagByName("alpha");
   assert.ok(alpha?.vector);
   assert.equal(new Float32Array(alpha.vector.buffer, alpha.vector.byteOffset, 4)[0], 1);
+  store.close();
+});
+
+test("replaceDocumentState preserves chunks and clean vector generation when requested", async () => {
+  const store = makeStore();
+  const fileId = await seedStore(store);
+  const beforeChunks = await store.getChunksByFileId(fileId);
+
+  const result = await store.replaceDocumentState(preserveReplacement());
+
+  assert.deepEqual(result.removedChunkIds, []);
+  assert.deepEqual(await store.getChunksByFileId(fileId), beforeChunks);
+  assert.equal(await store.getKv?.("memoria.metadata_generation"), "8");
+  assert.equal(await store.getKv?.("memoria.vector_generation"), "8");
+  assert.equal(await store.getKv?.("memoria.vector_dirty"), "0");
+  store.close();
+});
+
+test("metadata-only replacement keeps an existing dirty vector state dirty", async () => {
+  const store = makeStore();
+  const fileId = await seedStore(store);
+  await store.setKv?.("memoria.metadata_generation", "7");
+  await store.setKv?.("memoria.vector_generation", "6");
+  await store.setKv?.("memoria.vector_dirty", "1");
+
+  const result = await store.replaceDocumentState(preserveReplacement());
+
+  assert.equal(result.fileId, fileId);
+  assert.equal(await store.getKv?.("memoria.metadata_generation"), "8");
+  assert.equal(await store.getKv?.("memoria.vector_generation"), "6");
+  assert.equal(await store.getKv?.("memoria.vector_dirty"), "1");
   store.close();
 });
 

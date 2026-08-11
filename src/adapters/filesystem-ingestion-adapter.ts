@@ -7,12 +7,17 @@ import type { FSWatcher } from "chokidar";
 
 import { MemoriaError } from "../errors.js";
 import { parseMdxDocument } from "../utils/mdx-document.js";
+import {
+  isStructuredDocumentFormat,
+  resolveDocumentFormat,
+} from "../utils/document-format.js";
 import { isRealPathContained } from "../utils/path-containment.js";
 import type {
   DeleteEnvelope,
   FileInput,
   IngestEnvelope,
   MemoryDocumentDeleteResult,
+  MemoryDocumentFormat,
   MemoryDocumentIngestResult,
   FileRow,
   UnknownRecord,
@@ -22,6 +27,8 @@ export interface FilesystemIngestionTarget {
   ingest?(document: {
     id: string;
     content: string;
+    format?: MemoryDocumentFormat;
+    sourceContent?: string;
     revision?: string;
     source?: { type: "filesystem"; path: string };
     metadata?: UnknownRecord & { path: string; mtime: number; size: number };
@@ -121,6 +128,8 @@ class FilesystemIngestionAdapter {
       const logicalResult = await this.target.ingest({
         id: `filesystem:${relativePath}`,
         content: snapshot.content,
+        format: snapshot.format,
+        sourceContent: snapshot.sourceContent,
         revision: snapshot.revision,
         source: { type: "filesystem", path: relativePath },
         metadata,
@@ -303,7 +312,8 @@ class FilesystemIngestionAdapter {
     }
     let content = rawContent;
     let documentMetadata: UnknownRecord | undefined;
-    if (extname(filePath).toLowerCase() === ".mdx") {
+    const format = resolveDocumentFormat(undefined, filePath);
+    if (isStructuredDocumentFormat(format)) {
       try {
         const parsed = parseMdxDocument(rawContent);
         content = parsed.body;
@@ -321,6 +331,7 @@ class FilesystemIngestionAdapter {
       path: filePath,
       relPath: this.relativePath(filePath),
       content,
+      format,
       sourceContent: rawContent,
       mtime: Math.trunc(after.mtimeMs),
       size: after.size,

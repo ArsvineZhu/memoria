@@ -23,6 +23,7 @@ test("relation graph writer records source links without changing source content
     relPath: "life/a.mdx",
     content: "[B](./b.mdx)",
     documentId: "a",
+    format: "mdx",
   };
 
   const out = await new RelationGraphWriterStage().process(input, ctx);

@@ -11,7 +11,9 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
 扫描与 watcher 位于独立的 `FilesystemIngestionAdapter`。SQLite 元数据与内容是权威
 状态，Rust N-API 向量索引（VexusIndex，日记维度索引 + 共享标签索引）是可重建的派生
 状态。文件系统源默认位于托管的 `data/content/`，推荐使用带 YAML front matter
-的 MDX；摄取时只解析 front matter，正文和 MDX/JSX 语法仍作为纯文本。
+的 MDX。摄入格式遵循“显式 `format` > `.mdx`/`.md` 扩展名 > `text`”；只有
+`markdown`/`mdx` 解析 front matter 和静态关系，逻辑文档默认 `text`，正文不会被
+内容猜测规则改变。解析器不执行 MDX/JSX 代码。
 
 ```
                     ┌────────────────────────────────────────────┐
@@ -50,9 +52,9 @@ data/
    └─ indexes/                # TDB 可重建向量索引
 ```
 
-`data/content/**/*.mdx` 是推荐的原始数据标准。front matter 的 `tags` 进入标签
-管线，其他键进入现有 `files.metadata_json`；front matter 不参与 chunk/embedding，
-因此只改元数据可以复用正文向量。SQLite 保存文件、块、标签和持久向量 BLOB，
+`data/content/**/*.mdx` 是推荐的原始数据标准；`.md` 使用同一静态 front matter
+边界。front matter 的 `tags` 进入标签管线，其他键进入现有 `files.metadata_json`；
+front matter 不参与 chunk/embedding，因此只改元数据可以复用正文向量。SQLite 保存文件、块、标签和持久向量 BLOB，
 `.usearch` 仅是派生缓存，缺失或损坏时由 SQLite authority 重建。
 
 ## 2. MemoryEngine 生命周期
@@ -106,10 +108,12 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
    `documentId`、`revision`、source 与 metadata；文件快照由 `FilesystemIngestionAdapter`
    在交给引擎前读取并做稳定性检查；target 同时提供文件与逻辑两组方法时优先
    `flushBatch/handleDelete`，从而保留 `relPath` 与 diary 语义。随后按源码注册顺序执行摄入阶段；
-   `RelationExtractorStage` 只从不可变源快照计算显式链接，不写 store；随后由
+   `RelationExtractorStage` 只从不可变源快照计算显式链接，不写 store；`text` 文档
+   仍提交空的来源关系 authority 以清理旧边，`markdown`/`mdx` 才解析静态链接。随后由
    `MetadataWriterStage` 通过 `replaceDocumentAuthority()` 在同一 SQLite transaction
    原子替换 file/chunks/tags/file_tags 与 source relations，并更新 metadata/relation
-   generation、置 `vector_dirty=1`。关系图启用而 provider 缺少该 capability 时在写入前
+   generation；内容、标签或日记索引变化置 `vector_dirty=1`，仅 metadata/revision/
+   relation 更新在当前 clean 时同步 vector generation。关系图启用而 provider 缺少该 capability 时在写入前
    失败，不退回非原子多步写入。关系图关闭的兼容路径才使用 `replaceDocumentState()`；
    不重建正文的 tag-only/metadata-only 更新也复用 authority capability。
    `CooccurrenceBuilderStage` 默认有意跳过派生图重建，开启 `cooccurrenceRebuild` 或由调用方

@@ -208,12 +208,50 @@ test("FileReaderStage parses MDX front matter and keeps JSX/import literal", asy
   );
 
   assert.equal(out.content, "Body text\n\nimport Demo from './Demo.tsx';");
+  assert.equal(out.format, "mdx");
   assert.equal(out.checksum, md5(out.content));
   assert.deepEqual(out.documentMetadata, {
     title: "Demo note",
     tags: ["alpha", "beta"],
     context: { project: "memoria" },
   });
+});
+
+test("FileReaderStage lets explicit text override an MDX-looking path", async () => {
+  const raw = "---\ntitle: literal\n---\nBody [other](other.mdx)";
+  const out = await new FileReaderStage().process(
+    {
+      path: "C:\\virtual\\journal\\literal.mdx",
+      relPath: "journal/literal.mdx",
+      content: raw,
+      format: "text",
+      mtime: 100,
+      size: Buffer.byteLength(raw),
+    },
+    makeCtx({ rootPath: "C:\\virtual" }),
+  );
+
+  assert.equal(out.format, "text");
+  assert.equal(out.content, raw);
+  assert.equal(out.documentMetadata, undefined);
+});
+
+test("FileReaderStage treats .md files as structured markdown", async () => {
+  const raw = "---\ntitle: Markdown\n---\nBody";
+  const out = await new FileReaderStage().process(
+    {
+      path: "C:\\virtual\\journal\\note.md",
+      relPath: "journal/note.md",
+      content: raw,
+      mtime: 100,
+      size: Buffer.byteLength(raw),
+    },
+    makeCtx({ rootPath: "C:\\virtual" }),
+  );
+
+  assert.equal(out.format, "markdown");
+  assert.equal(out.content, "Body");
+  assert.deepEqual(out.documentMetadata, { title: "Markdown" });
 });
 
 test("FileReaderStage preserves an adapter-provided raw source for relation spans", async () => {
@@ -375,6 +413,7 @@ test("FileReaderStage rejects malformed front matter with the source identity", 
           path: "logical/document",
           relPath: "logical/document",
           content,
+          format: "mdx",
           mtime: 100,
           size: Buffer.byteLength(content),
         },
@@ -384,7 +423,7 @@ test("FileReaderStage rejects malformed front matter with the source identity", 
   );
 });
 
-test("FileReaderStage parses logical MDX content as structured text", async () => {
+test("FileReaderStage keeps extensionless logical text unparsed by default", async () => {
   const raw = "---\ntitle: literal\n---\nBody stays untouched";
   const out = await new FileReaderStage().process(
     {
@@ -397,9 +436,10 @@ test("FileReaderStage parses logical MDX content as structured text", async () =
     makeCtx({ rootPath: "C:\\virtual" }),
   );
 
-  assert.equal(out.content, "Body stays untouched");
+  assert.equal(out.format, "text");
+  assert.equal(out.content, raw);
   assert.equal(out.checksum, md5(out.content));
-  assert.deepEqual(out.documentMetadata, { title: "literal" });
+  assert.equal(out.documentMetadata, undefined);
 });
 
 // ── TagExtractorStage ──────────────────────────────────────────

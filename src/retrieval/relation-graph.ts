@@ -46,12 +46,25 @@ export function relationDocumentKey(input: {
   path?: string | null;
   relPath?: string | null;
 }): string {
+  return relationDocumentAliases(input)[0] || "path:";
+}
+
+/** Return every stable authority alias for a document. */
+export function relationDocumentAliases(input: {
+  documentId?: string | null;
+  document_id?: string | null;
+  path?: string | null;
+  relPath?: string | null;
+}): string[] {
+  const aliases: string[] = [];
   const documentId = input.documentId ?? input.document_id;
   if (typeof documentId === "string" && documentId.trim()) {
-    return `document:${documentId.trim()}`;
+    aliases.push(`document:${documentId.trim()}`);
   }
   const value = input.relPath || input.path || "";
-  return `path:${normalizePath(String(value))}`;
+  if (String(value).trim()) aliases.push(`path:${normalizePath(String(value))}`);
+  if (aliases.length === 0) aliases.push("path:");
+  return [...new Set(aliases)];
 }
 
 function relationId(from: string, to: string, kind: RelationKind): string {
@@ -637,7 +650,7 @@ export class RelationGraphStore {
     const starts: string[] = [];
     for (const chunkId of seedChunkIds) {
       const file = await store.getFileByChunkId(Number(chunkId));
-      if (file) starts.push(relationDocumentKey(file));
+      if (file) starts.push(...relationDocumentAliases(file));
     }
     const related = await this.relatedDocumentKeys(
       starts,

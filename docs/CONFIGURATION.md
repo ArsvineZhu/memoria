@@ -101,10 +101,13 @@ Provider 的 `getDimension()` 必须等于 `config.dimension`。更换模型或�
 | `checkpoint`           | `false` | 是否写摄入检查点                      |
 | `checkpointInterval`   |     `1` | 每多少个文件写一次检查点              |
 
-摄入层识别任意文本源开头的 YAML front matter；推荐使用 `.mdx`，但并不执行其中的
-JSX、`import` 或任意 MDX 代码。`tags` 会进入现有标签清理流程，其他字段会成为文档
-metadata；front matter 会在分块和嵌入前移除。用户源文件仍保持不可变，关系图等派生
-数据写入 SQLite/运行状态。没有 front matter 的 `.md` 和逻辑文档按普通正文处理。
+摄入层按“显式 `format` > 文件扩展名 > `text`”决定内容边界：`.mdx` 映射为 `mdx`，
+`.md` 映射为 `markdown`，无路径的逻辑文档默认是 `text`。只有 `markdown`/`mdx` 解析
+开头的 YAML front matter 和静态关系；`text` 中的 YAML、Markdown/Wiki 链接和
+`MemoryLink` 都保留为正文，不会生成来源关系。`format: "text"` 可以覆盖 `.mdx`
+扩展名。解析器不执行 JSX、`import` 或任意 MDX 代码。结构化格式的 `tags` 会进入现有
+标签清理流程，其他字段会成为文档 metadata；front matter 会在分块和嵌入前移除。
+用户源文件仍保持不可变，关系图等派生数据写入 SQLite/运行状态。
 
 ## 检索开关
 

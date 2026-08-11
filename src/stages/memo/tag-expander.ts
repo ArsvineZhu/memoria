@@ -67,6 +67,8 @@ class TagExpanderStage extends Stage {
     const resolvedScope = Array.isArray(info.resolvedIndexNames)
       ? new Set(info.resolvedIndexNames.map((name) => String(name)))
       : null;
+    const allowedChunkIds =
+      info.allowedChunkIds instanceof Set ? info.allowedChunkIds : null;
 
     if (resolvedScope?.size === 0) {
       return {
@@ -101,6 +103,7 @@ class TagExpanderStage extends Stage {
         await this._chunkInScope(
           Number(candidate.chunkId),
           resolvedScope,
+          allowedChunkIds,
           metadataStore,
         )
       ) {
@@ -119,6 +122,7 @@ class TagExpanderStage extends Stage {
       scopedCandidates,
       metadataStore,
       resolvedScope,
+      allowedChunkIds,
     );
     const candidateTagIds = new Set(candidateTags.map((t) => Number(t.id)));
 
@@ -198,7 +202,14 @@ class TagExpanderStage extends Stage {
         for (const chunk of chunks || []) {
           const chunkId = Number(chunk.id);
           if (!Number.isFinite(chunkId)) continue;
-          if (!(await this._chunkInScope(chunkId, resolvedScope, metadataStore))) {
+          if (
+            !(await this._chunkInScope(
+              chunkId,
+              resolvedScope,
+              allowedChunkIds,
+              metadataStore,
+            ))
+          ) {
             continue;
           }
           const previous = pool.get(chunkId);
@@ -232,13 +243,15 @@ class TagExpanderStage extends Stage {
     candidates: readonly ChunkCandidate[],
     metadataStore: NonNullable<PipelineContextLike["metadataStore"]>,
     scope: Set<string> | null,
+    allowedChunkIds: Set<unknown> | null,
   ): Promise<Array<{ id: number; name?: string }>> {
     if (typeof metadataStore.getFileByChunkId !== "function") return [];
     const seen = new Map<number, { id: number; name?: string }>();
     for (const candidate of candidates) {
       const chunkId = Number(candidate && candidate.chunkId);
       if (!Number.isFinite(chunkId)) continue;
-      if (!(await this._chunkInScope(chunkId, scope, metadataStore))) continue;
+      if (!(await this._chunkInScope(chunkId, scope, allowedChunkIds, metadataStore)))
+        continue;
       let file = null;
       try {
         file = await metadataStore.getFileByChunkId(chunkId);
@@ -275,8 +288,12 @@ class TagExpanderStage extends Stage {
   private async _chunkInScope(
     chunkId: number,
     scope: Set<string> | null,
+    allowedChunkIds: Set<unknown> | null,
     metadataStore: NonNullable<PipelineContextLike["metadataStore"]>,
   ): Promise<boolean> {
+    if (allowedChunkIds) {
+      return allowedChunkIds.has(chunkId) || allowedChunkIds.has(String(chunkId));
+    }
     if (scope === null) return true;
     if (scope.size === 0 || typeof metadataStore.getFileByChunkId !== "function") {
       return false;

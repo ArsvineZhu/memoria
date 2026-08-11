@@ -466,6 +466,29 @@ test("TagExpanderStage filters expanded chunks to the resolved scope", async () 
   assert.ok(outsideChunk > 0);
 });
 
+test("TagExpanderStage applies the resolved chunk scope before tag expansion", async () => {
+  const { metaStore, vectorStore, c1, c2 } = await seedExpansionStore();
+  const out = await new TagExpanderStage().process(
+    {
+      mergedCandidates: [{ chunkId: c1, score: 0.8 }],
+      resolvedIndexNames: ["d"],
+      allowedChunkIds: new Set([c1]),
+    },
+    new PipelineContext({
+      config: { tagExpansionEnabled: true, tagExpansionTopK: 5 },
+      vectorStore,
+      metadataStore: metaStore,
+    }),
+  );
+
+  assert.deepEqual(
+    out.mergedCandidates.map((candidate) => candidate.chunkId),
+    [c1],
+  );
+  assert.deepEqual(out.tagExpansion?.added, []);
+  assert.ok(c2 > c1);
+});
+
 test("TagExpanderStage returns no candidates for an explicit empty scope", async () => {
   const { metaStore, vectorStore, c1 } = await seedExpansionStore();
   const out = await new TagExpanderStage().process(

@@ -1,3 +1,6 @@
+import type { RetrievalPlan, RetrievalPlanInput } from "./retrieval/retrieval-plan.js";
+import type { RetrievalStrategySource } from "./retrieval/query-planner.js";
+
 /** A vector accepted at the public boundary before it is normalised. */
 export type VectorLike = Float32Array | readonly number[];
 export type Vector = Float32Array;
@@ -55,6 +58,7 @@ export interface MemoryConfig {
   tagBlacklistSuper: string[];
   maxTagsPerFile: number;
   cooccurrenceRebuild: boolean;
+  relationGraphEnabled: boolean;
   checkpoint: boolean | { enabled?: boolean; interval?: number };
   checkpointInterval: number;
   epaProjectionEnabled: boolean;
@@ -62,6 +66,8 @@ export interface MemoryConfig {
   tagMemoV9Enabled: boolean;
   tagMemoV10Enabled: boolean;
   riverMemoEnabled: boolean;
+  topologyV3Enabled: boolean;
+  nativeMemoEnabled: boolean;
   tagExpansionEnabled: boolean;
   vectorReshapeEnabled: boolean;
   geodesicRerankEnabled: boolean;
@@ -72,7 +78,13 @@ export interface MemoryConfig {
   useLLMRerank: boolean;
   timeDecayEnabled: boolean;
   truncateEnabled: boolean;
+  truncateMinScore?: number;
   expansionEnabled: boolean;
+  fullDocumentExpansionEnabled: boolean;
+  relationExpansionEnabled: boolean;
+  relationMaxHops: number;
+  relationMaxAdded: number;
+  relationExpansionSeeds: number;
   topK: number;
   perIndexK: number | null;
   indexNames: string[] | null;
@@ -103,6 +115,8 @@ export interface MemoryConfig {
   maxResults: number;
   sourcePriority: SourcePriority;
   reranker: ExternalReranker | null;
+  externalRerankMode: "ordered" | "rrf";
+  externalRerankAlpha: number;
   timeDecayHalfLife: number;
   timeDecayNow: number | null;
   timeDecayUpperBound: number | null;
@@ -188,6 +202,8 @@ export type MemoryConfigOverrides = Partial<MemoryConfig> & UnknownRecord;
 
 export interface MemoryEngineOptions {
   config?: MemoryConfigOverrides;
+  /** Fixed per-engine retrieval defaults; normalized at construction time. */
+  defaultRetrievalPlan?: RetrievalPlanInput;
   dbPath?: string;
   ragParamsPath?: string;
   ragParams?: UnknownRecord;
@@ -199,6 +215,11 @@ export interface MemoryEngineOptions {
   deleteOptions?: UnknownRecord;
   searchOptions?: UnknownRecord;
   onReady?: (engine: unknown) => void | Promise<void>;
+}
+
+export interface SearchOptions extends UnknownRecord {
+  retrievalPlan?: RetrievalPlanInput;
+  inheritRetrievalDefaults?: boolean;
 }
 
 /** Host-neutral provenance attached to a logical memory document. */
@@ -232,6 +253,8 @@ export interface FileInput {
   path: string;
   relPath?: string;
   content?: string;
+  /** Optional raw source snapshot; content may be a parsed/body projection. */
+  sourceContent?: string;
   mtime?: number;
   size?: number;
   documentId?: string;
@@ -243,10 +266,16 @@ export interface FileInput {
 
 export interface FileSnapshot extends Omit<
   Required<FileInput>,
-  "documentId" | "revision" | "documentSource" | "documentMetadata" | "diaryName"
+  | "documentId"
+  | "revision"
+  | "documentSource"
+  | "documentMetadata"
+  | "diaryName"
+  | "sourceContent"
 > {
   relPath: string;
   content: string;
+  sourceContent?: string;
   mtime: number;
   size: number;
   diaryName: string;
@@ -336,7 +365,7 @@ export interface ChunkCandidate {
 export interface SearchEnvelope {
   query?: string;
   tokens?: string[];
-  options?: UnknownRecord;
+  options?: SearchOptions;
   queries?: QueryVector[];
   queryVector?: EmbeddingVector;
   vectorResults?: VectorResult[];
@@ -360,6 +389,32 @@ export interface SearchEnvelope {
   reranked?: boolean;
   rerankSkipped?: boolean;
   rerankError?: string;
+  defaultRetrievalPlan?: RetrievalPlan;
+  requestedRetrievalPlan?: RetrievalPlanInput;
+  retrievalDecision?: {
+    strategy: string;
+    scores?: Record<string, number>;
+    reasons?: string[];
+    fallback?: string;
+    reason?: string;
+    confidence?: number;
+    explicit?: boolean;
+    strategySource?: RetrievalStrategySource;
+    defaultsInherited?: boolean;
+    queryOverrideApplied?: boolean;
+  };
+  retrievalTrace?: {
+    defaultPlan?: RetrievalPlan;
+    requestedPlan?: RetrievalPlanInput;
+    plan: RetrievalPlan;
+    strategySource?: RetrievalStrategySource;
+    defaultsInherited?: boolean;
+    queryOverrideApplied?: boolean;
+    profile: UnknownRecord;
+    decision: UnknownRecord;
+    stageOrder: string[];
+    fallbacks: string[];
+  };
   failed?: boolean;
   [key: string]: unknown;
 }
@@ -458,11 +513,15 @@ export interface VectorReshapeData {
 }
 
 export interface GeodesicData {
-  version: "ts-v1";
+  version: "ts-v1" | "rust-dtsc-v1";
   alpha: number;
   minGeoSamples: number;
   appliedCount: number;
   degradedCount: number;
+  native?: boolean;
+  schema?: string;
+  algorithmVersion?: string;
+  diagnostics?: UnknownRecord;
   scores: Array<{
     chunkId: number;
     originalScore: number;
@@ -489,10 +548,14 @@ export interface DedupeStats {
 export interface TruncationStats {
   dropped: number;
   truncated: number;
+  /** Candidates removed by the optional post-rerank score floor. */
+  scoreFiltered?: number;
 }
 
 export interface ExpansionStats {
   added: number;
+  documentsExpanded?: number;
+  mode?: "chunks" | "full-document";
 }
 
 export interface RiverMemoData extends UnknownRecord {
@@ -540,6 +603,8 @@ export interface PipelineData extends UnknownRecord {
   path?: string;
   relPath?: string;
   content?: string;
+  /** Immutable source snapshot used by derived-link extraction; never embedded. */
+  sourceContent?: string;
   mtime?: number;
   size?: number;
   diaryName?: string;
@@ -557,6 +622,8 @@ export interface PipelineData extends UnknownRecord {
   documentSource?: MemoryDocumentSource;
   documentMetadata?: UnknownRecord;
   tags?: string[];
+  /** Explicit query-time core tags for native Memo compatibility callers. */
+  coreTags?: string[];
   chunks?: string[];
   chunkEntries?: ChunkEntry[];
   tagEntries?: TagEntry[];
@@ -565,7 +632,8 @@ export interface PipelineData extends UnknownRecord {
   tagIds?: number[];
   removedChunkIds?: number[];
   query?: string;
-  options?: UnknownRecord;
+  options?: SearchOptions;
+  retrievalPlan?: RetrievalPlan;
   diaryNames?: string[];
   indexNames?: string[];
   libraries?: string[];
@@ -716,6 +784,62 @@ export interface FileTagRow {
   name?: string;
 }
 
+export type MemoryRelationKind = "explicit-link" | "derived-link" | "tag" | "sequence";
+export type MemoryRelationOrigin = "source" | "derived";
+export type MemoryRelationStatus = "active" | "stale" | "rejected";
+
+export interface MemoryRelationRecord {
+  id: string;
+  from: string;
+  to: string;
+  kind: MemoryRelationKind;
+  origin: MemoryRelationOrigin;
+  confidence: number;
+  weight: number;
+  evidence?: string | null;
+  provenance?: UnknownRecord | null;
+  sourceRevision?: string | null;
+  algorithmVersion?: string | null;
+  sourceSpan?: { start: number; end: number } | null;
+  targetAnchor?: string | null;
+  createdAt: number;
+  updatedAt: number;
+  status: MemoryRelationStatus;
+  active: boolean;
+}
+
+export interface RelationListOptions {
+  from?: string;
+  to?: string;
+  origins?: readonly MemoryRelationOrigin[];
+  kinds?: readonly MemoryRelationKind[];
+  statuses?: readonly MemoryRelationStatus[];
+  includeInactive?: boolean;
+}
+
+export interface RelationStoreContract {
+  replaceExplicitRelations?(
+    from: string,
+    sourceRevision: string,
+    relations: readonly MemoryRelationRecord[],
+  ): Promise<void>;
+  upsertDerivedRelations?(
+    relations: readonly (Omit<
+      MemoryRelationRecord,
+      "id" | "origin" | "createdAt" | "updatedAt" | "status"
+    > &
+      Partial<
+        Pick<
+          MemoryRelationRecord,
+          "id" | "origin" | "createdAt" | "updatedAt" | "status"
+        >
+      >)[],
+  ): Promise<void>;
+  listRelations?(options?: RelationListOptions): Promise<MemoryRelationRecord[]>;
+  markExplicitRelationsStale?(from: string): Promise<void>;
+  getRelationGeneration?(): Promise<number>;
+}
+
 export interface FileMetadataInput {
   path: string;
   diaryName: string;
@@ -792,7 +916,7 @@ export interface HealthStatus {
   issues: string[];
 }
 
-export interface MetadataStoreContract {
+export interface MetadataStoreContract extends RelationStoreContract {
   dimension?: number | null;
   /** Exposed for compatibility diagnostics used by the legacy tests/callers. */
   _closed?: boolean;
@@ -802,6 +926,7 @@ export interface MetadataStoreContract {
     changed: boolean;
   }>;
   countFiles?(): Promise<number>;
+  getAllFiles?(): Promise<FileRow[]>;
   getLastIndexedAt?(): Promise<number | null>;
   getFileByPath(path: string): Promise<FileRow | null>;
   getFileByDocumentId?(documentId: string): Promise<FileRow | null>;
@@ -923,6 +1048,11 @@ export interface PipelineContextOptions {
   riverStateStore?: RiverStateStore;
   tagGraph?: Map<number, Map<number, number>>;
   reranker?: ExternalReranker;
+  queryInterpreter?: {
+    interpret(
+      query: string,
+    ): Promise<Record<string, unknown>> | Record<string, unknown>;
+  };
 }
 
 export interface Stage<Input = PipelineData, Output = PipelineData> {
@@ -942,6 +1072,11 @@ export interface PipelineContextLike {
   tagGraph?: Map<number, Map<number, number>>;
   checkpointState?: { fileCount: number; diaries: Set<string> };
   reranker?: ExternalReranker;
+  queryInterpreter?: {
+    interpret(
+      query: string,
+    ): Promise<Record<string, unknown>> | Record<string, unknown>;
+  };
 }
 
 export type StageInput = PipelineData;

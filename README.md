@@ -71,6 +71,31 @@ void main().catch((error) => {
 });
 ```
 
+如果应用希望固定一条默认检索策略，可以在构造时配置 typed plan；单条查询仍可覆盖，或
+通过不可变的 `engine.query()` 使用链式写法：
+
+```ts
+const engine = createMemoryEngine({
+  defaultRetrievalPlan: {
+    strategy: "field",
+    tagMemo: { plus: true, version: "v10" },
+  },
+  embeddingProvider,
+});
+
+const result = await engine
+  .query("实验记录的来源关系")
+  .riverMemoRerankPlus({ alpha: 0.35 })
+  .expand((e) => e.related({ maxHops: 2 }).fullDocument())
+  .postprocess((p) => p.dedupe().limit(8))
+  .run();
+```
+
+`RetrievalPlanInput`、`SearchOptions` 和 `QueryBuilder` 保持 JSON-like 计划的全部可序列化
+能力；Builder 只是生成普通计划并调用同一个 `engine.search()`。默认计划、查询覆盖和自动
+决策会出现在结果的 `retrievalTrace` 中。查询文本仍是普通字符串，不解析 VCP 标签、
+placeholder 或 query MDX。
+
 如果你的数据已经是文件，可以使用 `memoria/adapters/filesystem`。文件适配器负责
 扫描、读取和监听文件；`MemoryEngine` 负责实际摄入和检索。推荐的文件位置是
 `data/content/<分类>/<文件名>.mdx`。
@@ -95,8 +120,9 @@ source: personal-journal
 今天手冲咖啡：水温约 93 度，粉水比 1:15。
 ```
 
-没有 front matter 的 `.md` 文件仍然可以读取，但 `.md` 和逻辑文档不会自动解析
-front matter。只改标题或标签时，系统会尽量复用正文向量，不重复计算正文嵌入。
+没有 front matter 的 `.md` 文件仍然可以读取；只要文本以标准 front matter 开头，文件
+和逻辑文档都会按同一规则解析。只改标题或标签时，系统会尽量复用正文向量，不重复
+计算正文嵌入。
 数据目录的备份和清理规则见
 [data/README.md](data/README.md)。
 
@@ -117,20 +143,23 @@ corepack pnpm demo:real-embed -- --reset --limit 50 --top-k 5
 
 ## 文档入口
 
-| 需要了解的内容           | 文档                                                     |
-| ------------------------ | -------------------------------------------------------- |
-| 所有项目入口和目录边界   | [INDEX.md](INDEX.md)                                     |
-| 了解文档体系和阅读路径   | [docs/README.md](docs/README.md)                         |
-| 第一次接入               | [docs/GUIDE.md](docs/GUIDE.md)                           |
-| 配置和默认值             | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)           |
-| 公开 API 和类型          | [docs/API.md](docs/API.md)                               |
-| 检索能力、开关和诊断字段 | [docs/RETRIEVAL_FEATURES.md](docs/RETRIEVAL_FEATURES.md) |
-| 架构和生命周期           | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)             |
-| 持久化、恢复和备份       | [docs/PERSISTENCE.md](docs/PERSISTENCE.md)               |
-| 测试和验证               | [docs/TESTING.md](docs/TESTING.md)                       |
-| 常见故障                 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)       |
-| 全部专题文档             | [docs/INDEX.md](docs/INDEX.md)                           |
-| 参与开发                 | [CONTRIBUTING.md](CONTRIBUTING.md)                       |
+| 需要了解的内容                            | 文档                                                         |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| 所有项目入口和目录边界                    | [INDEX.md](INDEX.md)                                         |
+| 了解文档体系和阅读路径                    | [docs/README.md](docs/README.md)                             |
+| 第一次接入                                | [docs/GUIDE.md](docs/GUIDE.md)                               |
+| 配置和默认值                              | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)               |
+| 公开 API 和类型                           | [docs/API.md](docs/API.md)                                   |
+| 检索能力、开关和诊断字段                  | [docs/RETRIEVAL_FEATURES.md](docs/RETRIEVAL_FEATURES.md)     |
+| 自动选择策略、显式算法计划和 VCP 能力迁移 | [docs/RETRIEVAL_STRATEGIES.md](docs/RETRIEVAL_STRATEGIES.md) |
+| 不可变 MDX 文件源和派生关系图             | [docs/RELATIONS.md](docs/RELATIONS.md)                       |
+| `RetrievalPlan` 类型化算法计划            | [docs/RETRIEVAL_PLAN.md](docs/RETRIEVAL_PLAN.md)             |
+| 架构和生命周期                            | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                 |
+| 持久化、恢复和备份                        | [docs/PERSISTENCE.md](docs/PERSISTENCE.md)                   |
+| 测试和验证                                | [docs/TESTING.md](docs/TESTING.md)                           |
+| 常见故障                                  | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)           |
+| 全部专题文档                              | [docs/INDEX.md](docs/INDEX.md)                               |
+| 参与开发                                  | [CONTRIBUTING.md](CONTRIBUTING.md)                           |
 
 ## 运行检查
 

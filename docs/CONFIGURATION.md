@@ -22,6 +22,26 @@ const engine = createMemoryEngine({
 });
 ```
 
+检索默认策略不放入 `config` 或 `ragParams`，而是使用独立的构造选项
+`defaultRetrievalPlan`：
+
+```ts
+const engine = createMemoryEngine({
+  defaultRetrievalPlan: {
+    strategy: "field",
+    tagMemo: { plus: true, version: "v10" },
+    postprocess: { dedupe: true, timeDecay: true },
+  },
+  embeddingProvider,
+});
+```
+
+它只作用于 MemoryEngine 主检索链和 KnowledgeBaseAdapter 的文本搜索；TDBEngine 保持
+独立语义。引擎构造时会复制、规范化并固定默认计划，调用者之后修改传入对象不会影响引擎，
+也没有运行时 setter。单条 `search()` 可用 `retrievalPlan` 和
+`inheritRetrievalDefaults: false` 覆盖或隔离它；完整规则见
+[RETRIEVAL_PLAN.md](RETRIEVAL_PLAN.md)。
+
 `options.dbPath` 优先于 `config.dbPath`。如果显式传入 `rootPath`、`storePath` 或
 TDB 路径，它们也优先于 `dataPath` 派生的路径。`:memory:` 仍可作为明确的测试用
 SQLite 路径。
@@ -43,66 +63,69 @@ SQLite 路径。
 
 ## 嵌入和向量存储
 
-| 配置项              |                          默认值 | 用途                                                                                                |
-| ------------------- | ------------------------------: | --------------------------------------------------------------------------------------------------- |
-| `apiUrl`            |                            `""` | OpenAI 兼容接口的基础地址                                                                           |
-| `apiKey`            |                            `""` | 由调用方传入的 Provider 密钥                                                                        |
-| `model`             | `"google/gemini-embedding-001"` | 主模型名                                                                                            |
-| `modelSig`          |  `"gemini-embedding-2-preview"` | 用于缓存/配置识别的模型签名                                                                         |
-| `fallbackModels`    |                            `[]` | OpenAI 兼容接口的备用模型列表                                                                       |
-| `maxBatchItems`     |                            `32` | 主嵌入每批条数                                                                                      |
-| `maxToken`          |                          `8000` | 单条文本 token 上限                                                                                 |
-| `concurrency`       |                             `5` | 主嵌入并行任务数                                                                                    |
-| `dimension`         |                          `3072` | 主向量维度                                                                                          |
-| `tagIndexCapacity`  |                         `50000` | 标签索引初始容量                                                                                    |
-| `indexSaveDelay`    |                        `120000` | 主索引延迟保存时间，单位毫秒                                                                        |
-| `tagIndexSaveDelay` |                        `300000` | 标签索引延迟保存时间，单位毫秒                                                                      |
+| 配置项              |                          默认值 | 用途                                                                                                             |
+| ------------------- | ------------------------------: | ---------------------------------------------------------------------------------------------------------------- |
+| `apiUrl`            |                            `""` | OpenAI 兼容接口的基础地址                                                                                        |
+| `apiKey`            |                            `""` | 由调用方传入的 Provider 密钥                                                                                     |
+| `model`             | `"google/gemini-embedding-001"` | 主模型名                                                                                                         |
+| `modelSig`          |  `"gemini-embedding-2-preview"` | 用于缓存/配置识别的模型签名                                                                                      |
+| `fallbackModels`    |                            `[]` | OpenAI 兼容接口的备用模型列表                                                                                    |
+| `maxBatchItems`     |                            `32` | 主嵌入每批条数                                                                                                   |
+| `maxToken`          |                          `8000` | 单条文本 token 上限                                                                                              |
+| `concurrency`       |                             `5` | 主嵌入并行任务数                                                                                                 |
+| `dimension`         |                          `3072` | 主向量维度                                                                                                       |
+| `tagIndexCapacity`  |                         `50000` | 标签索引初始容量                                                                                                 |
+| `indexSaveDelay`    |                        `120000` | 主索引延迟保存时间，单位毫秒                                                                                     |
+| `tagIndexSaveDelay` |                        `300000` | 标签索引延迟保存时间，单位毫秒                                                                                   |
 | `persistTagIndex`   |                         `false` | `true` 保存并恢复 `global_tags`；`false` 不落盘，clean recovery 从 SQLite authority 局部重建内存索引并删除旧文件 |
-| `indexLoadEnabled`  |                            可选 | 兼容配置；`DEFAULT_CONFIG` 未提供默认值                                                             |
+| `indexLoadEnabled`  |                            可选 | 兼容配置；`DEFAULT_CONFIG` 未提供默认值                                                                          |
 
 Provider 的 `getDimension()` 必须等于 `config.dimension`。更换模型或维度后旧向量
 空间不能直接复用，需要重新摄入；详见 [EMBEDDING.md](EMBEDDING.md)。
 
 ## SQLite 和摄入
 
-| 配置项                |  默认值 | 用途                          |
-| --------------------- | ------: | ----------------------------- |
-| `busyTimeout`         | `10000` | SQLite 忙等待时间，单位毫秒   |
-| `busyRetryDelay`      |   `100` | 重试间隔，单位毫秒            |
-| `chunkMaxTokens`      |   `600` | 单块最大 token 数             |
-| `chunkOverlapTokens`  |    `96` | 相邻块重叠 token 数           |
-| `maxTokens`           |   `600` | `chunkMaxTokens` 兼容别名     |
-| `overlapTokens`       |    `96` | `chunkOverlapTokens` 兼容别名 |
-| `tagBlacklist`        |    `[]` | 完全匹配的标签黑名单          |
-| `tagBlacklistSuper`   |    `[]` | 超集/正则标签黑名单           |
-| `maxTagsPerFile`      |    `50` | 每个文件最多标签数            |
-| `cooccurrenceRebuild` | `false` | 摄入时是否重建标签共现关系    |
-| `checkpoint`          | `false` | 是否写摄入检查点              |
-| `checkpointInterval`  |     `1` | 每多少个文件写一次检查点      |
+| 配置项                 |  默认值 | 用途                                  |
+| ---------------------- | ------: | ------------------------------------- |
+| `busyTimeout`          | `10000` | SQLite 忙等待时间，单位毫秒           |
+| `busyRetryDelay`       |   `100` | 重试间隔，单位毫秒                    |
+| `chunkMaxTokens`       |   `600` | 单块最大 token 数                     |
+| `chunkOverlapTokens`   |    `96` | 相邻块重叠 token 数                   |
+| `maxTokens`            |   `600` | `chunkMaxTokens` 兼容别名             |
+| `overlapTokens`        |    `96` | `chunkOverlapTokens` 兼容别名         |
+| `tagBlacklist`         |    `[]` | 完全匹配的标签黑名单                  |
+| `tagBlacklistSuper`    |    `[]` | 超集/正则标签黑名单                   |
+| `maxTagsPerFile`       |    `50` | 每个文件最多标签数                    |
+| `cooccurrenceRebuild`  | `false` | 摄入时是否重建标签共现关系            |
+| `relationGraphEnabled` |  `true` | 是否从不可变源快照维护显式/派生关系图 |
+| `checkpoint`           | `false` | 是否写摄入检查点                      |
+| `checkpointInterval`   |     `1` | 每多少个文件写一次检查点              |
 
-文件系统 adapter 只对大小写不敏感的 `.mdx` 解析 YAML front matter。`tags` 会进入
-现有标签清理流程，其他符合 JSON 的字段会成为文档 metadata；front matter 会在分块
-和嵌入前移除。`.md` 和逻辑文档保留原始内容，不在 `FileReaderStage` 中解析
-front matter。
+摄入层识别任意文本源开头的 YAML front matter；推荐使用 `.mdx`，但并不执行其中的
+JSX、`import` 或任意 MDX 代码。`tags` 会进入现有标签清理流程，其他字段会成为文档
+metadata；front matter 会在分块和嵌入前移除。用户源文件仍保持不可变，关系图等派生
+数据写入 SQLite/运行状态。没有 front matter 的 `.md` 和逻辑文档按普通正文处理。
 
 ## 检索开关
 
-| 配置项                   |  默认值 | 用途                   |
-| ------------------------ | ------: | ---------------------- |
-| `epaProjectionEnabled`   |  `true` | EPA 语义投影           |
-| `residualPyramidEnabled` |  `true` | 残差金字塔信号         |
-| `tagMemoV9Enabled`       | `false` | TagMemo V9 浪潮传播    |
-| `tagMemoV10Enabled`      | `false` | TagMemo V10 缩放场传播 |
-| `riverMemoEnabled`       | `false` | RiverMemo 状态重排     |
-| `tagExpansionEnabled`    | `false` | 标签驱动候选扩展       |
-| `vectorReshapeEnabled`   | `false` | 向量重塑阶段           |
-| `geodesicRerankEnabled`  | `false` | 测地线重排             |
-| `associatorEnabled`      | `false` | 标签共现/向量关联      |
-| `externalRerankEnabled`  | `false` | 外部重排阶段           |
-| `useLLMRerank`           | `false` | 外部重排兼容别名       |
-| `timeDecayEnabled`       | `false` | 时间衰减阶段           |
-| `truncateEnabled`        | `false` | 内容截断阶段           |
-| `expansionEnabled`       | `false` | 同文件扩展阶段         |
+| 配置项                         |  默认值 | 用途                               |
+| ------------------------------ | ------: | ---------------------------------- |
+| `epaProjectionEnabled`         |  `true` | EPA 语义投影                       |
+| `residualPyramidEnabled`       |  `true` | 残差金字塔信号                     |
+| `tagMemoV9Enabled`             | `false` | TagMemo V9 浪潮传播                |
+| `tagMemoV10Enabled`            | `false` | TagMemo V10 缩放场传播             |
+| `riverMemoEnabled`             | `false` | RiverMemo 状态重排                 |
+| `topologyV3Enabled`            | `false` | RiverMemo Topology V3 原生关系重排 |
+| `tagExpansionEnabled`          | `false` | 标签驱动候选扩展                   |
+| `vectorReshapeEnabled`         | `false` | 向量重塑阶段                       |
+| `geodesicRerankEnabled`        | `false` | 测地线重排                         |
+| `associatorEnabled`            | `false` | 标签共现/向量关联                  |
+| `externalRerankEnabled`        | `false` | 外部重排阶段                       |
+| `useLLMRerank`                 | `false` | 外部重排兼容别名                   |
+| `timeDecayEnabled`             | `false` | 时间衰减阶段                       |
+| `truncateEnabled`              | `false` | 内容截断阶段                       |
+| `expansionEnabled`             | `false` | 同文件扩展阶段                     |
+| `fullDocumentExpansionEnabled` | `false` | 命中块所在父文件全文扩展           |
 
 其他相关默认值：`geodesicAlpha: 0.3`、`geodesicMinGeoSamples: 4`、
 `epaClusterCount: 64`、`epaMaxBasisDim: 64`、`epaPerCandidateAnalysis: false`、

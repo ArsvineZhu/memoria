@@ -71,8 +71,12 @@ import DashScopeEmbeddingProvider from 'memoria/providers/dashscope';
 const require = createRequire(import.meta.url);
 const cjs = require('memoria');
 const esm = await import('memoria');
-assert.equal(Object.keys(cjs).length, 41);
 assert.deepEqual(Object.keys(cjs).sort(), Object.keys(esm).sort());
+assert.ok(Object.keys(cjs).length >= 52);
+for (const symbol of ['QueryBuilder', 'mergeRetrievalPlan']) {
+  assert.equal(typeof cjs[symbol], 'function');
+  assert.equal(typeof esm[symbol], 'function');
+}
 assert.equal(typeof createMemoryEngine, 'function');
 assert.equal(typeof TDBEngine, 'function');
 assert.equal(typeof cjs.createMemoryEngine, 'function');

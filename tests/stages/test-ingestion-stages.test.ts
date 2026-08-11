@@ -14,6 +14,12 @@ import TagExtractorStage from "../../src/stages/ingestion/tag-extractor.js";
 import ChunkerStage from "../../src/stages/ingestion/text-chunker.js";
 import ChunkEmbedderStage from "../../src/stages/ingestion/chunk-embedder.js";
 import TagEmbedderStage from "../../src/stages/ingestion/tag-embedder.js";
+import FileDeleterStage from "../../src/stages/ingestion/file-deleter.js";
+import {
+  extractMdxRelations,
+  RelationGraphStore,
+  relationDocumentKey,
+} from "../../src/retrieval/relation-graph.js";
 import { MemoriaError } from "../../src/errors.js";
 import type {
   EmbeddingProviderContract,
@@ -178,7 +184,7 @@ test("FileReaderStage falls back to basename/root when rootPath is missing", asy
   assert.strictEqual(out.diaryName, "Root");
 });
 
-test("FileReaderStage preserves MDX-looking content as literal text", async () => {
+test("FileReaderStage parses MDX front matter and keeps JSX/import literal", async () => {
   const raw =
     "---\n" +
     "title: Demo note\n" +
@@ -201,9 +207,112 @@ test("FileReaderStage preserves MDX-looking content as literal text", async () =
     makeCtx({ rootPath: "C:\\virtual" }),
   );
 
-  assert.equal(out.content, raw);
-  assert.equal(out.checksum, md5(raw));
-  assert.equal(out.documentMetadata, undefined);
+  assert.equal(out.content, "Body text\n\nimport Demo from './Demo.tsx';");
+  assert.equal(out.checksum, md5(out.content));
+  assert.deepEqual(out.documentMetadata, {
+    title: "Demo note",
+    tags: ["alpha", "beta"],
+    context: { project: "memoria" },
+  });
+});
+
+test("FileReaderStage preserves an adapter-provided raw source for relation spans", async () => {
+  const raw = "---\ntitle: Source\n---\nBody [link](./other.mdx)";
+  const out = await new FileReaderStage().process(
+    {
+      path: "C:\\virtual\\journal\\source.mdx",
+      relPath: "journal/source.mdx",
+      content: "Body [link](./other.mdx)",
+      sourceContent: raw,
+      mtime: 100,
+      size: Buffer.byteLength(raw),
+    },
+    makeCtx({ rootPath: "C:\\virtual" }),
+  );
+
+  assert.equal(out.content, "Body [link](./other.mdx)");
+  assert.equal(out.sourceContent, raw);
+});
+
+test("FileDeleterStage stales source relations but preserves their audit history", async () => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const fileId = await metadataStore.upsertFile({
+    path: "journal/source.mdx",
+    diaryName: "journal",
+    checksum: "checksum",
+    mtime: 100,
+    size: 20,
+    revision: "rev-1",
+  });
+  assert.ok(fileId !== null);
+  await metadataStore.insertChunks(fileId as number, [
+    { chunkIndex: 0, content: "source", vector: null },
+  ]);
+
+  const from = relationDocumentKey({ path: "journal/source.mdx" });
+  await new RelationGraphStore(metadataStore).replaceSourceRelations(
+    from,
+    extractMdxRelations(
+      "See [target](./target.mdx)",
+      "journal/source.mdx",
+      from,
+      "rev-1",
+    ),
+  );
+  const deleted = await new FileDeleterStage().process(
+    { relPath: "journal/source.mdx" },
+    makeCtx({}, { metadataStore }),
+  );
+
+  assert.equal(deleted.deleted, true);
+  const history = await metadataStore.listRelations({ includeInactive: true });
+  assert.equal(history.length, 1);
+  assert.equal(history[0]?.status, "stale");
+  assert.equal(history[0]?.active, false);
+  assert.deepEqual(await metadataStore.listRelations(), []);
+  metadataStore.close();
+});
+
+test("FileReaderStage treats front-matter-only changes as metadata/tag updates", async () => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: 3 });
+  const stage = new FileReaderStage();
+  const ctx = makeCtx({ rootPath: "C:\\virtual" }, { metadataStore });
+  const firstRaw = "---\ntitle: First\ntags: [alpha]\n---\nBody";
+  const first = await stage.process(
+    {
+      path: "C:\\virtual\\journal\\note.mdx",
+      relPath: "journal/note.mdx",
+      content: firstRaw,
+      mtime: 100,
+      size: Buffer.byteLength(firstRaw),
+    },
+    ctx,
+  );
+  await metadataStore.upsertFile({
+    path: first.relPath,
+    diaryName: first.diaryName,
+    checksum: first.checksum,
+    mtime: first.mtime,
+    size: first.size,
+    metadataJson: JSON.stringify(first.documentMetadata),
+  });
+
+  const secondRaw = "---\ntitle: Second\ntags: [beta]\n---\nBody";
+  const second = await stage.process(
+    {
+      path: "C:\\virtual\\journal\\note.mdx",
+      relPath: "journal/note.mdx",
+      content: secondRaw,
+      mtime: 101,
+      size: Buffer.byteLength(secondRaw),
+    },
+    ctx,
+  );
+
+  assert.equal(second.content, "Body");
+  assert.equal(second.checksum, first.checksum);
+  assert.equal(second.needsEmbedding, false);
+  assert.equal(second.needsMetadataWrite, true);
 });
 
 test("FileReaderStage reuses embeddings when caller-provided metadata changes", async () => {
@@ -257,23 +366,25 @@ test("FileReaderStage reuses embeddings when caller-provided metadata changes", 
   metadataStore.close();
 });
 
-test("FileReaderStage leaves malformed front matter literal for logical documents", async () => {
+test("FileReaderStage rejects malformed front matter with the source identity", async () => {
   const content = "---\ntitle: [unterminated\n---\nBody";
-  const out = await new FileReaderStage().process(
-    {
-      path: "logical/document",
-      relPath: "logical/document",
-      content,
-      mtime: 100,
-      size: Buffer.byteLength(content),
-    },
-    makeCtx({ rootPath: "C:\\virtual" }),
+  await assert.rejects(
+    () =>
+      new FileReaderStage().process(
+        {
+          path: "logical/document",
+          relPath: "logical/document",
+          content,
+          mtime: 100,
+          size: Buffer.byteLength(content),
+        },
+        makeCtx({ rootPath: "C:\\virtual" }),
+      ),
+    /logical[\\/]document/,
   );
-  assert.equal(out.content, content);
-  assert.equal(out.checksum, md5(content));
 });
 
-test("FileReaderStage treats logical MDX-looking content as literal text", async () => {
+test("FileReaderStage parses logical MDX content as structured text", async () => {
   const raw = "---\ntitle: literal\n---\nBody stays untouched";
   const out = await new FileReaderStage().process(
     {
@@ -286,9 +397,9 @@ test("FileReaderStage treats logical MDX-looking content as literal text", async
     makeCtx({ rootPath: "C:\\virtual" }),
   );
 
-  assert.equal(out.content, raw);
-  assert.equal(out.checksum, md5(raw));
-  assert.equal(out.documentMetadata, undefined);
+  assert.equal(out.content, "Body stays untouched");
+  assert.equal(out.checksum, md5(out.content));
+  assert.deepEqual(out.documentMetadata, { title: "literal" });
 });
 
 // ── TagExtractorStage ──────────────────────────────────────────

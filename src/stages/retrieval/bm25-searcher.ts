@@ -124,6 +124,10 @@ class BM25SearcherStage extends Stage {
         { retryable: true },
       );
     }
+    if (info.allowedChunkIds instanceof Set) {
+      const allowed = info.allowedChunkIds as Set<unknown>;
+      chunks = chunks.filter((chunk) => allowed.has(Number(chunk.id)));
+    }
     if (!chunks || chunks.length === 0) {
       return { ...info, bm25Results: [] };
     }

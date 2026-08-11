@@ -8,6 +8,9 @@ import type {
   MetadataStoreContract,
   PipelineContextOptions,
   PipelineContext,
+  QueryBuilder,
+  RetrievalPlanInput,
+  SearchOptions,
   SearchEnvelope,
   Stage,
   VectorStore,
@@ -30,7 +33,18 @@ const provider: EmbeddingProvider = {
 const options: MemoryEngineOptions = {
   config,
   embeddingProvider: provider,
+  defaultRetrievalPlan: {
+    strategy: "field",
+    tagMemo: { plus: true },
+  } satisfies RetrievalPlanInput,
 };
+
+const searchOptions: SearchOptions = {
+  retrievalPlan: { strategy: "topology" },
+  inheritRetrievalDefaults: true,
+};
+
+const builder: QueryBuilder | null = null;
 
 const document: MemoryDocumentInput = {
   id: "public-type-test",
@@ -138,3 +152,5 @@ void compatibleMetadataStore;
 void compatibilityContext;
 void compatibilityConfig;
 void reranker;
+void searchOptions;
+void builder;

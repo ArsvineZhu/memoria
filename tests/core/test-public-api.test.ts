@@ -31,6 +31,18 @@ const EXPECTED_EXPORTS = [
   "EPA",
   "ResidualPyramid",
   "ResultDeduplicator",
+  "normalizeRetrievalPlan",
+  "applyRetrievalPlan",
+  "mergeRetrievalPlan",
+  "planRetrieval",
+  "planRetrievalAsync",
+  "chooseStrategy",
+  "readGraphReadiness",
+  "profileNaturalLanguageQuery",
+  "extractMdxRelations",
+  "relationDocumentKey",
+  "RelationGraphStore",
+  "QueryBuilder",
   "dotProduct",
   "magnitude",
   "normalize",
@@ -52,6 +64,7 @@ const EXPECTED_EXPORTS = [
   "encodeVectorBlob",
   "prepareTextForEmbedding",
   "extractTags",
+  "parseMdxDocument",
 ] as const;
 
 test("compiled ESM package preserves the public export surface", async () => {
@@ -78,7 +91,7 @@ test("compiled ESM package preserves the public export surface", async () => {
   assert.deepStrictEqual(Object.keys(cjsApi), [...EXPECTED_EXPORTS]);
   assert.deepStrictEqual(Object.keys(esmApi), [...EXPECTED_EXPORTS].sort());
   assert.deepStrictEqual(Object.keys(cjsApi).sort(), Object.keys(esmApi));
-  assert.strictEqual(Object.keys(cjsApi).length, 41);
+  assert.strictEqual(Object.keys(cjsApi).length, EXPECTED_EXPORTS.length);
   assert.equal(typeof esmApi.TDBEngine, "function");
   assert.strictEqual(cjsApi.TDBEngine, esmApi.TDBEngine);
 });

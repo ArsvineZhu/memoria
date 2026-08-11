@@ -44,6 +44,18 @@ safeLibraryName
 EPA
 ResidualPyramid
 ResultDeduplicator
+normalizeRetrievalPlan
+applyRetrievalPlan
+mergeRetrievalPlan
+planRetrieval
+planRetrievalAsync
+chooseStrategy
+readGraphReadiness
+profileNaturalLanguageQuery
+extractMdxRelations
+relationDocumentKey
+RelationGraphStore
+QueryBuilder
 dotProduct
 magnitude
 normalize
@@ -65,6 +77,7 @@ decodeVectorBlob
 encodeVectorBlob
 prepareTextForEmbedding
 extractTags
+parseMdxDocument
 ```
 
 <!-- runtime-exports:end -->
@@ -98,10 +111,39 @@ RiverMemoData
 DedupeStats
 TruncationStats
 ExpansionStats
+RetrievalPlan
+RetrievalPlanInput
+RetrievalStrategy
+QueryPlanningOptions
+QueryProfile
+QueryProfileSignals
+RetrievalDecision
+RetrievalExplanation
+RetrievalStrategySource
+SearchOptions
+QueryInterpreter
+GraphReadiness
+StrategyDecision
+MemoryRelation
+RelatedChunk
+RelationGraphSnapshot
+RelationKind
+RelationOrigin
+RelationStatus
+MdxDocument
+MdxFrontmatter
 ```
 
 完整的开关、依赖、跳过条件和 Demo 入口由
 [检索能力矩阵](RETRIEVAL_FEATURES.md) 维护。
+
+`RetrievalPlan` 是固定检索策略的类型化入口；`RetrievalPlanInput` 是可部分填写的输入，
+用于引擎默认计划、单查询覆盖和链式 Builder。`strategy` 可取 `auto`、`semantic`、
+`field`、`topology`；`tagMemo` 表达 TagMemo/TagMemo+，`riverMemo` 表达 Topology V3，
+`externalRerank` 表达旧 VCP 的 Rerank/Rerank+（其中 `mode: "rrf"` 是 `Rerank+`），`filters` 表达硬 scope，`expansion` 表达
+关系、同文档/父文件全文和 Associate，`postprocess` 表达时间衰减、去重、分数下限、数量和正文截断。
+查询仍是普通字符串；`planRetrieval`/`planRetrievalAsync` 返回可解释的
+`RetrievalDecision`，`readGraphReadiness` 只读报告关系图和原生 artifact 是否可用。
 
 ## 1. Core
 
@@ -113,16 +155,16 @@ ExpansionStats
 
 ## 2. 引擎工厂 + 配置加载
 
-| 符号                                                | 签名                                                                                                                                                                                         | 说明                                                            |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `createMemoryEngine(options?)`                      | `options: {config?, dbPath?, ragParamsPath?, ragParams?, embeddingProvider?, vectorStore?, metadataStore?, ctx?, ingestOptions?, deleteOptions?, searchOptions?, onReady?}` → `MemoryEngine` | 工厂：构建（不打开）引擎                                        |
-| `MemoryEngine`                                      | `new MemoryEngine(options)`                                                                                                                                                                  | 引擎类，生命周期方法见下                                        |
-| `DEFAULT_CONFIG`                                    | 对象                                                                                                                                                                                         | 全量默认配置（字段表见 [CONFIGURATION.md](./CONFIGURATION.md)） |
-| `mergeConfig(userConfig)`                           | `(object\|null\|undefined) → object`                                                                                                                                                         | 默认合并：一层深合并对象、整替换数组/标量、`undefined` 不覆盖   |
-| `loadRagParams({path?, overrides?, defaults?})`     | `→ Promise<object>`                                                                                                                                                                          | 从 rag_params.json 异步加载（缺失文件 → `{}`；根必须为对象）    |
-| `loadRagParamsSync({path?, overrides?, defaults?})` | `→ object`                                                                                                                                                                                   | 同步变体；文件不存在则跳过                                      |
-| `RAG_PARAMS_DEFAULTS`                               | `{}`                                                                                                                                                                                         | 默认装载基                                                      |
-| `KnowledgeBaseAdapter`                              | `new KnowledgeBaseAdapter({engine})` （engine 必填，否则 TypeError）                                                                                                                         | KBM 兼容层；方法面见下方清单和 [FUNCTIONS.md](FUNCTIONS.md) §1  |
+| 符号                                                | 签名                                                                                                                                                                                                                | 说明                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `createMemoryEngine(options?)`                      | `options: {config?, defaultRetrievalPlan?, dbPath?, ragParamsPath?, ragParams?, embeddingProvider?, vectorStore?, metadataStore?, ctx?, ingestOptions?, deleteOptions?, searchOptions?, onReady?}` → `MemoryEngine` | 工厂：构建（不打开）引擎；`defaultRetrievalPlan` 在构造时规范化并固定 |
+| `MemoryEngine`                                      | `new MemoryEngine(options)`                                                                                                                                                                                         | 引擎类，生命周期方法见下                                              |
+| `DEFAULT_CONFIG`                                    | 对象                                                                                                                                                                                                                | 全量默认配置（字段表见 [CONFIGURATION.md](./CONFIGURATION.md)）       |
+| `mergeConfig(userConfig)`                           | `(object\|null\|undefined) → object`                                                                                                                                                                                | 默认合并：一层深合并对象、整替换数组/标量、`undefined` 不覆盖         |
+| `loadRagParams({path?, overrides?, defaults?})`     | `→ Promise<object>`                                                                                                                                                                                                 | 从 rag_params.json 异步加载（缺失文件 → `{}`；根必须为对象）          |
+| `loadRagParamsSync({path?, overrides?, defaults?})` | `→ object`                                                                                                                                                                                                          | 同步变体；文件不存在则跳过                                            |
+| `RAG_PARAMS_DEFAULTS`                               | `{}`                                                                                                                                                                                                                | 默认装载基                                                            |
+| `KnowledgeBaseAdapter`                              | `new KnowledgeBaseAdapter({engine})` （engine 必填，否则 TypeError）                                                                                                                                                | KBM 兼容层；方法面见下方清单和 [FUNCTIONS.md](FUNCTIONS.md) §1        |
 
 **MemoryEngine 实例方法**（类型与实现摘自 `src/engine.ts`）：
 
@@ -132,6 +174,8 @@ ExpansionStats
 - `remove(documentId)` — Promise<`MemoryDocumentDeleteResult>`；按稳定逻辑身份删除，未知身份幂等
 - `flushBatch(files)` | `flush(files)` — Promise<Array<object>>（每文件信封）
 - `search(query, options?)` — Promise<object>（`{ ..., results, resultCount }`）
+- `query(query)` — `QueryBuilder`；创建不可变的分组链式查询
+- `explain(query, options?)` — Promise<`RetrievalExplanation`>；只解析默认值、覆盖和 readiness，不执行召回或写入
 - `handleDelete(input)` | `deleteFile(filePath)` — Promise<object>（`{ deleted, fileId, removedChunkIds }`）
 - `getStats()` — Promise<{files, chunks, tags, diaries, lastIndexed, vectorStats, healthy, initialized}>
 - `close()` — Promise<void>；幂等
@@ -139,6 +183,62 @@ ExpansionStats
 `MemoryDocumentInput` 至少包含 `{ id: string, content: string }`，可选 `revision`、
 `source` 与 JSON-safe `metadata`。文件系统入口位于 `memoria/adapters/filesystem`，
 错误类型位于 `memoria/errors`；文件适配器位于 `memoria/adapters/filesystem`，两者都不增加根入口运行时导出。
+
+### 默认计划、查询覆盖与链式 Builder
+
+`MemoryEngineOptions.defaultRetrievalPlan` 只作用于 MemoryEngine 主检索链及其
+`KnowledgeBaseAdapter.search(string, options?)` 文本入口，不进入 `TDBEngine`。引擎构造时
+会复制并规范化它；之后没有 setter。未配置时规范化值为 `strategy: "auto"`，同时保留现有
+legacy config 和自动规划行为。
+
+```ts
+const engine = createMemoryEngine({
+  defaultRetrievalPlan: {
+    strategy: "field",
+    tagMemo: { plus: true, version: "v10" },
+    postprocess: { dedupe: true, timeDecay: true },
+  },
+  embeddingProvider,
+});
+
+await engine.search("量子实验"); // 使用引擎默认 field
+await engine.search("这份记录的来源", {
+  retrievalPlan: { strategy: "topology", riverMemo: { enabled: true, rerank: true } },
+});
+await engine.search("只做自动语义选择", {
+  inheritRetrievalDefaults: false,
+  retrievalPlan: { strategy: "auto" },
+});
+```
+
+查询覆盖按字段继承：核心 `strategy` 是替换式的；`filters`、`expansion`、
+`externalRerank`、`postprocess` 按字段合并；数组和 `metadata` 整体替换，`spaces: []`
+保持 fail-closed。优先级为“单查询覆盖 > Builder 覆盖 > 引擎默认 > 库内置默认”。
+传入 `inheritRetrievalDefaults: false` 可完全隔离引擎默认能力。
+
+`engine.query(query)` 是普通 `engine.search()` 的不可变语法糖，不复制执行链：
+
+```ts
+const result = await engine
+  .query("实验记录和设计方案之间的来源关系")
+  .topology()
+  .riverMemo({ version: "v3" })
+  .rerank((r) => r.rrf({ alpha: 0.35 }))
+  .where((s) => s.space("research").document("experiment-2026"))
+  .expand((e) => e.related({ maxHops: 2 }).fullDocument().associate())
+  .postprocess((p) => p.timeDecay().dedupe().limit(8).maxContentLength(3000))
+  .run();
+```
+
+`tagMemoPlus()` 是 `field + TagMemo+` 的快捷方式，`riverMemoRerankPlus()` 是
+`topology + RiverMemo V3 + external RRF` 的快捷方式。`toPlan()` 返回合并后的规范化计划；
+`withoutDefaults()` 和 `withDefaults()` 控制继承。Builder 每次调用都返回新对象，可安全
+从同一查询分支；冲突的核心策略不会静默采用最后一次调用，而是在 `toPlan()`/`run()` 抛出
+`TypeError`。
+
+结果 `retrievalTrace` 和 `retrievalDecision` 会记录 `defaultPlan`、`requestedPlan`、
+最终 `plan`、`strategySource`（`engine-default` / `query-override` / `auto`）、
+`defaultsInherited`、`queryOverrideApplied`、画像、决策、阶段顺序和降级原因。
 
 **子路径导出**：
 
@@ -172,6 +272,12 @@ authority discovery → `Root` compatibility fallback。显式空数组表示空
 `pyramid`、`associatorStats`、`dedupeStats`、`truncationStats`、`expansionStats` 以及
 `reranked`/`rerankSkipped`/`rerankError` 等诊断字段；字段可能因开关或依赖未满足而
 缺省。详见 [检索能力矩阵](RETRIEVAL_FEATURES.md)。
+
+兼容层的 `applyTagBoostAsync`、`rerankWithTagMemoAsync` 和
+`rerankWithRiverMemoAsync` 保留旧调用形状，但内部复用 MemoRuntime、TagMemo
+V9/V10、geodesic 与 Topology V3 阶段；原生依赖或图数据不可用时返回原候选并在
+`meta` 中报告 `available: false`，不会伪造增强结果。新代码优先使用上面的
+`engine.search(query, { retrievalPlan })`。
 
 **KnowledgeBaseAdapter 方法面**：`initialize / shutdown / flush / flushBatch /
 handleDelete / deleteFile / getStats / close / removeDocument / search /

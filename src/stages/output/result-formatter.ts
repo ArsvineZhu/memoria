@@ -60,7 +60,9 @@ function parseRecord(value: string | null | undefined): UnknownRecord | undefine
  * Missing fields are hydrated from ctx.metadataStore via getChunkById /
  * getFileByChunkId / getFileTags. Candidates that already carry complete
  * field values pass through unharmed. TagMemo / EPA / pyramid traces in the
- * input are preserved on the output envelope.
+ * input are preserved on the output envelope. When truncation is enabled,
+ * final hydrated content is capped here as well, so vector-only candidates
+ * cannot bypass maxContentLength.
  *
  * Input: { query, mergedCandidates, tagMemo?, pyramid?, epa? }
  * Output: { ..., results: [...], resultCount }
@@ -88,7 +90,8 @@ class ResultFormatterStage extends Stage {
 
     const results: SearchResult[] = [];
     for (const candidate of candidates) {
-      results.push(await this._formatCandidate(candidate, ctx, store));
+      const formatted = await this._formatCandidate(candidate, ctx, store);
+      results.push(this._applyContentCap(formatted, ctx));
     }
     results.sort((a, b) => b.score - a.score || Number(a.id) - Number(b.id));
 
@@ -214,6 +217,26 @@ class ResultFormatterStage extends Stage {
       rerankScore: Number.isFinite(Number(outputCandidate?.rerankScore))
         ? Number(outputCandidate.rerankScore)
         : undefined,
+    };
+  }
+
+  _applyContentCap(result: SearchResult, ctx: PipelineContextLike): SearchResult {
+    if (ctx.config?.truncateEnabled !== true) return result;
+    const configured = Number(ctx.config.maxContentLength);
+    if (!Number.isFinite(configured) || configured <= 0) return result;
+    const limit = Math.floor(configured);
+    const content = String(result.content ?? "");
+    const text = typeof result.text === "string" ? result.text : undefined;
+    const suffix = ctx.config.truncateEllipsis === true ? "…" : "";
+    const cappedContent =
+      content.length > limit ? content.slice(0, limit) + suffix : content;
+    const cappedText =
+      text !== undefined && text.length > limit ? text.slice(0, limit) + suffix : text;
+    if (cappedContent === content && cappedText === text) return result;
+    return {
+      ...result,
+      content: cappedContent,
+      ...(cappedText !== undefined ? { text: cappedText } : {}),
     };
   }
 }

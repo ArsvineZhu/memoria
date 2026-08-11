@@ -8,6 +8,10 @@ import * as path from "node:path";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
+import {
+  RelationGraphStore,
+  relationDocumentKey,
+} from "../../retrieval/relation-graph.js";
 
 /**
  * Removes a single file from the knowledge base: file row, chunk rows and
@@ -70,6 +74,15 @@ class FileDeleterStage extends Stage {
     const diaryName = row.diary_name || row.diaryName || "Root";
     const oldChunks = await metadataStore.getChunksByFileId(row.id);
     const removedChunkIds = oldChunks.map((c) => c.id);
+
+    if (
+      typeof metadataStore.markExplicitRelationsStale === "function" ||
+      typeof metadataStore.getKv === "function"
+    ) {
+      await new RelationGraphStore(metadataStore).markSourceRelationsStale(
+        relationDocumentKey(row),
+      );
+    }
 
     await metadataStore.deleteFile(row.id);
 

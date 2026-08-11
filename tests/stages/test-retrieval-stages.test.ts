@@ -18,6 +18,8 @@ import VectorSearcherStage from "../../src/stages/retrieval/vector-searcher.js";
 import BM25SearcherStage from "../../src/stages/retrieval/bm25-searcher.js";
 import CandidateMergerStage from "../../src/stages/retrieval/candidate-merger.js";
 import SearchScopeResolverStage from "../../src/stages/retrieval/search-scope-resolver.js";
+import RetrievalFilterResolverStage from "../../src/stages/retrieval/retrieval-filter.js";
+import CandidateFilterStage from "../../src/stages/retrieval/candidate-filter.js";
 
 const dim = 4;
 
@@ -99,6 +101,95 @@ test("SearchScopeResolverStage records authority and fallback scope sources", as
   assert.deepEqual(fallback.resolvedIndexNames, ["Root"]);
   assert.equal(fallback.scopeSource, "fallback");
   assert.equal(fallback.scopeWasExplicit, false);
+});
+
+test("space-only filters remain fail-closed after related expansion", async () => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const fileA = (await metadataStore.upsertFile({
+    path: "a/note.md",
+    diaryName: "A",
+    checksum: "a",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const fileB = (await metadataStore.upsertFile({
+    path: "b/note.md",
+    diaryName: "B",
+    checksum: "b",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const [chunkA] = await metadataStore.insertChunks(fileA, [
+    { chunkIndex: 0, content: "A" },
+  ]);
+  const [chunkB] = await metadataStore.insertChunks(fileB, [
+    { chunkIndex: 0, content: "B" },
+  ]);
+  const ctx = new PipelineContext({ config: {}, metadataStore });
+
+  const resolved = await new RetrievalFilterResolverStage().process(
+    {
+      query: "q",
+      resolvedIndexNames: ["A"],
+      retrievalFilters: { spaces: ["A"] },
+    },
+    ctx,
+  );
+  assert.ok(resolved.allowedChunkIds instanceof Set);
+  assert.deepEqual([...resolved.allowedChunkIds], [chunkA]);
+
+  const filtered = await new CandidateFilterStage().process(
+    {
+      ...resolved,
+      mergedCandidates: [
+        { chunkId: chunkA, score: 1 },
+        { chunkId: chunkB, score: 0.99 },
+      ],
+    },
+    ctx,
+  );
+  assert.deepEqual(
+    filtered.mergedCandidates?.map((candidate) => candidate.chunkId),
+    [chunkA],
+  );
+  metadataStore.close();
+});
+
+test("retrieval filter spaces remain hard filters when caller scope is broader", async () => {
+  const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const fileA = (await metadataStore.upsertFile({
+    path: "a/note.md",
+    diaryName: "A",
+    checksum: "a",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const fileB = (await metadataStore.upsertFile({
+    path: "b/note.md",
+    diaryName: "B",
+    checksum: "b",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const [chunkA] = await metadataStore.insertChunks(fileA, [
+    { chunkIndex: 0, content: "A" },
+  ]);
+  const [chunkB] = await metadataStore.insertChunks(fileB, [
+    { chunkIndex: 0, content: "B" },
+  ]);
+
+  const resolved = await new RetrievalFilterResolverStage().process(
+    {
+      query: "q",
+      resolvedIndexNames: ["A", "B"],
+      retrievalFilters: { spaces: ["B"] },
+    },
+    new PipelineContext({ config: {}, metadataStore }),
+  );
+
+  assert.deepEqual([...(resolved.allowedChunkIds as Set<number>)], [chunkB]);
+  assert.ok(chunkA > 0);
+  metadataStore.close();
 });
 
 // ── Metadata store retrieval helpers (used by the stages) ────────────────

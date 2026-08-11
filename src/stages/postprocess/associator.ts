@@ -54,6 +54,8 @@ class AssociatorStage extends Stage {
     const resolvedScope = Array.isArray(info.resolvedIndexNames)
       ? new Set(info.resolvedIndexNames.map((name) => String(name)))
       : null;
+    const allowedChunkIds =
+      info.allowedChunkIds instanceof Set ? info.allowedChunkIds : null;
     const stats: AssociatorStats = {
       added: 0,
       fromTags: 0,
@@ -93,7 +95,14 @@ class AssociatorStage extends Stage {
     if (resolvedScope !== null) {
       const scopedCandidates: ChunkCandidate[] = [];
       for (const candidate of candidates) {
-        if (await this._chunkInScope(Number(candidate.chunkId), resolvedScope, ctx)) {
+        if (
+          await this._chunkInScope(
+            Number(candidate.chunkId),
+            resolvedScope,
+            allowedChunkIds,
+            ctx,
+          )
+        ) {
           scopedCandidates.push(candidate);
         }
       }
@@ -148,6 +157,7 @@ class AssociatorStage extends Stage {
           presentIds,
           config,
           stats,
+          allowedChunkIds,
         );
       }
     } else {
@@ -165,6 +175,7 @@ class AssociatorStage extends Stage {
             presentIds,
             config,
             stats,
+            allowedChunkIds,
           );
         }
       } else {
@@ -222,6 +233,7 @@ class AssociatorStage extends Stage {
     presentIds: Set<number>,
     config: MemoryConfigOverrides,
     stats: AssociatorStats,
+    allowedChunkIds: Set<unknown> | null,
   ): Promise<void> {
     const store = ctx.metadataStore!;
     const seedChunkId = Number(seed.chunkId);
@@ -315,7 +327,8 @@ class AssociatorStage extends Stage {
         for (const chunk of chunks) {
           const chunkId = Number(chunk && chunk.id);
           if (!Number.isFinite(chunkId) || presentIds.has(chunkId)) continue;
-          if (!(await this._chunkInScope(chunkId, scope, ctx))) continue;
+          if (!(await this._chunkInScope(chunkId, scope, allowedChunkIds, ctx)))
+            continue;
           this._mergeProposal(
             proposals,
             {
@@ -339,6 +352,7 @@ class AssociatorStage extends Stage {
     presentIds: Set<number>,
     config: MemoryConfigOverrides,
     stats: AssociatorStats,
+    allowedChunkIds: Set<unknown> | null,
   ): Promise<void> {
     const store = ctx.metadataStore;
     const vectorStore = ctx.vectorStore!;
@@ -399,7 +413,7 @@ class AssociatorStage extends Stage {
     const scopedHits: Array<[number, number]> = [];
     for (const [chunkId, hitScore] of hitsById) {
       if (chunkId === seedChunkId) continue;
-      if (!(await this._chunkInScope(chunkId, scope, ctx))) continue;
+      if (!(await this._chunkInScope(chunkId, scope, allowedChunkIds, ctx))) continue;
       scopedHits.push([chunkId, hitScore]);
     }
     const topHits = scopedHits
@@ -512,8 +526,12 @@ class AssociatorStage extends Stage {
   private async _chunkInScope(
     chunkId: number,
     scope: Set<string> | null,
+    allowedChunkIds: Set<unknown> | null,
     ctx: PipelineContextLike,
   ): Promise<boolean> {
+    if (allowedChunkIds) {
+      return allowedChunkIds.has(chunkId) || allowedChunkIds.has(String(chunkId));
+    }
     if (scope === null) return false;
     if (scope.size === 0) return false;
     const store = ctx.metadataStore;

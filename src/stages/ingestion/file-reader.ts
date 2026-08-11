@@ -6,6 +6,7 @@ import * as crypto from "node:crypto";
 
 import Stage from "../../core/stage.js";
 import { serializeDocumentJson } from "../../utils/logical-document.js";
+import { parseMdxDocument } from "../../utils/mdx-document.js";
 
 /**
  * Reads a file from disk (or accepts caller-supplied content),
@@ -116,7 +117,22 @@ class FileReaderStage extends Stage {
       throw new TypeError("FileReaderStage could not obtain text content");
     }
 
-    const documentMetadata = input.documentMetadata;
+    const sourceContent =
+      typeof input.sourceContent === "string" ? input.sourceContent : content;
+    let documentMetadata = input.documentMetadata;
+    try {
+      const parsed = parseMdxDocument(content);
+      if (parsed.hasFrontmatter) {
+        documentMetadata = {
+          ...(documentMetadata || {}),
+          ...parsed.frontmatter,
+        };
+        content = parsed.body;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to parse MDX front matter for ${filePath}: ${message}`);
+    }
 
     const checksum = crypto.createHash("md5").update(content).digest("hex");
 
@@ -148,6 +164,7 @@ class FileReaderStage extends Stage {
       relPath,
       diaryName,
       content,
+      sourceContent,
       checksum,
       mtime,
       size,

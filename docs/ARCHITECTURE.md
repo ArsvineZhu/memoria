@@ -22,7 +22,7 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
                             ▼                            ▼
               ┌────────────────────┐          ┌────────────────────┐
               │   IngestPipeline   │          │ SearchPipeline     │
-              │   摄入阶段串行执行  │          │ 检索与后处理按开关组合 │
+              │   摄入阶段串行执行  │          │ 查询规划→策略→后处理   │
               │   read→tags→chunk  │          │ 并在末端统一格式化     │
               │   →embed→write→vec │          └────────────────────┘
               └───────┬────┬──────┘
@@ -30,7 +30,7 @@ delete）由可插拔 `Stage` 串联，所有阶段共享一个 `PipelineContext
           ┌────────────────────┐
           │ SqliteMetadataStore│   VexusVectorStore（Rust N-API）
           │  files/chunks/tags │   data/memoria/indexes/
-          │  file_tags/kv_store│
+          │  file_tags/relations/kv │
           └────────────────────┘
 ```
 
@@ -104,15 +104,10 @@ close()             ── 幂等：等待 mutation queue → flushPendingSaves(
 3. **摄入时序（单文档/单文件）**：逻辑文档由引擎生成确定性内部路径并带上
    `documentId`、`revision`、source 与 metadata；文件快照由 `FilesystemIngestionAdapter`
    在交给引擎前读取并做稳定性检查；target 同时提供文件与逻辑两组方法时优先
-   `flushBatch/handleDelete`，从而保留 `relPath` 与 diary 语义。随后按源码注册顺序执行摄入阶段，最后
-   `CooccurrenceBuilderStage`（默认 no-op）。**双写盘次序**：内置
-   在交给引擎前读取并做稳定性检查。随后按源码注册顺序执行摄入阶段，最后
-   `CooccurrenceBuilderStage`（默认有意跳过派生图重建，开启
-   `cooccurrenceRebuild` 或由调用方注入 `ctx.tagGraph` 时才提供共现图）。**双写盘次序**：内置
-   在交给引擎前读取并做稳定性检查；target 同时提供文件与逻辑两组方法时优先
-   `flushBatch/handleDelete`，从而保留 `relPath` 与 diary 语义。随后按源码注册顺序执行摄入阶段，最后
-   `CooccurrenceBuilderStage`（默认有意跳过派生图重建，开启
-   `cooccurrenceRebuild` 或由调用方注入 `ctx.tagGraph` 时才提供共现图）。**双写盘次序**：内置
+   `flushBatch/handleDelete`，从而保留 `relPath` 与 diary 语义。随后按源码注册顺序执行摄入阶段；
+   `RelationGraphWriterStage` 从不可变源快照抽取显式链接并写入派生关系图，随后
+   `CooccurrenceBuilderStage`（默认有意跳过派生图重建，开启 `cooccurrenceRebuild` 或由调用方
+   注入 `ctx.tagGraph` 时才提供共现图）。**双写盘次序**：内置
    `SqliteMetadataStore` 的 `MetadataWriterStage` 通过单事务
    `replaceDocumentState()` 原子替换 file/chunks/tags/file_tags，并增加 metadata
    generation、置 `vector_dirty=1`；标签-only 更新使用
@@ -167,28 +162,30 @@ search(query, options)
   ├─[1] queryEmbedder        查询嵌入（含查询扩展 queryExpansion、epsilon 掩码）
   ├─[2] queryVectorBridge    发布主查询向量（内部阶段，无同名文件）
   ├─[3] searchScopeResolver   解析一次权威索引范围，供所有召回源复用
-  ├─[4] vectorSearcher       向量召回（日记索引逐源 KNN，按 topK 合并）
-  ├─[5] bm25Searcher         BM25 稀疏召回（同一解析范围，按 bm25PoolK 截断）
-  ├─[6] candidateMerger      融合：双路归一化到 [0,1] → 加权和（vectorWeight +
+  ├─[4] nativeMemoRuntime    field/topology 时编译 artifact、生成观测（可降级）
+  ├─[5] vectorSearcher       向量召回（日记索引逐源 KNN，按 topK 合并）
+  ├─[6] bm25Searcher         BM25 稀疏召回（同一解析范围，按 bm25PoolK 截断）
+  ├─[7] candidateMerger      融合：双路归一化到 [0,1] → 加权和（vectorWeight +
   │                            bm25Weight）→ 去重 → minScore → topK 截断
   │
-  ├─[7] epaProjector         ● EPA 语义深度信号（投影 / 主轴 / 共振）
-  ├─[8] residualPyramid      ● 残差金字塔分解（覆盖度 / 新颖度）
-  ├─[9] tagMemoV9            标签波传播（浪潮激活）           [配置门]
-  ├─[10] tagMemoV10           双尺度场扩散（V10）              [配置门]
-  ├─[11] riverMemo            河流状态累计 + 机态重排            [配置门]
-  ├─[12] tagExpander         标签驱动候选扩展                  [配置门]
-  ├─[13] vectorReshaper      余弦向量重排                      [配置门]
+  ├─[8] epaProjector         ● EPA 语义深度信号（投影 / 主轴 / 共振）
+  ├─[9] residualPyramid      ● 残差金字塔分解（覆盖度 / 新颖度）
+  ├─[10] tagMemoV9           标签波传播（浪潮激活）             [配置门]
+  ├─[11] tagMemoV10          双尺度场扩散（V10）                [配置门]
+  ├─[12] topologyV3          Rust RiverMemo Topology V3          [策略门]
+  ├─[13] tagExpander         标签驱动候选扩展                    [配置门]
+  ├─[14] vectorReshaper      余弦向量重排                        [配置门]
   │
-  ├─[14] geodesicReranker    TagMemo 能量场测地线重排          [配置门]
-  ├─[15] resultDeduplicator  ● 硬去重 + 语义去重（阈值 0.92）
-  ├─[16] externalReranker    LLM/外部排序器                    [配置门]
-  ├─[17] timeDecay           时效衰减 0.5^(age/半衰期)          [配置门]
-  ├─[18] truncator           topK / 内容长度截断               [配置门]
-  ├─[19] expander            同文件关联块扩展                  [配置门]
-  │
-  ├─[20] associator          标签共现 + 向量邻居关联            [配置门]
-  └─[21] resultFormatter     结果信封（格式化 + 元数据补全）→ results/resultCount
+  ├─[15] geodesicReranker    TagMemo 能量场测地线重排            [配置门]
+  ├─[16] relationExpansion   显式/派生关系有界扩展                [配置门]
+  ├─[17] expander            同文件块或父文件全文扩展               [配置门]
+  ├─[18] associator          标签共现 + 向量邻居关联               [配置门]
+  ├─[19] resultDeduplicator  ● 硬去重 + 语义去重（阈值 0.92）
+  ├─[20] externalReranker    LLM/外部排序器或 RRF                 [配置门]
+  ├─[21] timeDecay           时效衰减 0.5^(age/半衰期)            [配置门]
+  ├─[22] truncator           topK / 内容长度截断                 [配置门]
+  ├─[23] candidateFilter     对扩展/后处理后的候选再次执行 scope    [过滤门]
+  └─[24] resultFormatter     结果信封（格式化 + 元数据补全）→ results/resultCount
 ```
 
 - ● = 默认开启（`epaProjectionEnabled=true`、`residualPyramidEnabled=true`、
@@ -226,13 +223,12 @@ memoria/
 │   │   ├── ingestion/           # file-reader, tag-extractor, text-chunker,
 │   │   │                        # chunk-embedder, tag-embedder, metadata-writer,
 │   │   │                        # vector-indexer, co-occurrence-builder, file-deleter
-│   │   ├── retrieval/           # query-embedder, vector-searcher, bm25-searcher,
-│   │   │                        # candidate-merger   （search 主链 5~12）
-│   │   ├── memo/                # epa-projector, residual-pyramid, tagmemo-v9,
-│   │   │                        # tagmemo-v10, rivermemo, tag-expander, vector-reshaper,
-│   │   │                        # geodesic-reranker
-│   │   ├── postprocess/         # result-deduplicator, external-reranker, time-decay,
-│   │   │                        # truncator, expander, associator
+│   │   ├── retrieval/           # query-embedder, scope/filter, vector-searcher,
+│   │   │                        # bm25-searcher, candidate-merger
+│   │   ├── memo/                # epa/residual, TagMemo V9/V10, native MemoRuntime,
+│   │   │                        # Topology V3, tag-expander, vector/geo rerank
+│   │   ├── postprocess/         # relation-expansion, result-deduplicator,
+│   │   │                        # external-reranker, time-decay, truncator, associator
 │   │   ├── output/              # result-formatter（search 结果格式化）
 │   │   └── tdb/                 # query-normalizer, result-formatter（TDB 专用）
 │   ├── algorithms/

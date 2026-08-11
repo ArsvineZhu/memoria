@@ -6,23 +6,26 @@
 
 ## 按任务查找
 
-| 任务                              | 统一入口                                                                           |
-| --------------------------------- | ---------------------------------------------------------------------------------- |
-| 安装并运行最小示例                | [GUIDE.md](GUIDE.md)                                                               |
-| 配置路径、模型、检索和 TDB        | [CONFIGURATION.md](CONFIGURATION.md)                                               |
-| 使用公开软件包接口                | [API.md](API.md)                                                                   |
-| 查检索能力、开关、依赖和诊断字段  | [RETRIEVAL_FEATURES.md](RETRIEVAL_FEATURES.md)                                     |
-| 理解生命周期和管线                | [ARCHITECTURE.md](ARCHITECTURE.md)                                                 |
-| 理解功能行为和选项                | [FUNCTIONS.md](FUNCTIONS.md)                                                       |
-| 理解嵌入和维度要求                | [EMBEDDING.md](EMBEDDING.md)                                                       |
-| 理解 SQLite、原生索引、恢复和备份 | [PERSISTENCE.md](PERSISTENCE.md)                                                   |
-| 理解算法                          | [ALGORITHMS.md](ALGORITHMS.md)                                                     |
-| 运行本地测试和 CI 检查            | [TESTING.md](TESTING.md)                                                           |
-| 扩展或维护源码和文档              | [DEVELOPMENT.md](DEVELOPMENT.md)、[../CONTRIBUTING.md](../CONTRIBUTING.md)         |
-| 发布软件包                        | [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md)、[NATIVE-MATRIX.md](NATIVE-MATRIX.md) |
-| 排查运行、依赖或打包故障          | [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                                           |
-| 查看版本变更                      | [../CHANGELOG.md](../CHANGELOG.md)                                                 |
-| 了解文档维护规则                  | [README.md](README.md)、[AGENTS.md](AGENTS.md)                                     |
+| 任务                                | 统一入口                                                                           |
+| ----------------------------------- | ---------------------------------------------------------------------------------- |
+| 安装并运行最小示例                  | [GUIDE.md](GUIDE.md)                                                               |
+| 配置路径、模型、检索和 TDB          | [CONFIGURATION.md](CONFIGURATION.md)                                               |
+| 使用公开软件包接口                  | [API.md](API.md)                                                                   |
+| 查检索能力、开关、依赖和诊断字段    | [RETRIEVAL_FEATURES.md](RETRIEVAL_FEATURES.md)                                     |
+| 选择检索策略、迁移 VCP 能力和关系图 | [RETRIEVAL_STRATEGIES.md](RETRIEVAL_STRATEGIES.md)                                 |
+| 维护关系图和不可变文件源            | [RELATIONS.md](RELATIONS.md)                                                       |
+| 配置类型化检索计划                  | [RETRIEVAL_PLAN.md](RETRIEVAL_PLAN.md)                                             |
+| 理解生命周期和管线                  | [ARCHITECTURE.md](ARCHITECTURE.md)                                                 |
+| 理解功能行为和选项                  | [FUNCTIONS.md](FUNCTIONS.md)                                                       |
+| 理解嵌入和维度要求                  | [EMBEDDING.md](EMBEDDING.md)                                                       |
+| 理解 SQLite、原生索引、恢复和备份   | [PERSISTENCE.md](PERSISTENCE.md)                                                   |
+| 理解算法                            | [ALGORITHMS.md](ALGORITHMS.md)                                                     |
+| 运行本地测试和 CI 检查              | [TESTING.md](TESTING.md)                                                           |
+| 扩展或维护源码和文档                | [DEVELOPMENT.md](DEVELOPMENT.md)、[../CONTRIBUTING.md](../CONTRIBUTING.md)         |
+| 发布软件包                          | [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md)、[NATIVE-MATRIX.md](NATIVE-MATRIX.md) |
+| 排查运行、依赖或打包故障            | [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                                           |
+| 查看版本变更                        | [../CHANGELOG.md](../CHANGELOG.md)                                                 |
+| 了解文档维护规则                    | [README.md](README.md)、[AGENTS.md](AGENTS.md)                                     |
 
 ## 数据、示例和测试
 
@@ -59,6 +62,9 @@
 - `CONFIGURATION.md`：完整配置和环境变量说明。
 - `API.md`：公开导出、子路径、方法、返回信封和类型。
 - `RETRIEVAL_FEATURES.md`：检索增强能力矩阵、实际信号、外部 rerank 契约和真实 Demo。
+- `RETRIEVAL_STRATEGIES.md`：自动/显式策略、TagMemo+/Topology V3、关系图和 VCP 迁移。
+- `RELATIONS.md`：不可变 MDX 文件源、关系记录、派生关系生命周期和 scope 安全。
+- `RETRIEVAL_PLAN.md`：`RetrievalPlan` 字段、策略组合、自动选择和原生降级契约。
 - `ARCHITECTURE.md`：系统边界、生命周期和管线顺序。
 - `FUNCTIONS.md`：功能行为和选项语义。
 - `PERSISTENCE.md`：数据权威、生成状态、恢复和备份。

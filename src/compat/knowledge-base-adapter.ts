@@ -6,7 +6,13 @@ import ResultDeduplicator from "../algorithms/result-deduplicator.js";
 import { decodeVectorBlob } from "../utils/vector-codec.js";
 import { EPA } from "../algorithms/epa.js";
 import type { EngineStats, MemoryEngine } from "../engine.js";
+import GeodesicRerankerStage from "../stages/memo/geodesic-reranker.js";
+import NativeMemoRuntimeStage from "../stages/memo/native-memo-runtime.js";
+import TagMemoV10Stage from "../stages/memo/tagmemo-v10.js";
+import TagMemoV9Stage from "../stages/memo/tagmemo-v9.js";
+import TopologyV3Stage from "../stages/memo/topology-v3.js";
 import type {
+  ChunkCandidate,
   ChunkRow,
   DatabaseLike,
   EpaAnalysis,
@@ -15,7 +21,10 @@ import type {
   FileRow,
   MemoryConfig,
   MetadataStoreContract,
+  PipelineContextLike,
+  PipelineData,
   SearchEnvelope,
+  SearchOptions,
   SearchResult,
   TagBoostEnvelope,
   TagRow,
@@ -67,6 +76,99 @@ type ChunkQueryRow = {
   mtime?: number | null;
 };
 
+function isRecord(value: unknown): value is UnknownRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeCompatCandidates(
+  candidates: readonly SearchResult[],
+): ChunkCandidate[] {
+  return (Array.isArray(candidates) ? candidates : []).map((candidate, index) => {
+    const source = isRecord(candidate) ? candidate : {};
+    const rawTags = source.tags ?? source.matchedTags;
+    const tags = Array.isArray(rawTags) ? rawTags.map(String) : undefined;
+    const rawChunkId = source.chunkId ?? source.id;
+    const chunkId = finiteNumber(rawChunkId, index + 1);
+    return {
+      ...source,
+      chunkId,
+      score: finiteNumber(source.score),
+      ...(tags ? { tags } : {}),
+    } as ChunkCandidate;
+  });
+}
+
+function compatQueryInput(
+  query: UnknownRecord,
+  candidates: readonly ChunkCandidate[],
+  options: UnknownRecord,
+): PipelineData {
+  const rawVector = query.vector;
+  const queryVector =
+    rawVector instanceof Float32Array || Array.isArray(rawVector)
+      ? rawVector
+      : undefined;
+  const input: PipelineData = {
+    query: typeof query.text === "string" ? query.text : String(query.query || ""),
+    ...(queryVector ? { queryVector } : {}),
+    mergedCandidates: [...candidates],
+    options,
+  };
+
+  const explicitCoreTags = Array.isArray(options.coreTags)
+    ? options.coreTags.map(String).filter(Boolean)
+    : [];
+  if (explicitCoreTags.length > 0) input.coreTags = explicitCoreTags;
+
+  // applyTagBoostAsync returns this object so the old two-call LightMemo
+  // flow can share one native observation instead of rebuilding it.
+  const prepared = isRecord(options.preparedMemoObservation)
+    ? options.preparedMemoObservation
+    : null;
+  const nativeMemo =
+    prepared && isRecord(prepared.nativeMemo) ? prepared.nativeMemo : null;
+  const artifact = prepared && isRecord(prepared.artifact) ? prepared.artifact : null;
+  if (prepared && nativeMemo && artifact && typeof artifact.artifactSig === "string") {
+    const observation = isRecord(nativeMemo.observation) ? nativeMemo.observation : {};
+    const activations = new Map<number, number>();
+    for (const rawNode of Array.isArray(observation.nodes) ? observation.nodes : []) {
+      if (!isRecord(rawNode)) continue;
+      const id = finiteNumber(rawNode.id, NaN);
+      const energy = finiteNumber(rawNode.energy, 0);
+      if (Number.isFinite(id) && energy > 0) activations.set(id, energy);
+    }
+    const originalVector =
+      prepared.queryVector instanceof Float32Array ||
+      Array.isArray(prepared.queryVector)
+        ? prepared.queryVector
+        : queryVector;
+    const enhancedVector =
+      prepared.enhancedVector instanceof Float32Array ||
+      Array.isArray(prepared.enhancedVector)
+        ? prepared.enhancedVector
+        : nativeMemo.enhancedVector;
+    input.nativeMemo = nativeMemo;
+    input.nativeMemoArtifact = artifact;
+    input.nativeMemoSkipped = false;
+    input.nativeQueryVector = originalVector;
+    if (enhancedVector instanceof Float32Array || Array.isArray(enhancedVector)) {
+      input.queryVector = enhancedVector;
+    }
+    input.tagMemo = {
+      version: "v10",
+      nativeBackend: "rust-shared-memo-runtime",
+      activations,
+      nativeObservation: observation,
+    };
+  }
+  return input;
+}
+
 /**
  * KnowledgeBaseAdapter — drop-in compatibility surface for
  * KnowledgeBaseManager consumers.
@@ -103,9 +205,10 @@ type ChunkQueryRow = {
  * The TagMemoEngine-only surface (requestRustWriteLease, checkpoint...,
  * getTagMemoArtifactSnapshot, Tag consistency previews, ...) is NOT
  * provided: every call site guards with `typeof x === 'function'` and
- * falls back gracefully when the method is absent. Legacy tag-boost calls
- * still return honest passthrough envelopes (no boost signal, unchanged
- * candidate order) so callers keep their documented fall backs.
+ * falls back gracefully when the method is absent. The legacy async rerank
+ * names are retained as adapters over the library's native Memo stages; if a
+ * native dependency is unavailable, the adapter returns the original pool
+ * with a diagnostic envelope instead of claiming that a rerank happened.
  *
  * The legacy search(diaryName, vec, k, tagBoost) vector path is a plain
  * per-index KNN + hydration pass. Text queries (`search(str)`) delegate to
@@ -291,7 +394,7 @@ class KnowledgeBaseAdapter {
    *     pipeline (formatted results envelope).
    *   search(vector, k, ...)                → all-indices KNN hydration.
    */
-  async search(query: string, options?: UnknownRecord): Promise<SearchEnvelope>;
+  async search(query: string, options?: SearchOptions): Promise<SearchEnvelope>;
   async search(
     indexNames: string | readonly string[],
     queryVector: VectorLike,
@@ -324,7 +427,7 @@ class KnowledgeBaseAdapter {
     return this.engine.search(
       String(arg1 || ""),
       typeof arg2 === "object" && arg2 !== null && !Array.isArray(arg2)
-        ? (arg2 as UnknownRecord)
+        ? (arg2 as SearchOptions)
         : {},
     );
   }
@@ -467,6 +570,35 @@ class KnowledgeBaseAdapter {
    */
   _invalidateCaches() {
     this._epaCache = null;
+  }
+
+  async _compatTagGraph(): Promise<Map<number, Map<number, number>>> {
+    const fromContext = this.engine.ctx?.tagGraph;
+    if (fromContext instanceof Map) return fromContext;
+    const store = this.engine.metadataStore;
+    if (store && typeof store.buildCooccurrenceMatrix === "function") {
+      try {
+        return await store.buildCooccurrenceMatrix();
+      } catch (_) {
+        // The caller still receives the original candidates and an explicit
+        // unavailable diagnostic from the compatibility rerank method.
+      }
+    }
+    return new Map();
+  }
+
+  _compatContext(
+    configOverrides: UnknownRecord,
+    tagGraph?: Map<number, Map<number, number>>,
+  ): PipelineContextLike {
+    return {
+      ...(this.engine.ctx || {}),
+      config: { ...this.engine.config, ...configOverrides },
+      embeddingProvider: this.engine.embeddingProvider,
+      vectorStore: this.engine.vectorStore,
+      metadataStore: this.engine.metadataStore,
+      ...(tagGraph ? { tagGraph } : {}),
+    } as PipelineContextLike;
   }
 
   /**
@@ -613,10 +745,10 @@ class KnowledgeBaseAdapter {
   /**
    * RAGDiaryPlugin / LightMemo surface: TagMemo V9 boosted-query envelope.
    *
-   * The standalone library does not train TagMemo wave-field models, so
-   * this is an honest passthrough: the query vector is returned unchanged
-   * and `info.matchedTags` is empty. Callers treat that as "no boost" and
-   * fall back to pure KNN / ghost tags.
+   * The standalone library keeps this legacy vector-envelope method safe for
+   * callers that only need a query vector. Full TagMemo+/RiverMemo readout is
+   * exposed by the typed retrieval plan and by the async rerank adapters
+   * below; this method does not mutate a caller-owned vector in place.
    *
    * @param {Array|Float32Array} vector - query vector
    * @param {number} [tagBoost=0]
@@ -628,12 +760,86 @@ class KnowledgeBaseAdapter {
   async applyTagBoostAsync(
     vector: VectorLike | null | undefined,
     tagBoost = 0,
-    _coreTags: readonly string[] = [],
-    _coreBoostFactor = 1.33,
-    _options: UnknownRecord = {},
+    coreTags: readonly string[] = [],
+    coreBoostFactor = 1.33,
+    options: UnknownRecord = {},
   ): Promise<TagBoostEnvelope> {
     const source =
       vector instanceof Float32Array ? vector : new Float32Array(vector || []);
+
+    const controls = isRecord(options) ? options : {};
+    const ctx = this._compatContext({
+      nativeMemoEnabled: true,
+      tagMemoV9Enabled: true,
+      tagMemoV10Enabled: true,
+      baseTagBoost: Math.max(0, finiteNumber(tagBoost)),
+      coreBoostFactor: Math.max(0, finiteNumber(coreBoostFactor, 1.33)),
+    });
+    const output = await new NativeMemoRuntimeStage().process(
+      {
+        query: String(controls.queryText || ""),
+        queryVector: source,
+        ...(coreTags.length > 0 ? { coreTags: [...coreTags] } : {}),
+      },
+      ctx,
+    );
+    const nativeMemo = isRecord(output.nativeMemo) ? output.nativeMemo : null;
+    const rawEnhanced = nativeMemo?.enhancedVector;
+    const enhanced =
+      rawEnhanced instanceof Float32Array || Array.isArray(rawEnhanced)
+        ? Array.from(rawEnhanced as ArrayLike<number>, (value) => finiteNumber(value))
+        : [];
+
+    if (
+      nativeMemo &&
+      output.nativeMemoSkipped === false &&
+      enhanced.length === source.length
+    ) {
+      const observation = isRecord(nativeMemo?.observation)
+        ? nativeMemo.observation
+        : {};
+      const nodes = Array.isArray(observation.nodes) ? observation.nodes : [];
+      const energyField = new Map<number, number>();
+      const energyFieldProvenance = new Map<number, UnknownRecord>();
+      for (const rawNode of nodes) {
+        if (!isRecord(rawNode)) continue;
+        const id = finiteNumber(rawNode.id, NaN);
+        if (!Number.isFinite(id)) continue;
+        energyField.set(id, Math.max(0, finiteNumber(rawNode.energy)));
+        energyFieldProvenance.set(id, { ...rawNode });
+      }
+      const matchedTags = Array.isArray(nativeMemo.matchedTags)
+        ? nativeMemo.matchedTags.map(String)
+        : [];
+      const coreTagsMatched = Array.isArray(nativeMemo.coreTagsMatched)
+        ? nativeMemo.coreTagsMatched.map(String)
+        : [];
+      const preparedMemoObservation = {
+        observation,
+        nativeMemo,
+        artifact: output.nativeMemoArtifact || null,
+        queryVector: new Float32Array(source),
+        enhancedVector: new Float32Array(enhanced),
+      };
+      return {
+        vector: new Float32Array(enhanced),
+        info: {
+          matchedTags,
+          coreTagsMatched,
+          boostFactor: Math.max(
+            0,
+            finiteNumber(nativeMemo.effectiveTagBoost, finiteNumber(tagBoost)),
+          ),
+          tagBoost: finiteNumber(tagBoost),
+          tagMatchScore: matchedTags.length > 0 ? 1 : 0,
+        },
+        energyField,
+        energyFieldProvenance,
+        artifactBundle: output.nativeMemoArtifact || null,
+        preparedMemoObservation,
+      };
+    }
+
     return {
       vector: new Float32Array(source),
       info: {
@@ -651,37 +857,150 @@ class KnowledgeBaseAdapter {
   }
 
   /**
-   * LightMemo surface: geodetic rerank passthrough (returns the input
-   * candidate order unchanged with a stable envelope).
+   * LightMemo surface: TagMemo+ compatibility adapter. It runs the shared
+   * native Memo observation when available, then falls back to the TypeScript
+   * V9/V10 field stages and geodesic readout when the native backend is not
+   * available (for example, with an in-memory SQLite database).
    * @param {{text:string, vector:Float32Array}} query
    * @param {Array<object>} candidates
    * @param {object} [options]
    * @param {object} [meta]
-   * @returns {Promise<{results:Array<object>, meta:null}>}
+   * @returns {Promise<{results:Array<object>, meta:object|null}>}
    */
   async rerankWithTagMemoAsync(
-    _query: UnknownRecord,
+    query: UnknownRecord,
     candidates: readonly SearchResult[],
     _options: UnknownRecord = {},
     _meta: UnknownRecord = {},
-  ): Promise<{ results: SearchResult[]; meta: null }> {
-    return { results: Array.isArray(candidates) ? candidates : [], meta: null };
+  ): Promise<{ results: SearchResult[]; meta: UnknownRecord | null }> {
+    const source = Array.isArray(candidates) ? candidates : [];
+    if (source.length === 0) return { results: [], meta: null };
+
+    const options = {
+      ...(isRecord(_options) ? _options : {}),
+      ...(isRecord(_meta) ? _meta : {}),
+    };
+    const graph = await this._compatTagGraph();
+
+    const minGeoSamples = Math.max(
+      1,
+      Math.round(
+        finiteNumber(
+          options.minGeoSamples ?? options.geodesicMinGeoSamples,
+          finiteNumber(this.engine.config.geodesicMinGeoSamples, 1),
+        ),
+      ),
+    );
+    const normalized = normalizeCompatCandidates(source);
+    const ctx = this._compatContext(
+      {
+        tagMemoV9Enabled: true,
+        tagMemoV10Enabled: true,
+        geodesicRerankEnabled: true,
+        geodesicMinGeoSamples: minGeoSamples,
+        // Let the native stage opportunistically run. It marks itself skipped
+        // on unsupported stores, after which the TS field stages take over.
+        nativeMemoEnabled: true,
+      },
+      graph,
+    );
+    const input = compatQueryInput(query, normalized, options);
+    let output =
+      input.nativeMemoSkipped === false
+        ? input
+        : await new NativeMemoRuntimeStage().process(input, ctx);
+    if (output.nativeMemoSkipped !== false && graph.size === 0) {
+      return {
+        results: [...source],
+        meta: {
+          strategy: "field",
+          available: false,
+          reason: "TagMemo tag graph is unavailable",
+        },
+      };
+    }
+    output = await new TagMemoV9Stage().process(output, ctx);
+    output = await new TagMemoV10Stage().process(output, ctx);
+    output = await new GeodesicRerankerStage().process(output, ctx);
+
+    const reranked = Array.isArray(output.mergedCandidates)
+      ? (output.mergedCandidates as SearchResult[])
+      : source;
+    const tagMemoVersion = output.tagMemo?.version;
+    const geodesicVersion = output.geodesic?.version;
+    const skipped =
+      output.tagMemoV10Skipped === true ||
+      output.tagMemoSkipped === true ||
+      output.geodesicSkipped === true;
+    return {
+      results: reranked,
+      meta: {
+        strategy: "field",
+        available: tagMemoVersion === "v10" && !skipped,
+        tagMemoVersion: tagMemoVersion || null,
+        geodesicVersion: geodesicVersion || null,
+        geodesic: output.geodesic || null,
+        native: output.nativeMemoSkipped === false,
+        skipped,
+        reason:
+          output.nativeMemoSkipReason ||
+          output.geodesicSkipReason ||
+          (skipped ? "TagMemo+ readout was partially skipped" : null),
+      },
+    };
   }
 
   /**
-   * RAGDiaryPlugin / LightMemo surface: RiverMemo rerank passthrough
-   * (unchanged candidate order, stable envelope).
+   * RAGDiaryPlugin / LightMemo surface: RiverMemo Topology V3 compatibility
+   * adapter. The native stage owns the Rust/Vexus boundary; unsupported
+   * stores return the original pool with a reason.
    * @param {object} query - { text, vector }
    * @param {Array<object>} candidates
    * @param {object} [options]
-   * @returns {Promise<{results:Array<object>, meta:null}>}
+   * @returns {Promise<{results:Array<object>, meta:object|null}>}
    */
   async rerankWithRiverMemoAsync(
-    _query: UnknownRecord,
+    query: UnknownRecord,
     candidates: readonly SearchResult[],
     _options: UnknownRecord = {},
-  ): Promise<{ results: SearchResult[]; meta: null }> {
-    return { results: Array.isArray(candidates) ? candidates : [], meta: null };
+    _meta: UnknownRecord = {},
+  ): Promise<{ results: SearchResult[]; meta: UnknownRecord | null }> {
+    const source = Array.isArray(candidates) ? candidates : [];
+    if (source.length === 0) return { results: [], meta: null };
+    const normalized = normalizeCompatCandidates(source);
+    const options = {
+      ...(isRecord(_options) ? _options : {}),
+      ...(isRecord(_meta) ? _meta : {}),
+    };
+    const ctx = this._compatContext({
+      nativeMemoEnabled: true,
+      tagMemoV9Enabled: true,
+      tagMemoV10Enabled: true,
+      topologyV3Enabled: true,
+    });
+    const input = compatQueryInput(query, normalized, options);
+    let output =
+      input.nativeMemoSkipped === false
+        ? input
+        : await new NativeMemoRuntimeStage().process(input, ctx);
+    output = await new TopologyV3Stage().process(output, ctx);
+    const reranked = Array.isArray(output.mergedCandidates)
+      ? (output.mergedCandidates as SearchResult[])
+      : source;
+    const available = output.topologyV3Skipped !== true;
+    return {
+      results: reranked,
+      meta: {
+        strategy: "topology",
+        available,
+        topologyVersion: output.riverMemo?.version || null,
+        native: output.nativeMemoSkipped === false,
+        reason:
+          output.topologyV3SkipReason ||
+          output.nativeMemoSkipReason ||
+          (available ? null : "Topology V3 readout was skipped"),
+      },
+    };
   }
 
   /**

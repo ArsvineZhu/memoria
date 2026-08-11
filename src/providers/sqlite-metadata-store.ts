@@ -4,6 +4,7 @@ import MetadataStore from "../interfaces/metadata-store.js";
 import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { createHash } from "node:crypto";
 import type BetterSqlite3 from "better-sqlite3";
 import type {
   ChunkMetadataInput,
@@ -21,6 +22,10 @@ import type {
   TagMetadataInput,
   TagRow,
   SearchCorpusChunk,
+  MemoryRelationRecord,
+  RelationListOptions,
+  MemoryRelationStatus,
+  UnknownRecord,
 } from "../types.js";
 
 const requireFromProvider = createRequire(import.meta.url);
@@ -36,6 +41,52 @@ function loadDatabaseCtor(): typeof BetterSqlite3 | null {
     DatabaseCtor = null;
   }
   return DatabaseCtor;
+}
+
+function relationInputId(from: string, to: string, kind: string): string {
+  return createHash("sha256")
+    .update(`${from}\n${to}\n${kind}`, "utf8")
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function parseRelationJson(value: string | null | undefined): UnknownRecord | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as UnknownRecord)
+      : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function relationFromRow(row: RelationQueryRow): MemoryRelationRecord {
+  const status =
+    row.status === "stale" || row.status === "rejected" ? row.status : "active";
+  return {
+    id: row.id,
+    from: row.from_key,
+    to: row.to_key,
+    kind: row.kind as MemoryRelationRecord["kind"],
+    origin: row.origin === "derived" ? "derived" : "source",
+    confidence: Number(row.confidence) || 0,
+    weight: Number(row.weight) || 0,
+    evidence: row.evidence ?? null,
+    provenance: parseRelationJson(row.provenance_json),
+    sourceRevision: row.source_revision ?? null,
+    algorithmVersion: row.algorithm_version ?? null,
+    sourceSpan:
+      row.source_span_start == null || row.source_span_end == null
+        ? null
+        : { start: row.source_span_start, end: row.source_span_end },
+    targetAnchor: row.target_anchor ?? null,
+    createdAt: Number(row.created_at) || 0,
+    updatedAt: Number(row.updated_at) || 0,
+    status,
+    active: row.active !== 0 && status === "active",
+  };
 }
 
 interface SqliteConfig {
@@ -89,6 +140,27 @@ interface KeyValueRow {
   value?: string | null;
 }
 
+interface RelationQueryRow {
+  id: string;
+  from_key: string;
+  to_key: string;
+  kind: string;
+  origin: string;
+  confidence: number;
+  weight: number;
+  evidence?: string | null;
+  provenance_json?: string | null;
+  source_revision?: string | null;
+  algorithm_version?: string | null;
+  source_span_start?: number | null;
+  source_span_end?: number | null;
+  target_anchor?: string | null;
+  status: string;
+  active: number;
+  created_at: number;
+  updated_at: number;
+}
+
 const SCHEMA_SQL = `
     CREATE TABLE IF NOT EXISTS files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,16 +196,134 @@ const SCHEMA_SQL = `
         FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE,
         FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS tag_intrinsic_residuals (
+        tag_id INTEGER PRIMARY KEY,
+        residual_energy REAL NOT NULL,
+        neighbor_count INTEGER NOT NULL,
+        computed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        raw_residual_ratio REAL,
+        v8_3_compat_gain REAL,
+        v9_anchor_gain REAL,
+        model_sig TEXT,
+        artifact_sig TEXT,
+        algorithm_version TEXT,
+        config_hash TEXT,
+        status TEXT NOT NULL DEFAULT 'computed',
+        FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS tagmemo_artifacts (
+        artifact_sig TEXT PRIMARY KEY,
+        asset_type TEXT NOT NULL,
+        model_sig TEXT NOT NULL,
+        graph_generation TEXT NOT NULL,
+        algorithm_version TEXT NOT NULL,
+        config_hash TEXT NOT NULL,
+        effective_config TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ready',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tagmemo_artifacts_lookup
+        ON tagmemo_artifacts(asset_type, model_sig, status);
+    CREATE TABLE IF NOT EXISTS tag_pair_similarity (
+        tag_a INTEGER NOT NULL,
+        tag_b INTEGER NOT NULL,
+        similarity REAL NOT NULL,
+        model_sig TEXT NOT NULL,
+        computed_at INTEGER NOT NULL,
+        PRIMARY KEY (tag_a, tag_b),
+        FOREIGN KEY(tag_a) REFERENCES tags(id) ON DELETE CASCADE,
+        FOREIGN KEY(tag_b) REFERENCES tags(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_pair_sim_model
+        ON tag_pair_similarity(model_sig);
+    CREATE TABLE IF NOT EXISTS tag_pair_similarity_status (
+        tag_a INTEGER NOT NULL,
+        tag_b INTEGER NOT NULL,
+        model_sig TEXT NOT NULL,
+        artifact_sig TEXT NOT NULL,
+        status TEXT NOT NULL,
+        similarity REAL,
+        min_similarity REAL NOT NULL,
+        computed_at INTEGER NOT NULL,
+        PRIMARY KEY (tag_a, tag_b, artifact_sig),
+        FOREIGN KEY(tag_a) REFERENCES tags(id) ON DELETE CASCADE,
+        FOREIGN KEY(tag_b) REFERENCES tags(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_pair_sim_status_artifact
+        ON tag_pair_similarity_status(artifact_sig, status);
+    CREATE INDEX IF NOT EXISTS idx_pair_sim_status_model
+        ON tag_pair_similarity_status(model_sig);
+    CREATE TABLE IF NOT EXISTS rivermemo_artifacts (
+        artifact_sig TEXT PRIMARY KEY,
+        schema_version TEXT NOT NULL,
+        algorithm_version TEXT NOT NULL,
+        source_v9_artifact_sig TEXT NOT NULL,
+        source_graph_generation TEXT NOT NULL,
+        model_sig TEXT NOT NULL,
+        config_hash TEXT NOT NULL,
+        database_generation TEXT NOT NULL,
+        provenance_generation TEXT NOT NULL,
+        payload_codec TEXT NOT NULL DEFAULT 'gzip-json-v1',
+        payload_checksum TEXT,
+        payload BLOB,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        node_count INTEGER NOT NULL DEFAULT 0,
+        edge_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        published_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_rivermemo_artifacts_compatible
+        ON rivermemo_artifacts(
+            source_v9_artifact_sig,
+            model_sig,
+            config_hash,
+            database_generation,
+            status,
+            updated_at
+        );
+    CREATE INDEX IF NOT EXISTS idx_rivermemo_artifacts_status
+        ON rivermemo_artifacts(status, updated_at);
     CREATE TABLE IF NOT EXISTS kv_store (
         key TEXT PRIMARY KEY,
         value TEXT,
         vector BLOB
     );
+    CREATE TABLE IF NOT EXISTS memory_relations (
+        id TEXT PRIMARY KEY,
+        from_key TEXT NOT NULL,
+        to_key TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        origin TEXT NOT NULL CHECK (origin IN ('source', 'derived')),
+        confidence REAL NOT NULL DEFAULT 0,
+        weight REAL NOT NULL DEFAULT 0,
+        evidence TEXT,
+        provenance_json TEXT,
+        source_revision TEXT,
+        algorithm_version TEXT,
+        source_span_start INTEGER,
+        source_span_end INTEGER,
+        target_anchor TEXT,
+        status TEXT NOT NULL DEFAULT 'active'
+            CHECK (status IN ('active', 'stale', 'rejected')),
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_relations_from
+        ON memory_relations(from_key, active, status);
+    CREATE INDEX IF NOT EXISTS idx_memory_relations_to
+        ON memory_relations(to_key, active, status);
+    CREATE INDEX IF NOT EXISTS idx_memory_relations_origin
+        ON memory_relations(origin, status, updated_at);
 `;
 
 const METADATA_GENERATION_KEY = "memoria.metadata_generation";
 const VECTOR_GENERATION_KEY = "memoria.vector_generation";
 const VECTOR_DIRTY_KEY = "memoria.vector_dirty";
+const RELATION_GENERATION_KEY = "memoria.relation_generation";
 
 /**
  * SQLite-backed metadata store using better-sqlite3.
@@ -207,6 +397,32 @@ class SqliteMetadataStore extends MetadataStore {
         this.db.exec(`ALTER TABLE files ADD COLUMN ${name} ${definition}`);
       }
     }
+    const additiveMigrations: Array<[string, string, string]> = [
+      ["tag_intrinsic_residuals", "raw_residual_ratio", "REAL"],
+      ["tag_intrinsic_residuals", "v8_3_compat_gain", "REAL"],
+      ["tag_intrinsic_residuals", "v9_anchor_gain", "REAL"],
+      ["tag_intrinsic_residuals", "model_sig", "TEXT"],
+      ["tag_intrinsic_residuals", "artifact_sig", "TEXT"],
+      ["tag_intrinsic_residuals", "algorithm_version", "TEXT"],
+      ["tag_intrinsic_residuals", "config_hash", "TEXT"],
+      ["tag_intrinsic_residuals", "status", "TEXT NOT NULL DEFAULT 'computed'"],
+      ["rivermemo_artifacts", "payload_codec", "TEXT NOT NULL DEFAULT 'gzip-json-v1'"],
+      ["rivermemo_artifacts", "payload_checksum", "TEXT"],
+      ["rivermemo_artifacts", "payload", "BLOB"],
+      ["rivermemo_artifacts", "status", "TEXT NOT NULL DEFAULT 'ready'"],
+      ["rivermemo_artifacts", "error_message", "TEXT"],
+      ["rivermemo_artifacts", "node_count", "INTEGER NOT NULL DEFAULT 0"],
+      ["rivermemo_artifacts", "edge_count", "INTEGER NOT NULL DEFAULT 0"],
+      ["rivermemo_artifacts", "published_at", "INTEGER"],
+    ];
+    for (const [table, name, definition] of additiveMigrations) {
+      const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+        name: string;
+      }>;
+      if (!columns.some((column) => column.name === name)) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+      }
+    }
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_files_diary ON files(diary_name);
       CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id);
@@ -214,6 +430,10 @@ class SqliteMetadataStore extends MetadataStore {
       CREATE INDEX IF NOT EXISTS idx_file_tags_composite ON file_tags(tag_id, file_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_files_document_id
         ON files(document_id) WHERE document_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_intrinsic_residual_artifact
+        ON tag_intrinsic_residuals(artifact_sig);
+      CREATE INDEX IF NOT EXISTS idx_intrinsic_residual_model
+        ON tag_intrinsic_residuals(model_sig);
     `);
     this.db
       .prepare("INSERT OR IGNORE INTO kv_store (key, value) VALUES (?, ?)")
@@ -224,6 +444,9 @@ class SqliteMetadataStore extends MetadataStore {
     this.db
       .prepare("INSERT OR IGNORE INTO kv_store (key, value) VALUES (?, ?)")
       .run(VECTOR_DIRTY_KEY, "1");
+    this.db
+      .prepare("INSERT OR IGNORE INTO kv_store (key, value) VALUES (?, ?)")
+      .run(RELATION_GENERATION_KEY, "0");
   }
 
   _incrementMetadataGenerationInTransaction(): number {
@@ -241,6 +464,21 @@ class SqliteMetadataStore extends MetadataStore {
     setKv.run(METADATA_GENERATION_KEY, String(metadataGeneration));
     setKv.run(VECTOR_DIRTY_KEY, "1");
     return metadataGeneration;
+  }
+
+  _incrementRelationGenerationInTransaction(): number {
+    const generationRow = this.db
+      .prepare("SELECT value FROM kv_store WHERE key = ?")
+      .get(RELATION_GENERATION_KEY) as KeyValueRow | undefined;
+    const currentGeneration = Number.parseInt(generationRow?.value ?? "0", 10);
+    const relationGeneration =
+      Number.isSafeInteger(currentGeneration) && currentGeneration >= 0
+        ? currentGeneration + 1
+        : 1;
+    this.db
+      .prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)")
+      .run(RELATION_GENERATION_KEY, String(relationGeneration));
+    return relationGeneration;
   }
 
   // ── File CRUD ───────────────────────────────────────────────
@@ -442,6 +680,10 @@ class SqliteMetadataStore extends MetadataStore {
     const row = this.db.prepare("SELECT COUNT(*) AS c FROM files").get() as
       { c?: number } | undefined;
     return Number(row?.c) || 0;
+  }
+
+  async getAllFiles(): Promise<FileRow[]> {
+    return this.db.prepare("SELECT * FROM files ORDER BY path ASC").all() as FileRow[];
   }
 
   async getLastIndexedAt(): Promise<number | null> {
@@ -885,6 +1127,223 @@ class SqliteMetadataStore extends MetadataStore {
   }
 
   // ── KV store ────────────────────────────────────────────────
+
+  /**
+   * Replace the active source edges for one immutable source revision while
+   * retaining older revisions as stale audit records. This is deliberately a
+   * separate generation from vector state: changing a relation invalidates
+   * Memo artifacts, but does not require rebuilding ordinary chunk vectors.
+   */
+  async replaceExplicitRelations(
+    from: string,
+    sourceRevision: string,
+    relations: readonly MemoryRelationRecord[],
+  ): Promise<void> {
+    const now = Date.now();
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE memory_relations
+           SET status = 'stale', active = 0, updated_at = ?
+           WHERE from_key = ? AND origin = 'source' AND active = 1`,
+        )
+        .run(now, from);
+
+      const insert = this.db.prepare(`
+        INSERT INTO memory_relations (
+          id, from_key, to_key, kind, origin, confidence, weight, evidence,
+          provenance_json, source_revision, algorithm_version,
+          source_span_start, source_span_end, target_anchor, status, active,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'source', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          from_key = excluded.from_key,
+          to_key = excluded.to_key,
+          kind = excluded.kind,
+          origin = 'source',
+          confidence = excluded.confidence,
+          weight = excluded.weight,
+          evidence = excluded.evidence,
+          provenance_json = excluded.provenance_json,
+          source_revision = excluded.source_revision,
+          algorithm_version = excluded.algorithm_version,
+          source_span_start = excluded.source_span_start,
+          source_span_end = excluded.source_span_end,
+          target_anchor = excluded.target_anchor,
+          status = 'active',
+          active = 1,
+          updated_at = excluded.updated_at
+      `);
+
+      for (const relation of relations) {
+        const confidence = Math.max(0, Math.min(1, Number(relation.confidence) || 0));
+        const weight = Math.max(0, Number(relation.weight) || 0);
+        const provenance = relation.provenance
+          ? JSON.stringify(relation.provenance)
+          : null;
+        insert.run(
+          relation.id,
+          from,
+          relation.to,
+          relation.kind,
+          confidence,
+          weight,
+          relation.evidence ?? null,
+          provenance,
+          sourceRevision,
+          relation.algorithmVersion ?? null,
+          relation.sourceSpan?.start ?? null,
+          relation.sourceSpan?.end ?? null,
+          relation.targetAnchor ?? null,
+          Number(relation.createdAt) || now,
+          now,
+        );
+      }
+      this._incrementRelationGenerationInTransaction();
+    })();
+  }
+
+  async upsertDerivedRelations(
+    relations: readonly (Omit<
+      MemoryRelationRecord,
+      "id" | "origin" | "createdAt" | "updatedAt" | "status"
+    > &
+      Partial<
+        Pick<
+          MemoryRelationRecord,
+          "id" | "origin" | "createdAt" | "updatedAt" | "status"
+        >
+      >)[],
+  ): Promise<void> {
+    if (relations.length === 0) return;
+    const now = Date.now();
+    this.db.transaction(() => {
+      const find = this.db.prepare("SELECT * FROM memory_relations WHERE id = ?");
+      const insert = this.db.prepare(`
+        INSERT INTO memory_relations (
+          id, from_key, to_key, kind, origin, confidence, weight, evidence,
+          provenance_json, source_revision, algorithm_version,
+          source_span_start, source_span_end, target_anchor, status, active,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'derived', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          from_key = excluded.from_key,
+          to_key = excluded.to_key,
+          kind = excluded.kind,
+          origin = 'derived',
+          confidence = excluded.confidence,
+          weight = excluded.weight,
+          evidence = excluded.evidence,
+          provenance_json = excluded.provenance_json,
+          source_revision = excluded.source_revision,
+          algorithm_version = excluded.algorithm_version,
+          source_span_start = excluded.source_span_start,
+          source_span_end = excluded.source_span_end,
+          target_anchor = excluded.target_anchor,
+          status = excluded.status,
+          active = excluded.active,
+          updated_at = excluded.updated_at
+      `);
+
+      for (const relation of relations) {
+        const id =
+          relation.id || relationInputId(relation.from, relation.to, relation.kind);
+        const previous = find.get(id) as RelationQueryRow | undefined;
+        const requestedStatus: MemoryRelationStatus =
+          relation.status === "rejected"
+            ? "rejected"
+            : relation.active === false || relation.status === "stale"
+              ? "stale"
+              : "active";
+        const confidence = Math.max(0, Math.min(1, Number(relation.confidence) || 0));
+        if (
+          previous &&
+          requestedStatus === "active" &&
+          previous.status === "active" &&
+          confidence < Number(previous.confidence)
+        ) {
+          continue;
+        }
+        const provenance = relation.provenance
+          ? JSON.stringify(relation.provenance)
+          : null;
+        insert.run(
+          id,
+          relation.from,
+          relation.to,
+          relation.kind,
+          confidence,
+          Math.max(0, Number(relation.weight) || 0),
+          relation.evidence ?? null,
+          provenance,
+          relation.sourceRevision ?? null,
+          relation.algorithmVersion ?? null,
+          relation.sourceSpan?.start ?? null,
+          relation.sourceSpan?.end ?? null,
+          relation.targetAnchor ?? null,
+          requestedStatus,
+          requestedStatus === "active" ? 1 : 0,
+          Number(relation.createdAt) || previous?.created_at || now,
+          now,
+        );
+      }
+      this._incrementRelationGenerationInTransaction();
+    })();
+  }
+
+  async listRelations(
+    options: RelationListOptions = {},
+  ): Promise<MemoryRelationRecord[]> {
+    const where: string[] = [];
+    const values: unknown[] = [];
+    if (options.includeInactive !== true) {
+      where.push("active = 1", "status = 'active'");
+    }
+    if (options.from !== undefined) {
+      where.push("from_key = ?");
+      values.push(options.from);
+    }
+    if (options.to !== undefined) {
+      where.push("to_key = ?");
+      values.push(options.to);
+    }
+    if (options.origins && options.origins.length > 0) {
+      where.push(`origin IN (${options.origins.map(() => "?").join(",")})`);
+      values.push(...options.origins);
+    }
+    if (options.kinds && options.kinds.length > 0) {
+      where.push(`kind IN (${options.kinds.map(() => "?").join(",")})`);
+      values.push(...options.kinds);
+    }
+    if (options.statuses && options.statuses.length > 0) {
+      where.push(`status IN (${options.statuses.map(() => "?").join(",")})`);
+      values.push(...options.statuses);
+    }
+    const sql = `SELECT * FROM memory_relations${
+      where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""
+    } ORDER BY updated_at ASC, id ASC`;
+    const rows = this.db.prepare(sql).all(...values) as RelationQueryRow[];
+    return rows.map(relationFromRow);
+  }
+
+  async markExplicitRelationsStale(from: string): Promise<void> {
+    this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          `UPDATE memory_relations
+           SET status = 'stale', active = 0, updated_at = ?
+           WHERE from_key = ? AND origin = 'source' AND active = 1`,
+        )
+        .run(Date.now(), from);
+      if (Number(result.changes) > 0) this._incrementRelationGenerationInTransaction();
+    })();
+  }
+
+  async getRelationGeneration(): Promise<number> {
+    const value = await this.getKv(RELATION_GENERATION_KEY);
+    const parsed = Number.parseInt(value ?? "0", 10);
+    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+  }
 
   async getKv(key: string): Promise<string | null> {
     const row = this.db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key) as

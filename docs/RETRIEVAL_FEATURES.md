@@ -5,48 +5,68 @@
 结果从哪里读出来串起来。项目没有运行时 `getCapabilities()` API；能力暴露通过本矩阵、
 公开类型和可执行的真实嵌入演示完成。
 
+策略选择和 VCP 能力迁移的完整用法见
+[检索策略与 VCP 能力迁移](RETRIEVAL_STRATEGIES.md)。
+
 ## 能力总览
 
 “默认值”表示普通 `createMemoryEngine()` 配置的默认值，不表示某次查询一定会产生
 对应信号。阶段可能因为没有候选、没有标签图、没有向量、scope 为空或缺少注入依赖而
 安全跳过。请同时查看“实际信号”列和搜索结果中的 trace 字段。
 
-| 能力                 | 开关/入口                                |                          默认值 | 依赖                         | 诊断字段                                                  | Demo 场景            |
-| -------------------- | ---------------------------------------- | ------------------------------: | ---------------------------- | --------------------------------------------------------- | -------------------- |
-| vector + BM25 hybrid | `vectorWeight` / `bm25Weight`            |                         enabled | embedding、SQLite、Vexus     | `vectorResults`、`bm25Results`                            | 所有查询             |
-| EPA                  | `epaProjectionEnabled`                   |                          `true` | tag vectors                  | `epa`                                                     | 跨主题语义轴         |
-| residual pyramid     | `residualPyramidEnabled`                 |                          `true` | tag vectors                  | `pyramid`                                                 | 多事实查询           |
-| TagMemo V9/V10       | `tagMemoV9Enabled` / `tagMemoV10Enabled` |                         `false` | tag graph                    | `tagMemo`                                                 | 标签联想             |
-| RiverMemo            | `riverMemoEnabled`                       |                         `false` | `riverStateStore`、tag river | `riverMemo`                                               | 连续查询轨迹         |
-| tag expansion        | `tagExpansionEnabled`                    |                         `false` | `global_tags`                | `tagExpansion`                                            | 同义标签扩展         |
-| vector rerank        | `vectorReshapeEnabled`                   |                         `false` | chunk vectors                | `vectorReshape`                                           | embedding 相似度重排 |
-| geodesic rerank      | `geodesicRerankEnabled`                  |                         `false` | TagMemo activations          | `geodesic`、`geodesicSkipped`                             | 标签能量重排         |
-| same-file expansion  | `expansionEnabled`                       |                         `false` | sibling chunks               | `expansionStats`                                          | 上下文补全           |
-| association          | `associatorEnabled`                      |                         `false` | co-occurrence + vector store | `associatorStats`、`associationChannel`、`associationOf`  | 标签/向量相关记忆    |
-| external rerank      | `externalRerankEnabled` + `ctx.reranker` |                         `false` | 外部 Chat API                | `reranked`、`rerankSkipped`、`rerankError`、`rerankScore` | 可选重排             |
-| time decay           | `timeDecayEnabled`                       |                         `false` | file timestamps              | candidate `decay`                                         | 新旧记忆排序         |
-| dedupe/truncate      | `dedupeEnabled` / `truncateEnabled`      | dedupe `true`，truncate `false` | candidate vectors            | `dedupeStats`、`truncationStats`                          | 结果清理             |
+| 能力                  | 开关/入口                                                                    |                          默认值 | 依赖                                                 | 诊断字段                                                                      | Demo 场景             |
+| --------------------- | ---------------------------------------------------------------------------- | ------------------------------: | ---------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------- |
+| vector + BM25 hybrid  | `vectorWeight` / `bm25Weight`                                                |                         enabled | embedding、SQLite、Vexus                             | `vectorResults`、`bm25Results`                                                | 所有查询              |
+| EPA                   | `epaProjectionEnabled`                                                       |                          `true` | tag vectors                                          | `epa`                                                                         | 跨主题语义轴          |
+| residual pyramid      | `residualPyramidEnabled`                                                     |                          `true` | tag vectors                                          | `pyramid`                                                                     | 多事实查询            |
+| TagMemo V9/V10        | `tagMemoV9Enabled` / `tagMemoV10Enabled` 或 `RetrievalPlan.strategy="field"` |                  `false` / auto | tag graph、tag vectors；文件型 SQLite 可用 Rust Memo | `tagMemo`、`nativeMemo`                                                       | 标签联想              |
+| RiverMemo（兼容）     | `riverMemoEnabled`                                                           |                         `false` | `riverStateStore`、tag river                         | `riverMemo`                                                                   | 旧版连续查询轨迹      |
+| RiverMemo Topology V3 | `RetrievalPlan.strategy="topology"` 或 `topologyV3Enabled`                   |                  `false` / auto | 文件型 SQLite、Vexus MemoRuntime                     | `riverMemo`、`topologyV3`、`topologyV3Skipped`                                | 关系/路径重排         |
+| tag expansion         | `tagExpansionEnabled`                                                        |                         `false` | `global_tags`                                        | `tagExpansion`                                                                | 同义标签扩展          |
+| vector rerank         | `vectorReshapeEnabled`                                                       |                         `false` | chunk vectors                                        | `vectorReshape`                                                               | embedding 相似度重排  |
+| geodesic rerank       | `geodesicRerankEnabled`                                                      |                         `false` | TagMemo activations                                  | `geodesic`、`geodesicSkipped`                                                 | 标签能量重排          |
+| same-file expansion   | `expansionEnabled` / `fullDocumentExpansionEnabled`                          |                         `false` | sibling chunks / parent document                     | `expansionStats`                                                              | 上下文或全文补全      |
+| association           | `associatorEnabled`                                                          |                         `false` | co-occurrence + vector store                         | `associatorStats`、`associationChannel`、`associationOf`                      | 标签/向量相关记忆     |
+| external rerank / RRF | `externalRerankEnabled` + `ctx.reranker`                                     |                         `false` | 外部 Chat API                                        | `reranked`、`rerankSkipped`、`rerankError`、`rerankScore`、`externalRrfScore` | Rerank/Rerank+ 后处理 |
+| time decay            | `timeDecayEnabled`                                                           |                         `false` | file timestamps                                      | candidate `decay`                                                             | 新旧记忆排序          |
+| dedupe/truncate       | `dedupeEnabled` / `truncateEnabled`                                          | dedupe `true`，truncate `false` | candidate vectors                                    | `dedupeStats`、`truncationStats`                                              | 结果清理              |
+| relation graph/filter | `retrievalPlan.filters` / `expansion.related` / `sameDocument` / `associate` |        filters 按请求，扩展关闭 | SQLite metadata、关系图、标签/向量                   | `retrievalFilter`、`relationExpansion`、`associatorStats`、`finalCandidates`  | 范围约束和关联补全    |
 
 ### 开关与实际信号
 
 开启开关只表示对应 stage 被加入 pipeline。它不保证每次查询都能使用该算法：
 
-- EPA、residual pyramid 和 TagMemo 需要可用的标签向量或标签图；没有可分析的标签时，
+- EPA、residual pyramid 和 JS TagMemo 需要可用的标签向量或标签图；没有可分析的标签时，
   结果可能没有 `epa`、`pyramid` 或 `tagMemo`。
-- RiverMemo 需要 `ctx.riverStateStore`，并且每个调用者应根据自己的生命周期选择状态
-  存储。没有状态存储时不会伪造轨迹统计。
+- 文件型 SQLite 上的 `field`/`topology` 计划会优先尝试 Rust MemoRuntime。`:memory:`
+  或 native binding 不可用时，TagMemo 回落到 JS V9/V10；Topology V3 保留已有候选并设置
+  `topologyV3Skipped`，不会把整次搜索变成错误。
+- 兼容的 JS RiverMemo 需要 `ctx.riverStateStore`，并且每个调用者应根据自己的生命周期
+  选择状态存储。没有状态存储时不会伪造轨迹统计。
 - tag expansion 需要可查询的 `global_tags`；没有新增标签时也可能返回
   `tagExpansion: { added: [], boosted: [] }`。
 - vector reshape 需要候选 chunk vector；`vectorReshape.traced` 中的 `checked`、
   `matched` 和 `skipped` 才能说明本次是否真正检查了向量。
 - geodesic rerank 需要 TagMemo activation 和足够的样本；未满足条件时应读取
   `geodesicSkipped`，不能把“已开启”当成“已应用”。
+- relation expansion 会在 scope 内沿显式/派生关系有界扩展，新增候选带有
+  `source: "relation-expansion"`、距离、置信度和关系 ID；它在去重、外部重排、时间衰减
+  和截断之前执行。
+- `retrievalPlan.expansion.sameDocument` 负责同文档兄弟块展开，
+  `retrievalPlan.expansion.associate` 负责标签共现和向量邻居联想；两者都在去重之前加入
+  候选，并最终接受同一 scope 过滤。
+- `retrievalPlan.expansion.fullDocument` 负责把命中块所在父文件按 chunk 顺序合并到种子
+  结果；它不改写来源文件，且仍受同一 scope 和后处理尾链约束。
 - association 会把新增候选标为 `associationChannel: "tag"` 或 `"vector"`，并在
   `associationOf` 中记录关联来源 chunk。`associatorStats.fromTags` 和
   `associatorStats.fromVector` 用于区分两条来源。
+- `retrievalPlan.postprocess.minScore` 是截断阶段的分数下限，在外部重排和时间衰减之后
+  执行；`maxResults` 与 `maxContentLength` 再限制数量和正文长度。
 - external rerank 只有同时有显式开关和 `ctx.reranker` 时才调用。服务失败、响应无
   合法分数或配置缺失时保留原排序，并设置 `rerankSkipped`；可诊断的错误文本在
-  `rerankError`，绝不应把 API key 写入日志。
+  `rerankError`，绝不应把 API key 写入日志。`mode: "rrf"` 会把融合分数作为后续
+  truncate、time decay 和最终格式化的有效 `score`，同时保留 `originalScore` 和
+  `externalRrfScore` 诊断。
 
 ## Scope 语义
 

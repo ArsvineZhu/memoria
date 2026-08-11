@@ -21,6 +21,7 @@ import Stage from "../../core/stage.js";
  *
  * Config (ctx.config):
  *   - truncateEnabled     gate (default false; opt-in)
+ *   - truncateMinScore    optional score floor applied after prior rerank/decay
  *   - topK / maxResults    max candidate count (default Infinity)
  *   - maxContentLength     max content chars (default Infinity)
  *   - truncateEllipsis     append '…' to truncated content (default true)
@@ -53,6 +54,17 @@ class TruncatorStage extends Stage {
     const topK = Number(info.topK ?? config.topK ?? config.maxResults);
     const maxResults = Number.isFinite(topK) && topK > 0 ? Math.floor(topK) : Infinity;
 
+    const configuredMinScore = Number(config.truncateMinScore);
+    const minScore =
+      Number.isFinite(configuredMinScore) && configuredMinScore > 0
+        ? Math.min(1, configuredMinScore)
+        : 0;
+    const scoreFilteredCandidates =
+      minScore > 0
+        ? candidates.filter((candidate) => Number(candidate.score) >= minScore)
+        : candidates;
+    const scoreFiltered = candidates.length - scoreFilteredCandidates.length;
+
     const maxContentLength = Number(config.maxContentLength);
     const contentCap =
       Number.isFinite(maxContentLength) && maxContentLength > 0
@@ -61,7 +73,7 @@ class TruncatorStage extends Stage {
     const addEllipsis = config.truncateEllipsis === true;
 
     let truncated = 0;
-    const sliced = candidates.slice(0, maxResults).map((candidate) => {
+    const sliced = scoreFilteredCandidates.slice(0, maxResults).map((candidate) => {
       const trimmed = this._truncateContent(candidate, contentCap, addEllipsis);
       if (trimmed !== candidate) truncated += 1;
       return trimmed;
@@ -73,6 +85,7 @@ class TruncatorStage extends Stage {
       truncationStats: {
         dropped: candidates.length - sliced.length,
         truncated,
+        scoreFiltered,
       },
     };
   }

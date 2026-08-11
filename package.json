@@ -50,7 +50,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify:docs": "node scripts/verify-docs.mjs",
     "typecheck:public": "corepack pnpm build && tsc -p tsconfig.public.json --noEmit",
-    "test": "corepack pnpm build && corepack pnpm build:test && node --test dist-test/tests/algorithms/*.test.js dist-test/tests/algorithms/topology/*.test.js dist-test/tests/adapters/*.test.js dist-test/tests/core/*.test.js dist-test/tests/engine/*.test.js dist-test/tests/integration/*.test.js dist-test/tests/pipelines/*.test.js dist-test/tests/providers/*.test.js dist-test/tests/stages/*.test.js dist-test/tests/tdb/*.test.js dist-test/tests/utils/*.test.js dist-test/tests/consumer/*.test.js",
+    "test": "corepack pnpm build && corepack pnpm build:test && node --test dist-test/tests/algorithms/*.test.js dist-test/tests/algorithms/topology/*.test.js dist-test/tests/adapters/*.test.js dist-test/tests/core/*.test.js dist-test/tests/engine/*.test.js dist-test/tests/integration/*.test.js dist-test/tests/pipelines/*.test.js dist-test/tests/providers/*.test.js dist-test/tests/retrieval/*.test.js dist-test/tests/stages/*.test.js dist-test/tests/tdb/*.test.js dist-test/tests/utils/*.test.js dist-test/tests/consumer/*.test.js",
     "test:native": "corepack pnpm build:test && node --test dist-test/tests/core/test-load-native.test.js dist-test/tests/providers/test-vexus-vector-store.test.js",
     "verify:public": "corepack pnpm typecheck:public && corepack pnpm test:native",
     "verify:pack": "corepack pnpm build && node scripts/verify-packed-consumer.mjs"

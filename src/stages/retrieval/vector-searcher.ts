@@ -118,7 +118,15 @@ class VectorSearcherStage extends Stage {
       }
     }
 
+    const allowedChunkIds =
+      info.allowedChunkIds instanceof Set
+        ? (info.allowedChunkIds as Set<unknown>)
+        : null;
     const vectorResults = [...bestById.values()]
+      .filter(
+        (result) =>
+          allowedChunkIds === null || allowedChunkIds.has(Number(result.chunkId)),
+      )
       .sort((a, b) => b.score - a.score || (a.chunkId ?? 0) - (b.chunkId ?? 0))
       .slice(0, finalK);
 

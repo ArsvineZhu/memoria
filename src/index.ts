@@ -52,7 +52,31 @@ import { computeRiverObservability } from "./algorithms/topology/river-observabi
 // Utility exports
 import { decodeVectorBlob, encodeVectorBlob } from "./utils/vector-codec.js";
 import { prepareTextForEmbedding, extractTags } from "./utils/text-preprocessor.js";
+import { parseMdxDocument } from "./utils/mdx-document.js";
 import ResultDeduplicator from "./algorithms/result-deduplicator.js";
+import {
+  applyRetrievalPlan,
+  mergeRetrievalPlan,
+  normalizeRetrievalPlan,
+} from "./retrieval/retrieval-plan.js";
+import {
+  planRetrieval,
+  planRetrievalAsync,
+  chooseStrategy,
+  readGraphReadiness,
+  profileNaturalLanguageQuery,
+} from "./retrieval/query-planner.js";
+import {
+  extractMdxRelations,
+  RelationGraphStore,
+  relationDocumentKey,
+} from "./retrieval/relation-graph.js";
+import QueryBuilder, {
+  ExpansionBuilder,
+  PostprocessBuilder,
+  RerankBuilder,
+  ScopeBuilder,
+} from "./retrieval/query-builder.js";
 
 export {
   // Core
@@ -82,6 +106,18 @@ export {
   EPA,
   ResidualPyramid,
   ResultDeduplicator,
+  normalizeRetrievalPlan,
+  applyRetrievalPlan,
+  mergeRetrievalPlan,
+  planRetrieval,
+  planRetrievalAsync,
+  chooseStrategy,
+  readGraphReadiness,
+  profileNaturalLanguageQuery,
+  extractMdxRelations,
+  relationDocumentKey,
+  RelationGraphStore,
+  QueryBuilder,
 
   // Gram-Schmidt primitives
   dotProduct,
@@ -115,9 +151,49 @@ export {
   encodeVectorBlob,
   prepareTextForEmbedding,
   extractTags,
+  parseMdxDocument,
 };
 
 export type { EngineState } from "./engine.js";
+
+export type {
+  RetrievalPlan,
+  RetrievalPlanInput,
+  RetrievalStrategy,
+} from "./retrieval/retrieval-plan.js";
+
+export type {
+  ExpansionBuilder,
+  ExternalRerankInput,
+  PostprocessBuilder,
+  PostprocessInput,
+  RerankBuilder,
+  RetrievalFilterInput,
+  ScopeBuilder,
+} from "./retrieval/query-builder.js";
+
+export type {
+  QueryPlanningOptions,
+  QueryProfile,
+  QueryProfileSignals,
+  RetrievalDecision,
+  RetrievalExplanation,
+  RetrievalStrategySource,
+  QueryInterpreter,
+  GraphReadiness,
+  StrategyDecision,
+} from "./retrieval/query-planner.js";
+
+export type {
+  MemoryRelation,
+  RelatedChunk,
+  RelationGraphSnapshot,
+  RelationKind,
+  RelationOrigin,
+  RelationStatus,
+} from "./retrieval/relation-graph.js";
+
+export type { MdxDocument, MdxFrontmatter } from "./utils/mdx-document.js";
 
 export type {
   ChunkCandidate,
@@ -165,6 +241,7 @@ export type {
   QueryVector,
   ReconciliationReport,
   SearchEnvelope,
+  SearchOptions,
   SearchResult,
   Stage as StageContract,
   TagEntry,
@@ -181,6 +258,12 @@ export type {
   VectorStore,
   VectorStoreContract,
   VectorStoreStats,
+  MemoryRelationRecord,
+  MemoryRelationKind,
+  MemoryRelationOrigin,
+  MemoryRelationStatus,
+  RelationListOptions,
+  RelationStoreContract,
   TdbChunkInput,
   TdbChunkRow,
   TdbDeleteEnvelope,

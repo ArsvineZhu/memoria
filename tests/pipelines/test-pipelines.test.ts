@@ -123,6 +123,7 @@ test("IngestPipeline exposes the default ingestion stage chain with names", () =
       "chunkEmbedder",
       "tagEmbedder",
       "metadataWriter",
+      "relationGraphWriter",
       "vectorIndexer",
       "cooccurrenceBuilder",
     ],
@@ -202,12 +203,12 @@ test("SearchPipeline enables memo and postprocess stages when gated", () => {
     "tagExpander",
     "vectorReshaper",
     "geodesicReranker",
+    "expander",
+    "associator",
     "resultDeduplicator",
     "externalReranker",
     "timeDecay",
     "truncator",
-    "expander",
-    "associator",
     "resultFormatter",
   ]);
 });
@@ -458,6 +459,25 @@ test("SearchPipeline returns the best matching chunk on top", async (t) => {
     top.tags.includes("alpha-arch"),
     "result tags should include the matching tags",
   );
+});
+
+test("ResultFormatter applies the content cap after metadata hydration", async () => {
+  const stage = new ResultFormatterStage();
+  const out = await stage.process(
+    { mergedCandidates: [{ chunkId: 1, score: 0.9 }] },
+    makeContext(
+      { truncateEnabled: true, maxContentLength: 5, truncateEllipsis: false },
+      {
+        metadataStore: {
+          async getChunkById() {
+            return { id: 1, content: "123456789" };
+          },
+        } as never,
+      },
+    ),
+  );
+
+  assert.equal(out.results[0]?.content, "12345");
 });
 
 test("run() merges per-run options into the stage input", async (t) => {

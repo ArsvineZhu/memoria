@@ -263,6 +263,107 @@ test("ExternalRerankerStage keeps un-reranked candidates at the tail", async () 
   assert.strictEqual(out.mergedCandidates[1].rerankScore, undefined);
 });
 
+test("ExternalRerankerStage supports weighted RRF fusion", async () => {
+  const stage = new ExternalRerankerStage();
+  const ctx = new PipelineContext({
+    config: {
+      externalRerankEnabled: true,
+      externalRerankMode: "rrf",
+      externalRerankAlpha: 1,
+      reranker: async () => [
+        { chunkId: 3, score: 0.8 },
+        { chunkId: 2, score: 0.7 },
+        { chunkId: 1, score: 0.6 },
+      ],
+    },
+  });
+  const out = await stage.process(
+    {
+      query: "q",
+      mergedCandidates: [
+        { chunkId: 1, score: 0.99 },
+        { chunkId: 2, score: 0.8 },
+        { chunkId: 3, score: 0.7 },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepStrictEqual(
+    out.mergedCandidates.map((candidate) => candidate.chunkId),
+    [3, 2, 1],
+  );
+  assert.ok(
+    out.mergedCandidates[0].score > out.mergedCandidates[1].score,
+    "RRF score becomes the downstream effective score",
+  );
+  assert.equal(out.mergedCandidates[0].originalScore, 0.7);
+  assert.ok(Number.isFinite(out.mergedCandidates[0].externalRrfScore));
+  assert.equal(out.reranked, true);
+});
+
+test("RRF order survives final result formatting", async () => {
+  const reranked = await new ExternalRerankerStage().process(
+    {
+      query: "q",
+      mergedCandidates: [
+        { chunkId: 1, score: 0.99 },
+        { chunkId: 2, score: 0.8 },
+        { chunkId: 3, score: 0.7 },
+      ],
+    },
+    new PipelineContext({
+      config: {
+        externalRerankEnabled: true,
+        externalRerankMode: "rrf",
+        externalRerankAlpha: 1,
+        reranker: async () => [
+          { chunkId: 3, score: 0.8 },
+          { chunkId: 2, score: 0.7 },
+          { chunkId: 1, score: 0.6 },
+        ],
+      },
+    }),
+  );
+  const formatted = await new ResultFormatterStage().process(
+    reranked,
+    new PipelineContext({ config: {} }),
+  );
+
+  assert.deepEqual(
+    formatted.results.map((result) => result.chunkId),
+    [3, 2, 1],
+  );
+});
+
+test("ExternalRerankerStage honors an explicit zero RRF weight", async () => {
+  const out = await new ExternalRerankerStage().process(
+    {
+      query: "q",
+      mergedCandidates: [
+        { chunkId: 1, score: 0.9 },
+        { chunkId: 2, score: 0.8 },
+      ],
+    },
+    new PipelineContext({
+      config: {
+        externalRerankEnabled: true,
+        externalRerankMode: "rrf",
+        externalRerankAlpha: 0,
+        reranker: async () => [
+          { chunkId: 2, score: 1 },
+          { chunkId: 1, score: 0 },
+        ],
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    out.mergedCandidates.map((candidate) => candidate.chunkId),
+    [1, 2],
+  );
+});
+
 test("ExternalRerankerStage skips when no reranker is injected", async () => {
   const stage = new ExternalRerankerStage();
   const ctx = new PipelineContext({ config: { externalRerankEnabled: true } });
@@ -432,6 +533,34 @@ test("TruncatorStage supports maxResults alias and text field sync", async () =>
   );
 });
 
+test("TruncatorStage filters by score threshold before applying the result cap", async () => {
+  const stage = new TruncatorStage();
+  const ctx = new PipelineContext({
+    config: {
+      truncateEnabled: true,
+      topK: 10,
+      truncateMinScore: 0.6,
+    },
+  });
+  const out = await stage.process(
+    {
+      mergedCandidates: [
+        { chunkId: 1, score: 0.9 },
+        { chunkId: 2, score: 0.5 },
+        { chunkId: 3, score: 0.6 },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(
+    out.mergedCandidates.map((candidate) => candidate.chunkId),
+    [1, 3],
+  );
+  assert.equal(out.truncationStats?.scoreFiltered, 1);
+  assert.equal(out.truncationStats?.dropped, 1);
+});
+
 test("TruncatorStage passes through when disabled", async () => {
   const stage = new TruncatorStage();
   const candidates = [{ chunkId: 1, score: 0.9, content: "long content here" }];
@@ -477,6 +606,93 @@ test("ExpanderStage adds same-file chunks with an expansion boost", async () => 
   assert.strictEqual(expanded!.score, 0.4, "boost applied to base score");
   assert.strictEqual(expanded!.expansionOf, c1);
   assert.strictEqual(out.expansionStats!.added, 1);
+});
+
+test("ExpanderStage applies the resolved hard scope before adding siblings", async () => {
+  const stage = new ExpanderStage();
+  const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const inScopeFile = (await store.upsertFile({
+    path: "research/a.md",
+    diaryName: "research",
+    checksum: "a",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const outsideFile = (await store.upsertFile({
+    path: "private/b.md",
+    diaryName: "private",
+    checksum: "b",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const [seed, sibling] = await store.insertChunks(inScopeFile, [
+    { chunkIndex: 0, content: "seed" },
+    { chunkIndex: 1, content: "sibling" },
+  ]);
+  const [outside] = await store.insertChunks(outsideFile, [
+    { chunkIndex: 0, content: "outside" },
+  ]);
+
+  const out = await stage.process(
+    {
+      resolvedIndexNames: ["research"],
+      allowedChunkIds: new Set([seed, sibling]),
+      mergedCandidates: [
+        { chunkId: seed, score: 0.8, source: "vector" },
+        { chunkId: outside, score: 0.7, source: "vector" },
+      ],
+    },
+    new PipelineContext({
+      config: { expansionEnabled: true, expansionBoost: 0.5, expandCount: 1 },
+      metadataStore: store,
+    }),
+  );
+
+  assert.deepEqual(
+    out.mergedCandidates?.map((candidate) => candidate.chunkId),
+    [seed, sibling],
+  );
+  store.close();
+});
+
+test("ExpanderStage can materialize the full parent document", async () => {
+  const stage = new ExpanderStage();
+  const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
+  const file = (await store.upsertFile({
+    path: "docs/guide.md",
+    diaryName: "docs",
+    checksum: "guide",
+    mtime: 1,
+    size: 1,
+  }))!;
+  const [first, second] = await store.insertChunks(file, [
+    { chunkIndex: 0, content: "第一节" },
+    { chunkIndex: 1, content: "第二节" },
+  ]);
+
+  const out = await stage.process(
+    {
+      resolvedIndexNames: ["docs"],
+      allowedChunkIds: new Set([first, second]),
+      mergedCandidates: [{ chunkId: first, score: 0.8 }],
+    },
+    new PipelineContext({
+      config: {
+        expansionEnabled: true,
+        fullDocumentExpansionEnabled: true,
+        expandCount: 1,
+      },
+      metadataStore: store,
+    }),
+  );
+
+  assert.equal(out.mergedCandidates?.length, 1);
+  assert.equal(out.mergedCandidates?.[0]?.content, "第一节\n\n第二节");
+  assert.equal(out.mergedCandidates?.[0]?.text, "第一节\n\n第二节");
+  assert.equal(out.mergedCandidates?.[0]?.expandedDocument, true);
+  assert.equal(out.expansionStats?.added, 0);
+  assert.equal(out.expansionStats?.documentsExpanded, 1);
+  store.close();
 });
 
 test("ExpanderStage is gated off by default", async () => {
@@ -609,6 +825,45 @@ test("AssociatorStage adds scoped tag and vector neighbors with deterministic me
   assert.strictEqual(out.associatorStats!.fromTags, 1);
   assert.strictEqual(out.associatorStats!.fromVector, 1);
   assert.deepStrictEqual(searchedIndexes.sort(), ["diary1", "diary2"]);
+});
+
+test("AssociatorStage applies the resolved chunk scope before adding neighbors", async () => {
+  const stage = new AssociatorStage();
+  const { store, seedChunk, tagChunk, outsideChunk, vectorChunk } =
+    await seedAssociatorStore();
+  const vectorStore: VectorStoreContract = {
+    search: async (_indexName, _vector, _k) => [
+      { id: seedChunk, score: 0.99 },
+      { id: tagChunk, score: 0.8 },
+      { id: outsideChunk, score: 0.95 },
+      { id: vectorChunk, score: 0.6 },
+    ],
+  } as VectorStoreContract;
+  const out = await stage.process(
+    {
+      resolvedIndexNames: ["diary1", "diary2", "diary3"],
+      allowedChunkIds: new Set([seedChunk, vectorChunk]),
+      mergedCandidates: [{ chunkId: seedChunk, score: 0.9 }],
+    },
+    new PipelineContext({
+      config: {
+        associatorEnabled: true,
+        associatorSeeds: 1,
+        associateCount: 5,
+        associatorUseVector: true,
+        associatorVecK: 5,
+        dimension: dim,
+      },
+      metadataStore: store,
+      vectorStore,
+    }),
+  );
+
+  assert.deepEqual(
+    out.mergedCandidates.map((candidate) => candidate.chunkId),
+    [seedChunk, vectorChunk],
+  );
+  store.close();
 });
 
 test("AssociatorStage keeps vector-only candidates, excludes existing chunks, and honors the cap", async () => {

@@ -58,11 +58,7 @@ test("filesystem adapter prefers file snapshots when both target contracts exist
   const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-dual-"));
   const filePath = join(root, "life", "coffee.mdx");
   await mkdir(join(root, "life"), { recursive: true });
-  await writeFile(
-    filePath,
-    "---\ntags:\n  - coffee\n---\nBody only",
-    "utf8",
-  );
+  await writeFile(filePath, "---\ntags:\n  - coffee\n---\nBody only", "utf8");
   let logicalIngests = 0;
   let logicalDeletes = 0;
   const fileSnapshots: FileInput[][] = [];
@@ -94,6 +90,10 @@ test("filesystem adapter prefers file snapshots when both target contracts exist
   assert.equal(logicalDeletes, 0);
   assert.equal(fileSnapshots.length, 1);
   assert.equal(fileSnapshots[0]?.[0]?.content, "Body only");
+  assert.equal(
+    fileSnapshots[0]?.[0]?.sourceContent,
+    "---\ntags:\n  - coffee\n---\nBody only",
+  );
   assert.deepEqual(fileSnapshots[0]?.[0]?.documentMetadata, { tags: ["coffee"] });
   assert.equal(fileDeletes, 1);
 });
@@ -244,6 +244,86 @@ test("filesystem adapter scans accepted files and maps deletes", async () => {
   assert.equal(target.deleted[0]?.relPath, "nested/two.md");
 });
 
+test("filesystem adapter syncs additions, unchanged sources, and safe removals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-sync-"));
+  await mkdir(join(root, "notes"), { recursive: true });
+  await writeFile(join(root, "notes", "keep.md"), "keep", "utf8");
+  const ingested: FileInput[][] = [];
+  const deleted: FileInput[] = [];
+  let rows = [
+    {
+      id: 1,
+      path: "notes/keep.md",
+      diary_name: "notes",
+      checksum: "old",
+      mtime: 1,
+      size: 4,
+    },
+    {
+      id: 2,
+      path: "notes/removed.md",
+      diary_name: "notes",
+      checksum: "old",
+      mtime: 1,
+      size: 7,
+    },
+    {
+      id: 3,
+      path: "__logical__/protected",
+      diary_name: "Logical",
+      checksum: "logical",
+      mtime: 1,
+      size: 7,
+      document_id: "protected",
+    },
+  ];
+  const adapter = new FilesystemIngestionAdapter(
+    {
+      async flushBatch(files): Promise<IngestEnvelope[]> {
+        ingested.push([...files]);
+        return files.map((file) => ({
+          path: file.path,
+          relPath: file.relPath || file.path,
+          content: file.content || "",
+          mtime: file.mtime || 0,
+          size: file.size || 0,
+          diaryName: "notes",
+          checksum: "test",
+          needsEmbedding: false,
+          unstable: false,
+          skipped: file.path.endsWith("keep.md"),
+          error: undefined,
+          removedChunkIds: [],
+        }));
+      },
+      async handleDelete(input): Promise<DeleteEnvelope> {
+        deleted.push(input);
+        rows = rows.filter((row) => row.path !== input.relPath);
+        return { path: input.path, deleted: true, removedChunkIds: [] };
+      },
+      async listFiles() {
+        return rows;
+      },
+    },
+    { rootPath: root, extensions: [".md"] },
+  );
+
+  const before = await readFile(join(root, "notes", "keep.md"), "utf8");
+  const result = await adapter.sync();
+  const after = await readFile(join(root, "notes", "keep.md"), "utf8");
+  assert.equal(result.scanned, 1);
+  assert.equal(result.unchanged, 1);
+  assert.equal(result.ingested, 0);
+  assert.equal(result.removed, 1);
+  assert.deepEqual(result.errors, []);
+  assert.equal(deleted[0]?.relPath, "notes/removed.md");
+  assert.equal(before, after);
+  assert.equal(
+    rows.some((row) => row.document_id === "protected"),
+    true,
+  );
+});
+
 test("filesystem adapter rejects symlink or junction paths outside its root", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-containment-"));
   const outside = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-outside-"));
@@ -261,13 +341,11 @@ test("filesystem adapter rejects symlink or junction paths outside its root", as
   const adapter = new FilesystemIngestionAdapter(makeTarget(), { rootPath: root });
   await assert.rejects(
     () => adapter.ingestFile(join(linked, "secret.md")),
-    (error: unknown) =>
-      error instanceof Error && /outside|root/i.test(error.message),
+    (error: unknown) => error instanceof Error && /outside|root/i.test(error.message),
   );
   await assert.rejects(
     () => adapter.ingestFile(join(linked, "new.md")),
-    (error: unknown) =>
-      error instanceof Error && /outside|root/i.test(error.message),
+    (error: unknown) => error instanceof Error && /outside|root/i.test(error.message),
   );
 });
 

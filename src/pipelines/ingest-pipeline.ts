@@ -7,6 +7,7 @@ import ChunkerStage from "../stages/ingestion/text-chunker.js";
 import ChunkEmbedderStage from "../stages/ingestion/chunk-embedder.js";
 import TagEmbedderStage from "../stages/ingestion/tag-embedder.js";
 import MetadataWriterStage from "../stages/ingestion/metadata-writer.js";
+import RelationGraphWriterStage from "../stages/ingestion/relation-graph-writer.js";
 import VectorIndexerStage from "../stages/ingestion/vector-indexer.js";
 import CooccurrenceBuilderStage from "../stages/ingestion/co-occurrence-builder.js";
 import type { MemoryConfigOverrides, PipelineData } from "../types.js";
@@ -58,7 +59,7 @@ class IngestPipeline extends Pipeline {
    * @returns {import('../core/stage.js').Stage[]}
    */
   static defaultStages(_config: MemoryConfigOverrides): Stage[] {
-    return [
+    const stages: Stage[] = [
       new FileReaderStage(),
       new TagExtractorStage(),
       new ChunkerStage(),
@@ -68,6 +69,10 @@ class IngestPipeline extends Pipeline {
       new VectorIndexerStage(),
       new CooccurrenceBuilderStage(),
     ];
+    if (_config.relationGraphEnabled !== false) {
+      stages.splice(6, 0, new RelationGraphWriterStage());
+    }
+    return stages;
   }
 }
 

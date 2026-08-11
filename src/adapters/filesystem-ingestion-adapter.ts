@@ -14,6 +14,7 @@ import type {
   IngestEnvelope,
   MemoryDocumentDeleteResult,
   MemoryDocumentIngestResult,
+  FileRow,
   UnknownRecord,
 } from "../types.js";
 
@@ -29,6 +30,15 @@ export interface FilesystemIngestionTarget {
   remove?(documentId: string): Promise<MemoryDocumentDeleteResult>;
   flushBatch?(files: readonly FileInput[]): Promise<IngestEnvelope[]>;
   handleDelete?(input: FileInput): Promise<DeleteEnvelope>;
+  listFiles?(): Promise<readonly FileRow[]>;
+}
+
+export interface SourceSyncResult {
+  scanned: number;
+  ingested: number;
+  unchanged: number;
+  removed: number;
+  errors: Array<{ path: string; error: string }>;
 }
 
 export interface FilesystemIngestionAdapterOptions {
@@ -96,7 +106,11 @@ class FilesystemIngestionAdapter {
     const absolutePath = this.assertFilePath(filePath);
     if (!this.accepts(absolutePath)) return [];
     const snapshot = await this.readSnapshot(absolutePath);
-    if (!this.target.flushBatch && this.target.ingest && snapshot.content !== undefined) {
+    if (
+      !this.target.flushBatch &&
+      this.target.ingest &&
+      snapshot.content !== undefined
+    ) {
       const relativePath = snapshot.relPath ?? this.relativePath(absolutePath);
       const metadata = {
         ...(snapshot.documentMetadata ?? {}),
@@ -145,6 +159,66 @@ class FilesystemIngestionAdapter {
       results.push(...(await this.ingestFile(filePath)));
     }
     return results;
+  }
+
+  /**
+   * Reconcile the managed source root with the authoritative metadata rows.
+   * Only files under this adapter's root and without a logical document id
+   * are eligible for removal; logical/application documents cannot be
+   * deleted by a filesystem sync. Source bytes are read but never written.
+   */
+  async sync(): Promise<SourceSyncResult> {
+    const files = await this.collectFiles(this.rootPath);
+    const result: SourceSyncResult = {
+      scanned: files.length,
+      ingested: 0,
+      unchanged: 0,
+      removed: 0,
+      errors: [],
+    };
+    const current = new Set<string>();
+
+    for (const filePath of files) {
+      const relativePath = this.relativePath(filePath);
+      current.add(relativePath);
+      try {
+        const envelopes = await this.ingestFile(filePath);
+        for (const envelope of envelopes) {
+          if (envelope.skipped === true) result.unchanged += 1;
+          else if (envelope.error) {
+            result.errors.push({ path: relativePath, error: String(envelope.error) });
+          } else {
+            result.ingested += 1;
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        result.errors.push({ path: relativePath, error: message });
+        await this.reportError(error);
+      }
+    }
+
+    if (!this.target.listFiles || !this.target.handleDelete) return result;
+    const existing = await this.target.listFiles();
+    for (const row of existing) {
+      if (row.document_id) continue;
+      const relativePath = this.relativeStoredPath(row.path);
+      if (!relativePath || !this.accepts(resolve(this.rootPath, relativePath)))
+        continue;
+      if (current.has(relativePath)) continue;
+      try {
+        const deleted = await this.target.handleDelete({
+          path: resolve(this.rootPath, relativePath),
+          relPath: relativePath,
+        });
+        if (deleted.deleted) result.removed += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        result.errors.push({ path: relativePath, error: message });
+        await this.reportError(error);
+      }
+    }
+    return result;
   }
 
   async start(): Promise<void> {
@@ -243,6 +317,7 @@ class FilesystemIngestionAdapter {
       path: filePath,
       relPath: this.relativePath(filePath),
       content,
+      sourceContent: rawContent,
       mtime: Math.trunc(after.mtimeMs),
       size: after.size,
       revision: createHash("sha256").update(rawContent).digest("hex"),
@@ -298,6 +373,22 @@ class FilesystemIngestionAdapter {
 
   private relativePath(filePath: string): string {
     return relative(this.rootPath, filePath).split(sep).join("/");
+  }
+
+  private relativeStoredPath(storedPath: string): string | null {
+    if (typeof storedPath !== "string" || storedPath.length === 0) return null;
+    const absolute = isAbsolute(storedPath)
+      ? resolve(storedPath)
+      : resolve(this.rootPath, storedPath);
+    const relativePath = relative(this.rootPath, absolute);
+    if (
+      relativePath === ".." ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      return null;
+    }
+    return relativePath.split(sep).join("/");
   }
 }
 

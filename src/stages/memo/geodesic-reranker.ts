@@ -7,7 +7,14 @@ import type {
 } from "../../types.js";
 
 import Stage from "../../core/stage.js";
+import { createMemoRuntimeFacade } from "../../native/memo-runtime.js";
 import { asMemoriaError } from "../../errors.js";
+import {
+  ensureNativeMemoArtifact,
+  getNativeMemoIndex,
+  nativeDatabasePath,
+  readRecord,
+} from "./native-memo-runtime.js";
 
 const DEFAULT_ALPHA = 0.3;
 const DEFAULT_MIN_GEO_SAMPLES = 4;
@@ -41,7 +48,7 @@ class GeodesicRerankerStage extends Stage {
       geodesicSkipped?: boolean;
     }
   > {
-    const info = input || {};
+    let info = input || {};
     const candidates = Array.isArray(info.mergedCandidates)
       ? info.mergedCandidates
       : [];
@@ -57,8 +64,31 @@ class GeodesicRerankerStage extends Stage {
       };
     }
 
+    if (config.nativeMemoEnabled === true && info.nativeMemoSkipped === false) {
+      const native = await this._nativeRerank(info, ctx, alpha, minGeoSamples);
+      if (native.output) {
+        return {
+          ...native.output,
+          mergedCandidates: (Array.isArray(native.output.mergedCandidates)
+            ? native.output.mergedCandidates
+            : candidates) as ChunkCandidate[],
+        };
+      }
+      if (native.reason) {
+        info = {
+          ...info,
+          nativeGeodesicSkipped: true,
+          nativeGeodesicSkipReason: native.reason,
+        };
+      }
+    }
+
     const activations = info.tagMemo?.activations;
-    if (!(activations instanceof Map) || activations.size === 0 || candidates.length === 0) {
+    if (
+      !(activations instanceof Map) ||
+      activations.size === 0 ||
+      candidates.length === 0
+    ) {
       return {
         ...info,
         mergedCandidates: candidates,
@@ -141,7 +171,8 @@ class GeodesicRerankerStage extends Stage {
           ? (1 - alpha) * observed.originalScore + alpha * normalized
           : observed.originalScore;
       observed.finalScore = finalScore;
-      if (Number.isFinite(observed.chunkId)) finalByChunk.set(observed.chunkId, finalScore);
+      if (Number.isFinite(observed.chunkId))
+        finalByChunk.set(observed.chunkId, finalScore);
     }
 
     const reranked = scored.map((item) => ({
@@ -166,6 +197,207 @@ class GeodesicRerankerStage extends Stage {
         scores: observedScores,
       },
     };
+  }
+
+  private async _nativeRerank(
+    info: PipelineData,
+    ctx: PipelineContextLike,
+    alpha: number,
+    minGeoSamples: number,
+  ): Promise<{ output?: PipelineData; reason?: string }> {
+    const index = getNativeMemoIndex(ctx);
+    const dbPath = nativeDatabasePath(ctx);
+    if (!index || !dbPath || typeof index.rerankMemoDtsc !== "function") {
+      return { reason: "native DTSC reranker is unavailable" };
+    }
+
+    let artifact = readRecord(info.nativeMemoArtifact);
+    if (typeof artifact.artifactSig !== "string" || !artifact.artifactSig) {
+      const built = await ensureNativeMemoArtifact(ctx, index);
+      if (!built.state) {
+        return { reason: built.reason };
+      }
+      artifact = built.state as unknown as Record<string, unknown>;
+    }
+
+    const nativeMemo = readRecord(info.nativeMemo);
+    const candidates = Array.isArray(info.mergedCandidates)
+      ? info.mergedCandidates
+      : [];
+    const originalById = new Map(
+      candidates.map((candidate) => [Number(candidate.chunkId), candidate]),
+    );
+    const options =
+      info.options && typeof info.options === "object" ? info.options : {};
+    const configured = ctx.config.nativeGeodesicConfig;
+    const nativeConfig =
+      configured && typeof configured === "object" && !Array.isArray(configured)
+        ? { ...(configured as Record<string, unknown>) }
+        : {};
+    const observationHandle =
+      typeof nativeMemo.observationHandle === "string"
+        ? nativeMemo.observationHandle
+        : undefined;
+    const originalQuery = info.nativeQueryVector ?? info.queryVector;
+    const enhancedQuery = info.queryVector;
+    const payload: Record<string, unknown> = {
+      dimension: Number(ctx.config.dimension),
+      observationHandle,
+      queryGeometryState: {
+        epa: info.epa || {},
+        pyramid: info.pyramid || {},
+      },
+      topK: Math.max(
+        1,
+        Math.floor(
+          Number(
+            (options as Record<string, unknown>).topK ??
+              ctx.config.topK ??
+              candidates.length,
+          ) || 1,
+        ),
+      ),
+      candidates: candidates
+        .map((candidate) => ({
+          id: Number(candidate.chunkId),
+          score: this._score(candidate.score),
+        }))
+        .filter((candidate) => Number.isFinite(candidate.id) && candidate.id > 0),
+      config: {
+        ...nativeConfig,
+        alpha,
+        minGeoSamples,
+        minFieldTags: nativeConfig.minFieldTags ?? minGeoSamples,
+      },
+    };
+    if (!observationHandle) {
+      payload.observation = nativeMemo.observation || {};
+      payload.originalQueryVector = this._vectorArray(originalQuery);
+      payload.enhancedQueryVector = this._vectorArray(enhancedQuery);
+    }
+
+    try {
+      const runtime = createMemoRuntimeFacade(index, dbPath);
+      const raw = await runtime.rerankDtsc(
+        JSON.stringify(payload),
+        String(artifact.artifactSig),
+      );
+      const output = this._nativeRecord(raw);
+      const nativeResults =
+        output && Array.isArray(output.results) ? output.results : null;
+      if (!output || !nativeResults) {
+        return { reason: "native DTSC reranker returned invalid JSON" };
+      }
+
+      const ranked: ChunkCandidate[] = [];
+      const rankedIds = new Set<number>();
+      const scores: GeodesicData["scores"] = [];
+      for (const rawResult of nativeResults) {
+        const result = readRecord(rawResult);
+        const chunkId = Number(result.id ?? result.chunkId);
+        if (!Number.isFinite(chunkId)) continue;
+        const original = originalById.get(chunkId);
+        const originalScore = this._finiteOr(
+          result.originalKnnScore,
+          this._score(original?.score),
+        );
+        const geoScore = this._finiteOr(result.geoScore, 0);
+        const normalizedGeoScore = this._finiteOr(result.normalizedGeo, 0);
+        const finalScore = this._finiteOr(result.score, originalScore);
+        const hitCount = Math.max(
+          0,
+          Math.round(this._finiteOr(result.hitCount ?? result.fieldTagCount, 0)),
+        );
+        ranked.push({
+          ...(original || { chunkId, score: originalScore }),
+          chunkId,
+          score: finalScore,
+          originalKnnScore: originalScore,
+          geoScore,
+          normalizedGeo: normalizedGeoScore,
+          geoBonus: this._finiteOr(result.geoBonus, 0),
+          nativeGeodesic: result,
+        });
+        rankedIds.add(chunkId);
+        scores.push({
+          chunkId,
+          originalScore,
+          geoScore,
+          normalizedGeoScore,
+          finalScore,
+          hitCount,
+        });
+      }
+      for (const candidate of candidates) {
+        if (rankedIds.has(Number(candidate.chunkId))) continue;
+        ranked.push(candidate);
+        scores.push({
+          chunkId: Number(candidate.chunkId),
+          originalScore: this._score(candidate.score),
+          geoScore: 0,
+          normalizedGeoScore: 0,
+          finalScore: this._score(candidate.score),
+          hitCount: 0,
+        });
+      }
+
+      const appliedCount = scores.filter((score) => score.geoScore > 0).length;
+      return {
+        output: {
+          ...info,
+          mergedCandidates: ranked,
+          geodesic: {
+            version: "rust-dtsc-v1",
+            alpha,
+            minGeoSamples,
+            appliedCount,
+            degradedCount: Math.max(0, scores.length - appliedCount),
+            native: true,
+            schema: typeof output.schema === "string" ? output.schema : undefined,
+            algorithmVersion:
+              typeof output.algorithmVersion === "string"
+                ? output.algorithmVersion
+                : undefined,
+            diagnostics: readRecord(output.diagnostics),
+            scores,
+          },
+          geodesicSkipped: false,
+          nativeGeodesic: output,
+        },
+      };
+    } catch (error) {
+      return {
+        reason:
+          error instanceof Error
+            ? `native DTSC reranker failed: ${error.message}`
+            : String(error),
+      };
+    }
+  }
+
+  private _nativeRecord(value: unknown): Record<string, unknown> | null {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    if (typeof value !== "string") return null;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  private _vectorArray(value: unknown): number[] {
+    if (!Array.isArray(value) && !(value instanceof Float32Array)) return [];
+    return Array.from(value as ArrayLike<unknown>, (item) => this._score(item));
+  }
+
+  private _finiteOr(value: unknown, fallback: number): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
 
   private async _resolveTagIds(

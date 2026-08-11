@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
+import Database from "better-sqlite3";
 
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
 import type { FileMetadataInput } from "../../src/types.js";
@@ -47,6 +48,138 @@ test("Schema tables are created on construction", () => {
     assert.ok(tables.includes(t), `table ${t} should exist`);
   }
   store.close();
+});
+
+test("Schema includes the native Memo artifact tables", () => {
+  const store = makeStore();
+  const tables = new Set(
+    (
+      store.db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?, ?, ?)",
+        )
+        .all(
+          "tagmemo_artifacts",
+          "tag_pair_similarity",
+          "tag_intrinsic_residuals",
+          "rivermemo_artifacts",
+        ) as Array<{ name: string }>
+    ).map((row) => row.name),
+  );
+  assert.deepEqual([...tables].sort(), [
+    "rivermemo_artifacts",
+    "tag_intrinsic_residuals",
+    "tag_pair_similarity",
+    "tagmemo_artifacts",
+  ]);
+  assert.ok(
+    (
+      store.db.prepare("PRAGMA table_info(tag_intrinsic_residuals)").all() as Array<{
+        name: string;
+      }>
+    ).some((column) => column.name === "v9_anchor_gain"),
+  );
+  assert.ok(
+    (
+      store.db.prepare("PRAGMA table_info(rivermemo_artifacts)").all() as Array<{
+        name: string;
+      }>
+    ).some((column) => column.name === "payload_checksum"),
+  );
+  store.close();
+});
+
+test("SQLite relation authority preserves source revisions and reversible derived state", async () => {
+  const store = makeStore();
+  const first = {
+    id: "source-rev-1",
+    from: "path:a.mdx",
+    to: "path:b.mdx",
+    kind: "explicit-link" as const,
+    origin: "source" as const,
+    confidence: 1,
+    weight: 1,
+    evidence: "markdown-link",
+    sourceRevision: "rev-1",
+    createdAt: 1,
+    updatedAt: 1,
+    status: "active" as const,
+    active: true,
+  };
+  await store.replaceExplicitRelations("path:a.mdx", "rev-1", [first]);
+  await store.replaceExplicitRelations("path:a.mdx", "rev-2", [
+    {
+      ...first,
+      id: "source-rev-2",
+      to: "path:c.mdx",
+      sourceRevision: "rev-2",
+    },
+  ]);
+  await store.upsertDerivedRelations([
+    {
+      from: "path:b.mdx",
+      to: "path:c.mdx",
+      kind: "derived-link",
+      confidence: 0.6,
+      weight: 0.4,
+      evidence: "co-retrieval",
+      provenance: { algorithm: "test" },
+      active: true,
+    },
+  ]);
+
+  const active = await store.listRelations();
+  assert.equal(active.length, 2);
+  assert.ok(active.some((relation) => relation.id === "source-rev-2"));
+  assert.ok(active.some((relation) => relation.origin === "derived"));
+  assert.ok(active.every((relation) => relation.status === "active"));
+  const history = await store.listRelations({ includeInactive: true });
+  const stale = history.find((relation) => relation.id === "source-rev-1");
+  assert.equal(stale?.status, "stale");
+  assert.equal(stale?.active, false);
+  assert.equal(stale?.sourceRevision, "rev-1");
+  assert.deepEqual(stale?.sourceSpan, null);
+  assert.deepEqual(
+    history.find((relation) => relation.origin === "derived")?.provenance,
+    { algorithm: "test" },
+  );
+  assert.equal(await store.getRelationGeneration(), 3);
+  store.close();
+});
+
+test("Schema migrates the older VCP intrinsic residual table before indexing it", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-legacy-schema-"));
+  const dbPath = path.join(root, "legacy.sqlite");
+  const legacy = new Database(dbPath);
+  legacy.exec(`
+    CREATE TABLE tag_intrinsic_residuals (
+      tag_id INTEGER PRIMARY KEY,
+      residual_energy REAL NOT NULL,
+      neighbor_count INTEGER NOT NULL,
+      computed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  legacy.close();
+
+  const store = makeStore(dbPath);
+  const columns = new Set(
+    (
+      store.db.prepare("PRAGMA table_info(tag_intrinsic_residuals)").all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name),
+  );
+  assert.ok(columns.has("artifact_sig"));
+  assert.ok(columns.has("model_sig"));
+  assert.ok(
+    store.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_intrinsic_residual_artifact'",
+      )
+      .get(),
+  );
+  store.close();
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test("close propagates database failures and remains retryable", () => {

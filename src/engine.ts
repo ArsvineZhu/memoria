@@ -25,6 +25,7 @@ import type {
   PipelineData,
   ReconciliationReport,
   SearchEnvelope,
+  SearchOptions,
   UnknownRecord,
   VectorStoreContract,
 } from "./types.js";
@@ -35,6 +36,15 @@ import {
   buildTagVectorIndexEntries,
   buildVectorReconciliationPlan,
 } from "./reconciliation.js";
+import { clearNativeMemoArtifactCache } from "./stages/memo/native-memo-runtime.js";
+import QueryBuilder from "./retrieval/query-builder.js";
+import {
+  assertValidRetrievalPlanInput,
+  freezeRetrievalPlan,
+  normalizeRetrievalPlan,
+  type RetrievalPlan,
+} from "./retrieval/retrieval-plan.js";
+import type { RetrievalExplanation } from "./retrieval/query-planner.js";
 
 interface RuntimeMetadataStore extends MetadataStoreContract {
   close?: () => void;
@@ -81,6 +91,8 @@ function normalizeFiles(files: unknown): FileInput[] {
       path: typeof entry.path === "string" ? entry.path : "",
       relPath: typeof entry.relPath === "string" ? entry.relPath : undefined,
       content: typeof entry.content === "string" ? entry.content : undefined,
+      sourceContent:
+        typeof entry.sourceContent === "string" ? entry.sourceContent : undefined,
       mtime: typeof entry.mtime === "number" ? entry.mtime : undefined,
       size: typeof entry.size === "number" ? entry.size : undefined,
       documentId: typeof entry.documentId === "string" ? entry.documentId : undefined,
@@ -123,6 +135,7 @@ class MemoryEngine {
   name: string;
   options: MemoryEngineOptions;
   config: MemoryConfig;
+  readonly defaultRetrievalPlan: RetrievalPlan;
   metadataStore!: RuntimeMetadataStore;
   vectorStore!: RuntimeVectorStore;
   embeddingProvider!: EmbeddingProviderContract;
@@ -168,6 +181,10 @@ class MemoryEngine {
 
     // 1. Merged configuration (providers read from here).
     this.config = mergeConfig(options.config);
+    assertValidRetrievalPlanInput(options.defaultRetrievalPlan);
+    this.defaultRetrievalPlan = freezeRetrievalPlan(
+      normalizeRetrievalPlan(options.defaultRetrievalPlan),
+    );
     if (options.dbPath !== undefined) {
       this.config.dbPath = options.dbPath;
     }
@@ -192,7 +209,13 @@ class MemoryEngine {
     // Pipelines are pure stage graphs and do not open native resources.
     this.ingestPipeline = new IngestPipeline(this.config, options.ingestOptions || {});
     this.deletePipeline = new DeletePipeline(this.config, options.deleteOptions || {});
-    this.searchPipeline = new SearchPipeline(this.config, options.searchOptions || {});
+    const initialSearchOptions = { ...(options.searchOptions || {}) };
+    if (options.defaultRetrievalPlan !== undefined) {
+      initialSearchOptions.defaultRetrievalPlan = this.defaultRetrievalPlan;
+    } else {
+      delete initialSearchOptions.defaultRetrievalPlan;
+    }
+    this.searchPipeline = new SearchPipeline(this.config, initialSearchOptions);
 
     // Lifecycle + session statistics.
     this.state = "created";
@@ -249,7 +272,13 @@ class MemoryEngine {
       this._applyRagParamsToConfig(this.ragParams);
       const searchOptions = this.options.searchOptions || {};
       if (!Array.isArray(searchOptions.stages)) {
-        this.searchPipeline = new SearchPipeline(this.config, searchOptions);
+        const rebuiltSearchOptions = { ...searchOptions };
+        if (this.options.defaultRetrievalPlan !== undefined) {
+          rebuiltSearchOptions.defaultRetrievalPlan = this.defaultRetrievalPlan;
+        } else {
+          delete rebuiltSearchOptions.defaultRetrievalPlan;
+        }
+        this.searchPipeline = new SearchPipeline(this.config, rebuiltSearchOptions);
       }
       this.lastReconciliation = await this._recoverIndexes();
       if (this.options.onReady && typeof this.options.onReady === "function") {
@@ -489,6 +518,13 @@ class MemoryEngine {
     const embeddingOwned = this._ownsEmbeddingProvider;
 
     let firstError: unknown = null;
+    if (vectorOwned && vectorStore?.indices instanceof Map) {
+      for (const index of vectorStore.indices.values()) {
+        if (index && typeof index === "object") {
+          clearNativeMemoArtifactCache(index);
+        }
+      }
+    }
     if (vectorOwned && vectorStore && typeof vectorStore.close === "function") {
       try {
         await vectorStore.close();
@@ -677,6 +713,7 @@ class MemoryEngine {
                 path: entry.path,
                 relPath: entry.relPath,
                 content: entry.content,
+                sourceContent: entry.sourceContent,
                 mtime: entry.mtime,
                 size: entry.size,
                 documentId: entry.documentId,
@@ -843,7 +880,7 @@ class MemoryEngine {
    */
   search(
     query: string | PipelineData,
-    options: UnknownRecord = {},
+    options: SearchOptions = {},
   ): Promise<SearchEnvelope> {
     return this._runReadyOperation("search", () =>
       this._searchInternal(query, options),
@@ -852,7 +889,7 @@ class MemoryEngine {
 
   private async _searchInternal(
     query: string | PipelineData,
-    options: UnknownRecord = {},
+    options: SearchOptions = {},
   ): Promise<SearchEnvelope> {
     const input: PipelineData = {
       ...(isRecord(query) ? query : { query }),
@@ -868,6 +905,23 @@ class MemoryEngine {
         retryable: true,
       });
     }
+  }
+
+  /**
+   * Start an immutable fluent query builder. Execution still follows the
+   * ordinary search lifecycle and therefore requires initialize() at run().
+   */
+  query(query: string): QueryBuilder {
+    return new QueryBuilder(this, query);
+  }
+
+  /** Explain default/override resolution without running retrieval stages. */
+  explain(query: string, options: SearchOptions = {}): Promise<RetrievalExplanation> {
+    return this._runReadyOperation("explain", () =>
+      this._vectorCoordinator.runStableRead(() =>
+        this.searchPipeline.explain(query, options, this.ctx),
+      ),
+    );
   }
 
   /**
@@ -926,6 +980,20 @@ class MemoryEngine {
    */
   getStats(): Promise<EngineStats> {
     return this._runReadyOperation("getStats", () => this._getStatsInternal());
+  }
+
+  /**
+   * List authoritative file rows for source-management adapters. The
+   * returned rows are metadata snapshots only; this method never reads or
+   * mutates the user-owned source files.
+   */
+  listFiles(): Promise<import("./types.js").FileRow[]> {
+    return this._runReadyOperation("listFiles", async () => {
+      if (typeof this.metadataStore.getAllFiles === "function") {
+        return this.metadataStore.getAllFiles();
+      }
+      return [];
+    });
   }
 
   private async _getStatsInternal(): Promise<EngineStats> {

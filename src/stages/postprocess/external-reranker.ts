@@ -79,12 +79,47 @@ class ExternalRerankerStage extends Stage {
 
     const rerankedList = Array.isArray(reranked) ? reranked : [];
     const scoreById = new Map();
+    const rankById = new Map<number, number>();
     for (const entry of rerankedList) {
       const chunkId = Number(entry && entry.chunkId);
       const score = Number(entry && entry.score);
       if (Number.isFinite(chunkId) && Number.isFinite(score)) {
         scoreById.set(chunkId, score);
+        if (!rankById.has(chunkId)) rankById.set(chunkId, rankById.size + 1);
       }
+    }
+
+    if (config.externalRerankMode === "rrf") {
+      const configuredAlpha = Number(config.externalRerankAlpha ?? 0.5);
+      const alpha = Number.isFinite(configuredAlpha)
+        ? Math.max(0, Math.min(1, configuredAlpha))
+        : 0.5;
+      const k = 60;
+      const fused = candidates.map((candidate, index) => {
+        const externalRank = rankById.get(Number(candidate.chunkId));
+        const originalScore = Number(candidate.score) || 0;
+        const originalRrf = 1 / (k + index + 1);
+        const externalRrf = externalRank === undefined ? 0 : 1 / (k + externalRank);
+        const fusedScore = (1 - alpha) * originalRrf + alpha * externalRrf;
+        const externalScore = scoreById.get(Number(candidate.chunkId));
+        return {
+          ...candidate,
+          originalScore,
+          // RRF is a ranking score, not merely diagnostic metadata. Promote
+          // it to the working score so truncation, time decay and the final
+          // formatter cannot silently restore the pre-rerank ordering.
+          score: fusedScore,
+          rerankScore: fusedScore,
+          externalScore,
+          externalRrfScore: fusedScore,
+        };
+      });
+      fused.sort(
+        (left, right) =>
+          Number(right.rerankScore) - Number(left.rerankScore) ||
+          left.chunkId - right.chunkId,
+      );
+      return { ...info, mergedCandidates: fused, reranked: true };
     }
 
     const withRerank = [];
@@ -92,7 +127,12 @@ class ExternalRerankerStage extends Stage {
     for (const candidate of candidates) {
       const rerankScore = scoreById.get(Number(candidate && candidate.chunkId));
       if (rerankScore !== undefined) {
-        withRerank.push({ ...candidate, rerankScore });
+        withRerank.push({
+          ...candidate,
+          originalScore: Number(candidate.score) || 0,
+          score: rerankScore,
+          rerankScore,
+        });
       } else {
         withoutRerank.push(candidate);
       }

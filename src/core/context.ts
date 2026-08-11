@@ -20,6 +20,7 @@ class PipelineContext {
   readonly riverStateStore?: PipelineContextOptions["riverStateStore"];
   readonly tagGraph?: Map<number, Map<number, number>>;
   reranker?: PipelineContextOptions["reranker"];
+  readonly queryInterpreter?: PipelineContextOptions["queryInterpreter"];
   checkpointState?: { fileCount: number; diaries: Set<string> };
   /**
    * @param {object} opts
@@ -43,6 +44,7 @@ class PipelineContext {
     riverStateStore,
     tagGraph,
     reranker,
+    queryInterpreter,
   }: PipelineContextOptions) {
     this.config = config;
     this.embeddingProvider = embeddingProvider;
@@ -53,6 +55,7 @@ class PipelineContext {
     this.riverStateStore = riverStateStore;
     this.tagGraph = tagGraph;
     this.reranker = reranker;
+    this.queryInterpreter = queryInterpreter;
   }
 }
 

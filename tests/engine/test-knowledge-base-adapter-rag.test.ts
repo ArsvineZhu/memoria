@@ -9,6 +9,7 @@ import * as path from "node:path";
 import KnowledgeBaseAdapter from "../../src/compat/knowledge-base-adapter.js";
 import { createMemoryEngine } from "../../src/index.js";
 import type { EmbeddingProviderContract } from "../../src/types.js";
+import type { RetrievalPlanInput } from "../../src/retrieval/retrieval-plan.js";
 import { at } from "../../src/utils/numerical.js";
 import { encodeVectorBlob } from "../../src/utils/vector-codec.js";
 
@@ -40,12 +41,13 @@ function makeFakeEmbeddingProvider(
   };
 }
 
-function makeAdapter() {
+function makeAdapter(defaultRetrievalPlan?: RetrievalPlanInput) {
   const root = makeTmpDir();
   const engine = createMemoryEngine({
     config: { dimension: DIM, rootPath: root, storePath: makeTmpDir() },
     dbPath: ":memory:",
     embeddingProvider: makeFakeEmbeddingProvider(DIM),
+    defaultRetrievalPlan,
   });
   const adapter = new KnowledgeBaseAdapter({ engine });
   return { adapter, engine, root };
@@ -100,6 +102,22 @@ test("adapter exposes the extended RAG call-site surface as functions", async ()
       `adapter.${method} must be a function`,
     );
   }
+});
+
+test("adapter text search inherits the engine default retrieval plan", async () => {
+  const { adapter, root } = makeAdapter({
+    strategy: "field",
+    tagMemo: { plus: true, version: "v10" },
+  });
+  await adapter.initialize();
+  await seedDiary(adapter, root);
+
+  const result = await adapter.search("量子计算的主题");
+
+  assert.equal(result.retrievalTrace?.plan.strategy, "field");
+  assert.equal(result.retrievalTrace?.strategySource, "engine-default");
+  assert.equal(result.retrievalTrace?.queryOverrideApplied, false);
+  await adapter.close();
 });
 
 test("removeDocument deletes the file from metadata + vector indices", async () => {
@@ -207,6 +225,63 @@ test("applyTagBoostAsync returns a passthrough boost envelope with empty tag mat
   assert.strictEqual(boost.preparedMemoObservation, null);
 });
 
+test("legacy Memo adapters use the shared native runtime when it is available", async () => {
+  const { adapter, engine, root } = makeAdapter();
+  const native = {
+    async rebuildMemoArtifact() {
+      return { artifactSig: "adapter-artifact", generation: 1 };
+    },
+    async runMemoPipeline() {
+      return JSON.stringify({
+        observationHandle: "adapter-observation",
+        enhancedVector: new Array(DIM).fill(0.75),
+        observation: {
+          nodes: [{ id: 1, energy: 1, sourceType: "seed" }],
+          edges: [],
+        },
+        matchedTags: ["量子"],
+        coreTagsMatched: [],
+        effectiveTagBoost: 0.8,
+      });
+    },
+    async rerankRivermemoTopologyV3() {
+      return JSON.stringify({
+        algorithmVersion: "adapter-topology-v3",
+        omega: { omega: 0.8, regime: "connected" },
+        results: [
+          {
+            id: 7,
+            chunkId: 7,
+            score: 0.91,
+            topologyBonus: 0.04,
+          },
+        ],
+      });
+    },
+  };
+  engine.config.dbPath = path.join(root, "adapter-native.sqlite");
+  engine.options.ctx = { config: engine.config, vexusIndex: native };
+  await adapter.initialize();
+
+  const input = new Float32Array(DIM).fill(0.25);
+  const boost = await adapter.applyTagBoostAsync(input, 0.8, ["量子"]);
+  assert.deepEqual(Array.from(boost.vector), new Array(DIM).fill(0.75));
+  assert.deepEqual(boost.info.matchedTags, ["量子"]);
+  assert.equal(
+    boost.preparedMemoObservation && typeof boost.preparedMemoObservation,
+    "object",
+  );
+
+  const river = await adapter.rerankWithRiverMemoAsync(
+    { text: "关系路径", vector: input },
+    [{ id: 7, chunkId: 7, score: 0.6 }],
+  );
+  assert.equal(river.meta?.available, true);
+  assert.equal(river.meta?.topologyVersion, "v3");
+  assert.equal(river.results[0]?.topologyBonus, 0.04);
+  await adapter.close();
+});
+
 test("rerankWithTagMemoAsync / rerankWithRiverMemoAsync pass candidates through", async () => {
   const { adapter } = makeAdapter();
   await adapter.initialize();
@@ -231,6 +306,31 @@ test("rerankWithTagMemoAsync / rerankWithRiverMemoAsync pass candidates through"
   );
   assert.ok(Array.isArray(riverResult.results));
   assert.strictEqual(riverResult.results.length, 2);
+});
+
+test("rerankWithTagMemoAsync delegates to the native field stages when tags are available", async () => {
+  const { adapter, root } = makeAdapter();
+  await adapter.initialize();
+  await seedDiary(adapter, root);
+
+  const candidates = await adapter.search(
+    "diaryA",
+    new Float32Array(DIM).fill(0.5),
+    5,
+    0,
+  );
+  const result = await adapter.rerankWithTagMemoAsync(
+    { text: "量子计算", vector: new Float32Array(DIM).fill(0.5) },
+    candidates,
+    { minGeoSamples: 1 },
+  );
+
+  assert.equal(result.meta?.strategy, "field");
+  assert.equal(result.meta?.tagMemoVersion, "v10");
+  assert.equal(result.meta?.available, true);
+  assert.equal(result.results.length, candidates.length);
+  assert.ok(result.results.some((candidate) => "topologyBonus" in candidate));
+  await adapter.close();
 });
 
 test("getDiaryDateIndex returns sorted date metas for a diary", async () => {

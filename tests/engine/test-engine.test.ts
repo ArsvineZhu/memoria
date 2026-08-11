@@ -206,6 +206,67 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
   );
 });
 
+test("MemoryEngine fixes and exposes the normalized default retrieval plan", async () => {
+  const defaultRetrievalPlan = {
+    strategy: "field" as const,
+    tagMemo: { plus: true, version: "v10" as const },
+    postprocess: { timeDecay: true },
+  };
+  const { engine } = makeEngine({ defaultRetrievalPlan });
+
+  defaultRetrievalPlan.tagMemo.plus = false;
+  assert.equal(engine.defaultRetrievalPlan.strategy, "field");
+  assert.equal(engine.defaultRetrievalPlan.tagMemo?.plus, true);
+  assert.equal(engine.searchPipeline.defaultRetrievalPlan.tagMemo?.plus, true);
+  assert.equal(Object.isFrozen(engine.defaultRetrievalPlan), true);
+  assert.equal(Object.isFrozen(engine.defaultRetrievalPlan.tagMemo), true);
+  assert.throws(() => {
+    engine.defaultRetrievalPlan.tagMemo!.plus = false;
+  }, TypeError);
+
+  await engine.initialize();
+  assert.equal(engine.searchPipeline.defaultRetrievalPlan.strategy, "field");
+  assert.equal(engine.searchPipeline.defaultRetrievalPlan.postprocess?.timeDecay, true);
+  await engine.close();
+});
+
+test("MemoryEngine rejects an invalid default retrieval parameter at construction", () => {
+  assert.throws(
+    () =>
+      makeEngine({
+        defaultRetrievalPlan: {
+          strategy: "topology",
+          externalRerank: { mode: "rrf", alpha: 2 },
+        },
+      }),
+    /externalRerank\.alpha/,
+  );
+});
+
+test("MemoryEngine.explain shares default/override planning without running retrieval", async () => {
+  const { engine } = makeEngine({
+    defaultRetrievalPlan: {
+      strategy: "field",
+      tagMemo: { plus: true },
+    },
+  });
+  await engine.initialize();
+
+  const fromDefault = await engine.explain("普通主题查询");
+  assert.equal(fromDefault.plan.strategy, "field");
+  assert.equal(fromDefault.strategySource, "engine-default");
+  assert.equal(fromDefault.queryOverrideApplied, false);
+
+  const fromQuery = await engine.explain("这份记录的来源", {
+    retrievalPlan: { strategy: "topology" },
+  });
+  assert.equal(fromQuery.plan.strategy, "topology");
+  assert.equal(fromQuery.strategySource, "query-override");
+  assert.equal(fromQuery.queryOverrideApplied, true);
+
+  await engine.close();
+});
+
 test("mergeConfig deep-merges over DEFAULT_CONFIG and tolerates null/undefined", () => {
   const merged = mergeConfig({ dimension: 64, sourcePriority: { rag: 99 } });
   assert.strictEqual(merged.dimension, 64);

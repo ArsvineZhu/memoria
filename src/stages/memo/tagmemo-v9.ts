@@ -56,6 +56,9 @@ class TagMemoV9Stage extends Stage {
     if (!config.tagMemoV9Enabled) {
       return { ...info, tagMemoSkipped: true };
     }
+    if (config.nativeMemoEnabled === true && info.nativeMemoSkipped === false) {
+      return { ...info, tagMemoNative: true };
+    }
 
     const tagGraph = ctx.tagGraph instanceof Map ? ctx.tagGraph : new Map();
 

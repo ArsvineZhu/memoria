@@ -5,7 +5,7 @@ import type {
   TagBasisProjectionLike,
 } from "../../types/pipeline.js";
 import type { EmbeddingVector, UnknownRecord } from "../../types/common.js";
-import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../../types/config.js";
 import type { TagRow } from "../../types/metadata.js";
 import type {
   TagBasisProjectionEnvelope,
@@ -131,7 +131,7 @@ class TagBasisProjectionStage extends Stage {
    * @returns {Promise<TagBasisProjection|null>} null when not enough tag vectors exist.
    */
   async _buildTagBasisProjection(
-    config: MemoryConfigOverrides,
+    config: ResolvedMemoryConfigOverrides,
     ctx: PipelineContextLike,
   ): Promise<TagBasisProjectionLike | null> {
     const metadataStore = ctx.metadataStore;
@@ -175,7 +175,7 @@ class TagBasisProjectionStage extends Stage {
   }
 
   _resolveDimension(
-    config: MemoryConfigOverrides,
+    config: ResolvedMemoryConfigOverrides,
     tags: readonly VectorRow[],
   ): number | null {
     if (config.dimension && Number.isFinite(Number(config.dimension))) {
@@ -217,7 +217,7 @@ class TagBasisProjectionStage extends Stage {
   async _candidateAnalyses(
     tagBasisProjection: TagBasisProjectionLike,
     candidates: readonly ChunkCandidate[] | undefined,
-    config: MemoryConfigOverrides,
+    config: ResolvedMemoryConfigOverrides,
     ctx: PipelineContextLike,
   ): Promise<UnknownRecord[]> {
     const results: UnknownRecord[] = [];

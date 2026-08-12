@@ -8,26 +8,10 @@ import { prepareTutorialRuntime, SHARED_CONTENT_ROOT } from "../_support/paths.j
 import { heading, printProviderSelection, printResults } from "../_support/terminal.js";
 
 export async function run(): Promise<void> {
-  // The helper injects the reranker and this config explicitly enables it.
+  // The helper injects the reranker; the query plan below explicitly selects it.
   // Local rerank stages remain deterministic and do not require this provider.
   const { engine, paths, providers } = createTutorialEngine(
     "05-expansion-and-reranking",
-    {
-      enableExternalRerank: true,
-      config: {
-        tagGraphPropagationEnabled: true,
-        propagationSupportRerankEnabled: true,
-        propagationStructureRerankEnabled: true,
-        propagationHistoryEnabled: true,
-        embeddingRerankEnabled: true,
-        tagExpansionEnabled: true,
-        relationExpansionEnabled: true,
-        expansionEnabled: true,
-        externalRerankEnabled: true,
-        timeDecayEnabled: true,
-        truncateEnabled: true,
-      },
-    },
   );
   await prepareTutorialRuntime(paths);
   const filesystem = new FilesystemIngestionAdapter(engine, {

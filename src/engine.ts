@@ -23,8 +23,8 @@ import IngestPipeline from "./pipelines/ingest-pipeline.js";
 import DeletePipeline from "./pipelines/delete-pipeline.js";
 import SearchPipeline from "./pipelines/search-pipeline.js";
 import type {
-  MemoryConfig,
   MemoryEngineOptions,
+  ResolvedMemoryConfig,
   SearchOptions,
 } from "./types/config.js";
 import type { FileRow } from "./types/metadata.js";
@@ -91,7 +91,7 @@ export type EngineState = "created" | "initializing" | "ready" | "closing" | "cl
 class MemoryEngine {
   readonly name = "memoryEngine";
   #options: MemoryEngineOptions;
-  #config: MemoryConfig;
+  #config: ResolvedMemoryConfig;
   readonly defaultRetrievalPlan: RetrievalPlan;
   #metadataStore!: RuntimeMetadataStore;
   #vectorStore!: RuntimeVectorStore;

@@ -22,9 +22,9 @@ Tag Basis Projection 分析查询向量在已建立 tag basis 上的投影集中
 - \`projectionConcentration\`：\`1 - entropy\`；
 - \`dominantAxes\`：能量超过阈值的主轴及其 label、energy、projection。
 
-## gate 与阶段
+## 计划与阶段
 
-配置 \`tagBasisProjectionEnabled\` 默认开启。阶段位于 candidate merge 之后、tag residual decomposition 之前。关闭或 basis 不完整时，结果会标记 skipped 或返回空的结构分析，基础检索不会因此自动变成网络调用。
+\`RetrievalPlan.associative.tagBasisProjection\` 默认开启。阶段位于 candidate merge 之后、tag residual decomposition 之前。关闭或 basis 不完整时，结果会标记 skipped 或返回空的结构分析，基础检索不会因此自动变成网络调用。
 
 ## 核心计算
 
@@ -58,7 +58,7 @@ projectionConcentration = 1 - entropy / log2(K)
 const explanation = await engine.explain("学习索引", {
 retrievalPlan: { strategy: "associative" },
 });
-console.log(explanation.trace?.stageOrder);
+console.log(explanation.plan);
 \`\`\`
 
 应用不应直接实例化内部 \`TagBasisProjection\`。源码：[tag-basis-projection.ts](../../src/algorithms/tag-basis-projection.ts)、[stage](../../src/stages/tag-retrieval/tag-basis-projection.ts)。

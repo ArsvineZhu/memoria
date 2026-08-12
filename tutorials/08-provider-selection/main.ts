@@ -10,9 +10,7 @@ export async function run(): Promise<void> {
   // provider-config.ts reads process.env first, then
   // tutorials/08-provider-selection/.env. Missing or placeholder values select
   // fake providers; a configured provider error is never hidden by fallback.
-  const { engine, paths, providers } = createTutorialEngine("08-provider-selection", {
-    enableExternalRerank: true,
-  });
+  const { engine, paths, providers } = createTutorialEngine("08-provider-selection");
   await prepareTutorialRuntime(paths);
   printProviderSelection(providers);
 
@@ -29,8 +27,7 @@ export async function run(): Promise<void> {
       format: "mdx",
     });
     heading("the same code works with fake or configured providers");
-    // RRF is a public external-rerank mode; externalRerankEnabled was enabled
-    // when the engine was created above.
+    // RRF is a public external-rerank mode selected by this query plan.
     const result = await engine
       .query("旅行行程准备")
       .rerank((rerank) => rerank.rrf({ alpha: 0.5 }))

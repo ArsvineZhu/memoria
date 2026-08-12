@@ -41,7 +41,10 @@ import { createOpenAICompatibleReranker } from "memoria/providers/openai-compati
 
 const engine = createMemoryEngine({
   reranker: createOpenAICompatibleReranker({ apiUrl, apiKey, model }),
-  config: { externalRerankEnabled: true },
+  defaultRetrievalPlan: {
+    strategy: "semantic",
+    externalRerank: { enabled: true },
+  },
 });
 ```
 

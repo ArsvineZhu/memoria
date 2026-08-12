@@ -228,26 +228,24 @@ test("SearchPipeline projects per-call operational options and plan-owned filter
   );
 });
 
-test("legacy per-call filter and rerank options are projected into the retrieval plan", async () => {
+test("legacy per-call filter and rerank aliases are rejected", async () => {
   const pipeline = new SearchPipeline(
     {},
     { stages: [new CaptureRetrievalPlanStage()] },
   );
-  const out = (await pipeline.run(
-    {
-      query: "普通查询",
-      options: {
-        retrievalFilters: { spaces: ["legacy"] },
-        externalRerank: true,
-      },
-    },
-    { config: {} },
-  )) as PlannedOutput;
-
-  assert.equal(out.captured?.externalRerankEnabled, true);
-  assert.deepEqual(
-    (out.captured?.retrievalFilters as { spaces?: string[] } | undefined)?.spaces,
-    ["legacy"],
+  await assert.rejects(
+    () =>
+      pipeline.run(
+        {
+          query: "普通查询",
+          options: {
+            retrievalFilters: { spaces: ["legacy"] },
+            externalRerank: true,
+          } as never,
+        },
+        { config: {} },
+      ),
+    /Unknown SearchOptions key: retrievalFilters/,
   );
 });
 

@@ -151,7 +151,6 @@ export function createTutorialEngine(
   lesson: string,
   options: {
     config?: MemoryConfigOverrides;
-    enableExternalRerank?: boolean;
   } = {},
 ) {
   // Fake providers belong to tutorial support only; the library receives both
@@ -169,7 +168,6 @@ export function createTutorialEngine(
     apiKey: providers.embedApiKey ?? "",
     model: providers.embedModel ?? "",
     concurrency: providers.embedConcurrency ?? 5,
-    externalRerankEnabled: options.enableExternalRerank ?? false,
     ...(options.config ?? {}),
   };
   const engine = createMemoryEngine({

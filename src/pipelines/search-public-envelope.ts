@@ -28,6 +28,7 @@ const RETRIEVAL_FALLBACKS = new Set([
   "backend-unavailable",
   "native-backend-failed",
   "artifact-unavailable",
+  "history-persistence-failed",
   "provider-error",
   "invalid-result",
   "disabled-by-plan",

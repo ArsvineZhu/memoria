@@ -53,10 +53,10 @@ await engine.close();
 
 `searchOptions` 提供 engine 级默认的 query expansion 参数；单次 `search()` 传入的
 `queryExpansion` 和 `queryEpsilon` 会覆盖这些默认值。检索过滤与 external rerank
-属于 canonical `retrievalPlan.filters` 和 `retrievalPlan.externalRerank`；旧的单次
-查询 aliases 仍会被投影到这两个计划字段，以保持兼容并实际生效。
+只属于 canonical `retrievalPlan.filters` 和 `retrievalPlan.externalRerank`；不存在
+`SearchOptions.retrievalFilters` 或 `SearchOptions.externalRerank` 兼容别名。
 
-模型 rerank provider 通过 `reranker` 注入，配置 gate 必须显式开启：
+模型 rerank provider 通过 `reranker` 注入，并由本次查询的 `RetrievalPlan` 显式开启：
 
 ```ts
 import { createMemoryEngine } from "memoria";
@@ -69,12 +69,16 @@ const engine = createMemoryEngine({
     apiKey: "your-api-key",
     model: "reranker-model",
   }),
-  config: { externalRerankEnabled: true },
+  defaultRetrievalPlan: {
+    strategy: "semantic",
+    externalRerank: { enabled: true },
+  },
 });
 ```
 
-不注入 provider 或关闭 `externalRerankEnabled` 时，external rerank stage 只透传候选，
-不会访问网络。
+不注入 provider 或计划未开启 `externalRerank.enabled` 时，external rerank stage 只透传
+候选，不会访问网络。`MemoryConfig` 只提供 reranker 的运行参数，不拥有本次查询的 stage
+selection authority。
 
 常用生命周期方法为 `initialize()`、`ingest()`、`ingestBatch()`、`upsert()`、
 `remove()`、`search()`、`query()`、`explain()`、`flush()`、`flushBatch()`、

@@ -13,6 +13,9 @@ function fallbackReason(key: string, reason: unknown): RetrievalFallbackReason {
   if (value.includes("native") && value.includes("fail")) {
     return "native-backend-failed";
   }
+  if (value.includes("history") && value.includes("persist")) {
+    return "history-persistence-failed";
+  }
   if (value.includes("artifact")) return "artifact-unavailable";
   if (value.includes("invalid")) return "invalid-result";
   if (value.includes("provider") || value.includes("error")) {

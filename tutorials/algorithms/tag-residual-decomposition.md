@@ -20,9 +20,9 @@ Tag Residual Decomposition 将查询向量中已经由近邻 tag 方向解释的
 - \`finalResidual\`；
 - \`features\`：depth、coverage、novelty、coherence、propagationReadiness、expansionSignal 等诊断。
 
-## gate 与阶段
+## 计划与阶段
 
-配置 \`tagResidualDecompositionEnabled\` 默认开启，位于 Tag Basis Projection 之后。没有 tag 结果、tag lookup 为空、查询能量接近零或内部搜索失败时，阶段以空/跳过结果结束，不伪造一个有意义的 tag 解释。
+\`RetrievalPlan.associative.tagResidualDecomposition\` 默认开启，位于 Tag Basis Projection 之后。没有 tag 结果、tag lookup 为空、查询能量接近零或内部搜索失败时，阶段以空/跳过结果结束，不伪造一个有意义的 tag 解释。
 
 ## 核心计算
 

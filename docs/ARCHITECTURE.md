@@ -36,7 +36,7 @@ SearchPipeline
    derived vector indexes。
 3. `ingest`/`flushBatch` 进入 mutation queue，先写 SQLite authority，再写 vector indexes，
    最后调度持久化。
-4. `search` 生成 query vector，按计划执行 stages，写入结果和 retrieval trace。
+4. `search` 生成 query vector，按计划执行 stages，写入结果和稳定 retrieval diagnostics。
 5. `close` drain queue、刷新索引并关闭资源；任何未恢复的 persistence/vector failure
    都会阻止错误的 ready/clean 状态。
 
@@ -56,14 +56,16 @@ independent sections
   └─ postprocess
 ```
 
-`Activation Propagation → Graph Diffusion` 是固定连续阶段。native stage 可以把同一查询
-观测交给 Rust runtime；TS stages 负责明确的 fail-closed 结果和诊断。
+`Activation Propagation → Graph Diffusion` 是固定连续阶段。一次 query 只解析一次
+`ResolvedSearchExecution`，记录 authority generation；native artifact maintenance 在
+exclusive phase 中完成，再直接提升到 stable read。native stage 只消费预构建 artifact，
+不会在 pipeline read 内写入 derived state。TS stages 负责明确的 fail-closed 结果和诊断。
 
 ## 依赖注入
 
 正式注入 contracts 是 `EmbeddingProviderContract`、`VectorStoreContract`、
 `MetadataStoreContract` 和 `ExternalReranker`。应用通过 `MemoryEngineOptions` 提供它们；
-reranker 只在 `externalRerankEnabled` 打开时执行，默认不访问网络；
+reranker 只在 retrieval plan 的 `externalRerank.enabled` 打开时执行，默认不访问网络；
 不能通过开放式 options 注入 pipeline context、native index 或内部 planner helper。
 
 ## 数据权威
@@ -72,7 +74,8 @@ reranker 只在 `externalRerankEnabled` 打开时执行，默认不访问网络�
   位于各自的 `data/content/`；
 - SQLite：canonical files/chunks/tags/relations 和 generation authority；
 - vector index：从 SQLite 重建的 derived state；
-- tag artifacts/history：由 canonical KV/table payload 管理，可从 authority 重建；
+- tag graph artifacts：由 canonical authority 管理，可从 authority 重建；
+- Propagation History：由 relational tables 保存的 persistent adaptive state，备份缺失时只能 reset；
 - TDB：独立 library 和独立数据目录。
 
 旧 SQLite 不迁移。schema、列或 `user_version` 不匹配时抛 persistence error，并要求

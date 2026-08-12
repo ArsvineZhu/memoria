@@ -50,6 +50,7 @@ pub(crate) struct ActivationSeed {
 
 #[derive(Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ActivationPropagationConfig {
     pub(crate) propagation_max_hops: usize,
     pub(crate) base_routing_budget: f64,

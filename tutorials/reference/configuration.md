@@ -21,52 +21,28 @@ persistTagVectorIndex
 
 dataPath 只表示消费者自己的运行时目录。它可以派生默认 rootPath、storePath、dbPath，但不会让仓库数据成为 package 内容。
 
-## Retrieval gates
+## RetrievalPlan selection
 
-### Tag and graph retrieval
+检索阶段选择不再由 `MemoryConfig` 的 `*Enabled` 字段控制。调用方使用
+`defaultRetrievalPlan` 设置 engine 级默认，使用 `SearchOptions.retrievalPlan` 设置单次
+查询计划；字段定义和组合示例见 [RetrievalPlan reference](retrieval-plan.md)。
 
-```text
-tagBasisProjectionEnabled
-tagResidualDecompositionEnabled
-tagGraphPropagationEnabled
-propagationSupportRerankEnabled
-propagationStructureRerankEnabled
-propagationHistoryEnabled
-nativeTagRetrievalEnabled
-tagExpansionEnabled
+```ts
+const result = await engine.search("来源关系", {
+  retrievalPlan: {
+    strategy: "structural",
+    structural: { enabled: true, propagationStructure: true },
+    externalRerank: { enabled: true, mode: "rrf", alpha: 0.5 },
+    postprocess: { timeDecay: true, dedupe: true, truncate: true },
+  },
+});
 ```
 
-### Expansion and reranking
-
-```text
-embeddingRerankEnabled
-relationExpansionEnabled
-relationGraphEnabled
-expansionEnabled
-fullDocumentExpansionEnabled
-associatorEnabled
-externalRerankEnabled
-externalRerankMode = ordered | rrf
-externalRerankAlpha
-```
-
-### Postprocess and search
-
-```text
-timeDecayEnabled
-truncateEnabled
-truncateMinScore
-timeDecayHalfLife
-timeDecayNow
-maxContentLength
-minScore
-dedupeEnabled
-dedupeSemantic
-semanticThreshold
-maxResults
-vectorWeight
-bm25Weight
-```
+`MemoryConfig` 保留运行参数，例如 `externalRerankMode`、`externalRerankAlpha`、
+`timeDecayHalfLife`、`timeDecayNow`、`maxContentLength`、`truncateMinScore`、
+`dedupeSemantic`、`semanticThreshold`、`maxResults`、`vectorWeight` 和 `bm25Weight`。
+计划是本次查询的唯一 selection authority；未被计划选中的 capability 不会被 base config
+反向打开。
 
 ### Basis, residual, propagation and diffusion parameters
 

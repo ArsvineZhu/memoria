@@ -19,13 +19,17 @@ export interface NativeArtifactState {
   dbPath: string;
   artifactSig: string;
   generation: number | null;
+  metadataGeneration?: string;
   databaseGeneration?: string;
   nodeCount?: number;
   edgeCount?: number;
 }
 
 export type TagRetrievalFailure =
-  "artifact_build_failed" | "backend_unavailable" | "invalid_result";
+  | "artifact_build_failed"
+  | "artifact_unavailable"
+  | "backend_unavailable"
+  | "invalid_result";
 
 export type NativeArtifactResult =
   | { state: NativeArtifactState }

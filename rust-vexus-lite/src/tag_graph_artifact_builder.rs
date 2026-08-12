@@ -651,10 +651,13 @@ fn run_build(
         return Err("native artifact build requires modelSig".to_string());
     }
 
-    let readonly = open_readonly(db_path)?;
-    let rows = load_file_tags(&readonly)?;
-    let pairwise = load_pairwise(&readonly, &input.model_sig)?;
-    let (anchor_gain, _residual_ratios, residual_sig) = load_anchor_gains(&readonly)?;
+    let mut readonly = open_readonly(db_path)?;
+    let snapshot = readonly
+        .transaction()
+        .map_err(|error| format!("begin native artifact read snapshot failed: {}", error))?;
+    let rows = load_file_tags(&snapshot)?;
+    let pairwise = load_pairwise(&snapshot, &input.model_sig)?;
+    let (anchor_gain, _residual_ratios, residual_sig) = load_anchor_gains(&snapshot)?;
     let fact = build_fact_matrix(&rows, &pairwise, &anchor_gain, &input.effective_config);
     let (transport, shortcuts) = build_transport(&fact, &anchor_gain, &input.effective_config);
     let provenance = build_provenance(&rows, &input.effective_config);
@@ -697,7 +700,7 @@ fn run_build(
             .collect();
         hash_text(&rows.join("|"), 40)
     };
-    let database_generation = database_generation(&readonly);
+    let database_generation = database_generation(&snapshot);
     let config_json = serde_json::to_string(&input.effective_config)
         .map_err(|error| format!("encode effective config failed: {}", error))?;
     let config_hash = hash_text(&config_json, 32);
@@ -749,6 +752,7 @@ fn run_build(
         .finish()
         .map_err(|error| format!("finish native artifact compression failed: {}", error))?;
 
+    drop(snapshot);
     drop(readonly);
     let mut writable = open_readwrite(db_path)?;
     let transaction = writable

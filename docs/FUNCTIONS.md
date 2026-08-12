@@ -40,9 +40,10 @@ canonical 阶段按计划加入：
 9. tag expansion、relation expansion、embedding rerank 和 external rerank；
 10. time decay、dedupe、truncate 和 result formatting。
 
-`tagGraphPropagationEnabled` 控制 activation propagation/graph diffusion 链；
-`propagationHistoryEnabled` 是独立 gate。每个 stage 只在输入、scope、依赖和对应 gate
-均满足时产生输出；否则返回明确的 `*Skipped` 或 failure 字段。
+`RetrievalPlan.associative.tagGraphPropagation` 控制 activation propagation/graph
+diffusion 链；`RetrievalPlan.propagationHistory.enabled` 是独立 selection。每个 stage
+只在输入、scope、依赖和计划条件均满足时产生输出；否则返回明确的 `*Skipped` 或 failure
+字段。
 
 ## 4. 结果格式
 
@@ -53,7 +54,7 @@ canonical 阶段按计划加入：
 
 ## 5. Native runtime
 
-文件型 SQLite 且 `nativeTagRetrievalEnabled=true` 时，内部 backend resolution 获取
+文件型 SQLite 且 `RetrievalPlan.associative.nativeTagRetrieval=true` 时，内部 backend resolution 获取
 `VexusIndex` 所有者的 tag-retrieval runtime。artifact rebuild、query observation、
 activation propagation、support rerank 和 structure rerank 共享一个 artifact signature
 与查询观测。runtime 缺失、输入维度错误或返回 payload 无效时只设置诊断并继续明确的

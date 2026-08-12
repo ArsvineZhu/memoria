@@ -77,7 +77,8 @@ void main().catch((error) => {
 
 搜索默认先将向量检索和 BM25 结果做分数融合、去重和排序。这一步不是模型 rerank。
 embedding cosine、传播支持和传播结构是可选的本地重排阶段；它们默认关闭。模型重排
-同样默认关闭，只有显式注入 `ExternalReranker` 并开启 `externalRerankEnabled` 才会执行，
+同样默认关闭，只有显式注入 `ExternalReranker` 并在 `retrievalPlan.externalRerank.enabled`
+中开启才会执行，
 位置固定为去重之后、时间衰减和截断之前。
 
 库提供一个不绑定具体服务商的 OpenAI-compatible reranker 适配器，调用方自己提供
@@ -94,13 +95,14 @@ const engine = createMemoryEngine({
     apiKey: "your-api-key",
     model: "reranker-model",
   }),
-  config: {
-    externalRerankEnabled: true,
+  defaultRetrievalPlan: {
+    strategy: "semantic",
+    externalRerank: { enabled: true },
   },
 });
 ```
 
-不配置 `reranker` 或不打开 gate 时，搜索不会发起 reranker 网络请求。
+不配置 `reranker` 或计划未打开 `externalRerank.enabled` 时，搜索不会发起 reranker 网络请求。
 
 如果应用希望固定一条默认检索策略，可以在构造时配置 typed plan；单条查询仍可覆盖，或
 通过不可变的 `engine.query()` 使用链式写法：
@@ -129,7 +131,7 @@ const result = await engine
 
 `RetrievalPlanInput`、`SearchOptions` 和 `QueryBuilder` 保持 JSON-like 计划的全部可序列化
 能力；Builder 只是生成普通计划并调用同一个 `engine.search()`。默认计划、查询覆盖和自动
-决策会出现在结果的 `retrievalTrace` 中。查询文本仍是普通字符串，不解析额外标签语法、
+决策会出现在结果的 `retrieval` 诊断中。查询文本仍是普通字符串，不解析额外标签语法、
 placeholder 或 query MDX。
 
 如果你的数据已经是文件，可以使用 `memoria/adapters/filesystem`。文件适配器负责

@@ -8,7 +8,6 @@ import type {
 } from "../../types/retrieval.js";
 import Stage from "../../core/stage.js";
 import {
-  ensureTagRetrievalArtifact,
   getTagRetrievalIndex,
   nativeDatabasePath,
   readRecord,
@@ -20,9 +19,9 @@ import type { NativeArtifactState } from "../../native/tag-graph-artifact-runtim
 import { mergeTagRetrievalObservation } from "./tag-retrieval-observation.js";
 
 /**
- * Executes the single native tag-retrieval pipeline. The stage owns artifact
- * resolution and query-vector projection; candidate reranking remains in the
- * dedicated support and structure stages.
+ * Executes the single native tag-retrieval pipeline. Artifact preparation is
+ * an engine-level derived-maintenance concern; this stage is a read-only
+ * consumer and falls back when no valid prebuilt artifact was supplied.
  */
 class NativeTagRetrievalStage extends Stage {
   constructor() {
@@ -50,6 +49,17 @@ class NativeTagRetrievalStage extends Stage {
       };
     }
 
+    if (!nativeDatabasePath(ctx)) {
+      return {
+        ...info,
+        tagRetrievalSkipped: true,
+        tagRetrievalSkipReason:
+          "TagRetrievalRuntime requires a file-backed SQLite database",
+        tagRetrievalFailure: "backend_unavailable",
+        tagRetrievalError: "backend_unavailable",
+      };
+    }
+
     const suppliedArtifact = info.tagGraphArtifact as
       Partial<NativeArtifactState> | undefined;
     const prebuiltArtifact =
@@ -60,24 +70,21 @@ class NativeTagRetrievalStage extends Stage {
       suppliedArtifact.artifactSig.length > 0
         ? (suppliedArtifact as NativeArtifactState)
         : null;
-    const artifact = prebuiltArtifact
-      ? { state: prebuiltArtifact }
-      : await ensureTagRetrievalArtifact(ctx, index);
-    if (!artifact.state) {
+    if (!prebuiltArtifact) {
       return {
         ...info,
         tagRetrievalSkipped: true,
-        tagRetrievalSkipReason: artifact.reason,
-        tagRetrievalFailure: artifact.failure,
-        tagRetrievalError: artifact.failure,
+        tagRetrievalSkipReason: "prebuilt native tag-retrieval artifact unavailable",
+        tagRetrievalFailure: "artifact_unavailable",
+        tagRetrievalError: "artifact_unavailable",
       };
     }
 
-    const result = await runTagRetrievalPipeline(ctx, index, artifact.state, info);
+    const result = await runTagRetrievalPipeline(ctx, index, prebuiltArtifact, info);
     if (!result.value) {
       return {
         ...info,
-        tagGraphArtifact: artifact.state,
+        tagGraphArtifact: prebuiltArtifact,
         tagRetrievalSkipped: true,
         tagRetrievalSkipReason: result.reason,
         tagRetrievalFailure: result.failure,
@@ -132,7 +139,7 @@ class NativeTagRetrievalStage extends Stage {
       ...info,
       tagRetrieval: result.value,
       tagRetrievalObservation,
-      tagGraphArtifact: artifact.state,
+      tagGraphArtifact: prebuiltArtifact,
       nativeQueryVector: info.queryVector,
       tagRetrievalSkipped: false,
       ...(basis ? { tagBasisProjection: basis } : {}),

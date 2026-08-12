@@ -14,8 +14,13 @@ test("MemoryEngineOperations forwards engine-level searchOptions into each searc
     ingestPipeline: {},
     deletePipeline: {},
     searchPipeline: {
-      async explain() {
-        return { plan: { strategy: "semantic" } };
+      async explain(_query: string, options: SearchOptions) {
+        const strategy = options.retrievalPlan?.strategy || "semantic";
+        return {
+          plan: { strategy },
+          decision: { strategy },
+          strategySource: "auto",
+        };
       },
       async run(input: PipelineData) {
         seen = input;
@@ -46,6 +51,21 @@ test("MemoryEngineOperations forwards engine-level searchOptions into each searc
   const searchOptions = seen?.options as SearchOptions | undefined;
   assert.equal(searchOptions?.queryExpansion, 3);
   assert.equal(searchOptions?.queryEpsilon, 0.2);
+  assert.equal(
+    (seen?.resolvedSearchExecution as { resolution?: { plan?: { strategy?: string } } })
+      ?.resolution?.plan?.strategy,
+    "semantic",
+  );
+
+  await operations.search(
+    { query: "query", retrievalPlan: { strategy: "structural" } },
+    {},
+  );
+  assert.equal(
+    (seen?.resolvedSearchExecution as { resolution?: { plan?: { strategy?: string } } })
+      ?.resolution?.plan?.strategy,
+    "structural",
+  );
 });
 
 test("native artifact maintenance completes before the stable search read", async () => {
@@ -84,8 +104,81 @@ test("native artifact maintenance completes before the stable search read", asyn
       },
     },
     vectorCoordinator: {
-      async runDerivedMaintenance<T>(_key: string, task: () => Promise<T>) {
+      async runDerivedMaintenanceAndStableRead<T, R>(
+        _key: string,
+        maintenance: () => Promise<T>,
+        read: (value: T) => Promise<R>,
+      ) {
         phases.push("maintenance");
+        const value = await maintenance();
+        phases.push("read");
+        return read(value);
+      },
+      async runDerivedMaintenance<T>(_key: string, task: () => Promise<T>) {
+        return task();
+      },
+      async runStableRead<T>(task: () => Promise<T>) {
+        phases.push("resolve");
+        return task();
+      },
+    },
+    getContext: () => context,
+    getMetadataStore: () => context.metadataStore,
+    getVectorStore: () => ({}),
+    getLastIndexedAt: () => null,
+    setLastIndexedAt: () => undefined,
+    getLastReconciliation: () => null,
+    isInitialized: () => true,
+    runReadyOperation: <T>(_name: string, operation: () => Promise<T>) => operation(),
+    runAuthorityMutation: async <T>(_input: never, operation: () => Promise<T>) =>
+      operation(),
+  } as never);
+
+  await operations.search("query", {});
+
+  assert.deepEqual(phases, ["resolve", "maintenance", "rebuild", "read"]);
+  assert.equal(seenArtifact?.artifactSig, "artifact-1");
+});
+
+test("propagation history commits use exclusive maintenance and do not fail search", async () => {
+  const phases: string[] = [];
+  const observation = {
+    nodeIds: [1, 2],
+    edges: [{ sourceId: 1, targetId: 2, increment: 0.5 }],
+    propagationTrace: { nodes: [{ id: 1 }, { id: 2 }], edges: [], diagnostics: {} },
+  };
+  const context = {
+    config: {},
+    metadataStore: {
+      async commitPropagationObservation() {
+        phases.push("history-commit");
+        throw new Error("foreign key race");
+      },
+    },
+  };
+  const operations = new MemoryEngineOperations({
+    config: {},
+    ingestPipeline: {},
+    deletePipeline: {},
+    searchPipeline: {
+      async explain() {
+        return {
+          plan: { strategy: "semantic" },
+          decision: { strategy: "semantic" },
+          strategySource: "auto",
+        };
+      },
+      async run() {
+        return {
+          results: [],
+          resultCount: 0,
+          propagationHistoryObservation: observation,
+        };
+      },
+    },
+    vectorCoordinator: {
+      async runDerivedMaintenance<T>(key: string, task: () => Promise<T>) {
+        phases.push(`maintenance:${key}`);
         return task();
       },
       async runStableRead<T>(task: () => Promise<T>) {
@@ -105,8 +198,14 @@ test("native artifact maintenance completes before the stable search read", asyn
       operation(),
   } as never);
 
-  await operations.search("query", {});
+  const result = await operations.search("query", {});
 
-  assert.deepEqual(phases, ["maintenance", "rebuild", "read"]);
-  assert.equal(seenArtifact?.artifactSig, "artifact-1");
+  assert.deepEqual(result.results, []);
+  assert.deepEqual(result.retrieval?.fallbacks, ["history-persistence-failed"]);
+  assert.deepEqual(phases, [
+    "read",
+    "read",
+    "maintenance:propagation-history",
+    "history-commit",
+  ]);
 });

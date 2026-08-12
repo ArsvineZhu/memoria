@@ -1,8 +1,8 @@
 # 检索能力矩阵
 
-本文记录 canonical retrieval gates、依赖和实际结果字段。开关打开只表示 stage 可以
+本文记录 canonical retrieval plan、依赖和实际结果字段。计划打开只表示 stage 可以
 加入 pipeline；空候选、空标签图、scope、维度或依赖不满足时，stage 可以安全跳过，
-必须以结果 trace 判断是否真正执行。
+必须以公开 `retrieval.evidence`/`retrieval.fallbacks` 判断能力结果。
 
 ## 三层排序模型
 
@@ -10,26 +10,23 @@
 2. 本地重排：embedding cosine、propagation support 和 propagation structure 等确定性
    stage，分别由对应 gate 控制，默认关闭。
 3. 模型重排：`MemoryEngineOptions.reranker` 注入的 provider，配合
-   `externalRerankEnabled` 显式开启；执行顺序是 `dedupe → model rerank → time decay →
+   `retrievalPlan.externalRerank.enabled` 显式开启；执行顺序是 `dedupe → model rerank → time decay →
 truncate`。
 
-| 能力                       | 开关/入口                                         | 主要依赖                                 | 输出/诊断                              |
-| -------------------------- | ------------------------------------------------- | ---------------------------------------- | -------------------------------------- |
-| vector + BM25              | `vectorWeight`、`bm25Weight`                      | embedding、SQLite、vector store          | `vectorResults`、`bm25Results`         |
-| tag basis projection       | `tagBasisProjectionEnabled`                       | tag vectors                              | `tagBasisProjection`                   |
-| tag residual decomposition | `tagResidualDecompositionEnabled`                 | tag vectors                              | `tagResidualDecomposition`             |
-| activation propagation     | `tagGraphPropagationEnabled`                      | tag association graph、tag vectors       | `tagGraphPropagation`                  |
-| graph diffusion            | 同一 `tagGraphPropagationEnabled` gate            | activation output、graph operators       | `tagGraphPropagation` diffusion fields |
-| propagation history        | `propagationHistoryEnabled`                       | `PropagationHistoryStore`                | `propagationHistory`                   |
-| support rerank             | `propagationSupportRerankEnabled`                 | activation output、tag IDs               | `propagationSupport`                   |
-| structure rerank           | `propagationStructureRerankEnabled`               | graph observation、candidates            | `propagationStructure`                 |
-| native tag retrieval       | `nativeTagRetrievalEnabled`                       | file-backed SQLite、shipped Rust binding | `tagRetrieval*`、`tagGraphArtifact*`   |
-| tag expansion              | `tagExpansionEnabled`                             | `tag_vectors`                            | `tagExpansion`                         |
-| embedding rerank           | `embeddingRerankEnabled`                          | chunk vectors                            | `embeddingRerank`                      |
-| relation expansion         | `relationExpansionEnabled` 或 `expansion.related` | `memory_relations`                       | relation expansion diagnostics         |
-| external/model rerank      | `externalRerankEnabled` + `options.reranker`      | OpenAI-compatible Chat API provider      | `reranked`、`rerankFailure`            |
-| time decay                 | `timeDecayEnabled`                                | file timestamps                          | result `decay`                         |
-| dedupe/truncate            | `dedupeEnabled` / `truncateEnabled`               | candidate vectors/score                  | `dedupeStats`、`truncationStats`       |
+| 能力                     | 开关/入口                                        | 主要依赖                                 | 输出/诊断                                        |
+| ------------------------ | ------------------------------------------------ | ---------------------------------------- | ------------------------------------------------ |
+| vector + BM25            | `vectorWeight`、`bm25Weight`                     | embedding、SQLite、vector store          | `vectorResults`、`bm25Results`                   |
+| tag basis / residual     | `associative.*` / `structural` strategy          | tag vectors                              | `tagBasisProjection`、`tagResidualDecomposition` |
+| activation / diffusion   | `associative.tagGraphPropagation`                | tag association graph、tag vectors       | `tagGraphPropagation`                            |
+| propagation history      | `propagationHistory.enabled`                     | persistent history tables                | `propagationHistory`                             |
+| support rerank           | `associative.propagationSupport`                 | activation output、tag IDs               | `propagationSupport`                             |
+| structure rerank         | `structural.propagationStructure`                | graph observation、candidates            | `propagationStructure`                           |
+| native tag retrieval     | `associative.nativeTagRetrieval`                 | file-backed SQLite、shipped Rust binding | `tagRetrieval*`、`tagGraphArtifact*`             |
+| tag / relation expansion | `associative.tagExpansion` / `expansion.related` | `tag_vectors`、`memory_relations`        | expansion diagnostics                            |
+| embedding rerank         | `associative.embeddingRerank`                    | chunk vectors                            | `embeddingRerank`                                |
+| external/model rerank    | `externalRerank.enabled` + `reranker`            | OpenAI-compatible Chat API provider      | `reranked`、`rerankFailure`                      |
+| time decay               | `postprocess.timeDecay`                          | file timestamps                          | result `decay`                                   |
+| dedupe/truncate          | `postprocess.dedupe` / `postprocess.truncate`    | candidate vectors/score                  | `dedupeStats`、`truncationStats`                 |
 
 ## canonical stage order
 

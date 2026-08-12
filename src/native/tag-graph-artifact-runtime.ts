@@ -1,8 +1,9 @@
 "use strict";
 
-import type { MemoryConfigOverrides } from "../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../types/pipeline.js";
 import type { UnknownRecord } from "../types/common.js";
+import { readMetadataGeneration } from "../core/authority-generation.js";
 import {
   buildNativeArtifactConfig,
   nativeDatabasePath,
@@ -45,25 +46,11 @@ export {
 } from "./tag-graph-runtime-serialization.js";
 
 interface CachedNativeArtifact {
-  metadataGeneration?: string;
+  metadataGeneration: string;
   state: NativeArtifactState;
 }
 
 const nativeArtifactCache = new WeakMap<object, Map<string, CachedNativeArtifact>>();
-
-async function metadataGeneration(
-  ctx: PipelineContextLike,
-): Promise<string | undefined> {
-  const store = ctx.metadataStore as
-    { getKv?: (key: string) => Promise<string | null | undefined> } | null | undefined;
-  if (typeof store?.getKv !== "function") return undefined;
-  try {
-    const value = await store.getKv("metadata_generation");
-    return value == null ? undefined : String(value);
-  } catch {
-    return undefined;
-  }
-}
 
 export async function ensureTagRetrievalArtifact(
   ctx: PipelineContextLike,
@@ -81,12 +68,16 @@ export async function ensureTagRetrievalArtifact(
   const modelSig = String(ctx.config.modelSig || "memoria-default");
   const effectiveConfig = buildNativeArtifactConfig(ctx.config);
   const cacheKey = [dbPath, modelSig, JSON.stringify(effectiveConfig)].join("\u0000");
-  const currentMetadataGeneration = await metadataGeneration(ctx);
+  const currentMetadataGeneration = await readMetadataGeneration(ctx.metadataStore);
   const cache =
     nativeArtifactCache.get(index as object) || new Map<string, CachedNativeArtifact>();
   nativeArtifactCache.set(index as object, cache);
   const cached = cache.get(cacheKey);
-  if (cached && cached.metadataGeneration === currentMetadataGeneration) {
+  if (
+    currentMetadataGeneration !== null &&
+    cached &&
+    cached.metadataGeneration === currentMetadataGeneration
+  ) {
     return { state: cached.state };
   }
 
@@ -121,6 +112,7 @@ export async function ensureTagRetrievalArtifact(
       dbPath,
       artifactSig,
       generation: typeof result.generation === "number" ? result.generation : null,
+      metadataGeneration: currentMetadataGeneration ?? undefined,
       databaseGeneration:
         typeof result.databaseGeneration === "string"
           ? result.databaseGeneration
@@ -132,10 +124,14 @@ export async function ensureTagRetrievalArtifact(
     for (const key of cache.keys()) {
       if (key.startsWith(cachePrefix) && key !== cacheKey) cache.delete(key);
     }
-    cache.set(cacheKey, {
-      metadataGeneration: currentMetadataGeneration,
-      state,
-    });
+    if (currentMetadataGeneration !== null) {
+      cache.set(cacheKey, {
+        metadataGeneration: currentMetadataGeneration,
+        state,
+      });
+    } else {
+      cache.delete(cacheKey);
+    }
     return { state };
   } catch {
     return {
@@ -190,7 +186,7 @@ export async function runTagRetrievalPipeline(
 
 export function toTagGraphPropagation(
   info: PipelineData,
-  config: MemoryConfigOverrides,
+  config: ResolvedMemoryConfigOverrides,
   value: UnknownRecord,
 ): UnknownRecord | undefined {
   if (config.tagGraphPropagationEnabled !== true) return undefined;

@@ -1,5 +1,5 @@
 import type { FileRow } from "../../types/metadata.js";
-import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { UnknownRecord } from "../../types/common.js";
 
@@ -95,7 +95,7 @@ function matchesMetadata(file: FileRow, expected: Record<string, unknown>): bool
 
 function resolveFilters(
   input: PipelineData,
-  config: MemoryConfigOverrides,
+  config: ResolvedMemoryConfigOverrides,
 ): RetrievalFilters | null {
   const candidate =
     input.retrievalFilters ?? config.retrievalFilters ?? input.retrievalPlan;

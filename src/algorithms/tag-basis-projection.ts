@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * TagBasisProjection (Embedding Projection Analysis) - Pure algorithm.
+ * TagBasisProjection - pure algorithm.
  * Extracted from TagBasisProjectionModule.js, removing all db/vexusIndex I/O.
  * Basis data is provided at construction time or via setBasis().
  * Optional Rust acceleration via config.vexusIndex.

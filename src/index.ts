@@ -60,6 +60,7 @@ export type {
   ReconciliationReport,
   SearchEnvelope,
   SearchOptions,
+  SupportSelectionMethod,
   SearchResult,
   TagRow,
   Tokenizer,

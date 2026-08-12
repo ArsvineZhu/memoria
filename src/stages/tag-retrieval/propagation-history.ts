@@ -107,7 +107,8 @@ class PropagationHistoryStage extends Stage {
       };
     }
 
-    const scale = Math.max(0, Number(ctx.config.historyUpdateScale) || 1);
+    const configuredScale = Number(ctx.config.historyUpdateScale);
+    const scale = Number.isFinite(configuredScale) ? Math.max(0, configuredScale) : 1;
     const propagationTrace: PropagationTrace = info.tagRetrievalObservation?.propagation
       ?.propagationTrace ||
       info.tagGraphPropagation?.propagationTrace || {
@@ -129,6 +130,7 @@ class PropagationHistoryStage extends Stage {
       if (!Number.isFinite(sourceId) || !Number.isFinite(targetId) || flow <= 0)
         continue;
       const increment = flow * scale;
+      if (increment <= 0) continue;
       const key = edgeKey(sourceId, targetId);
       edgeTotals.set(key, (edgeTotals.get(key) || 0) + increment);
       observationEdges.push({ sourceId, targetId, increment });

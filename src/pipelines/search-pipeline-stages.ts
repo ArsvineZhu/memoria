@@ -2,7 +2,7 @@
 
 import { at } from "../utils/numerical.js";
 import Stage from "../core/stage.js";
-import type { MemoryConfigOverrides } from "../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../types/pipeline.js";
 
 import QueryEmbedderStage from "../stages/retrieval/query-embedder.js";
@@ -68,7 +68,7 @@ class QueryVectorBridgeStage extends Stage {
   }
 }
 
-function hasChunkFilters(config: MemoryConfigOverrides): boolean {
+function hasChunkFilters(config: ResolvedMemoryConfigOverrides): boolean {
   const filters = config.retrievalFilters;
   return (
     filters !== null &&
@@ -82,7 +82,9 @@ function hasChunkFilters(config: MemoryConfigOverrides): boolean {
 }
 
 /** Build the immutable default search stage graph for an effective config. */
-export function buildDefaultSearchStages(config: MemoryConfigOverrides): Stage[] {
+export function buildDefaultSearchStages(
+  config: ResolvedMemoryConfigOverrides,
+): Stage[] {
   const stages: Stage[] = [
     new QueryEmbedderStage(),
     new QueryVectorBridgeStage(),

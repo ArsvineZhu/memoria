@@ -6,15 +6,15 @@ Postprocessing 将候选池变成稳定的公开结果：去除重复、可选�
 
 ## Dedupe
 
-\`dedupeEnabled\` 控制结果去重。去重阶段位于扩展和本地算法之后、External Rerank 之前。它优先保留同一逻辑文档/chunk 的代表候选，并可结合 exact/semantic 条件；因此 external reranker 不会对同一内容的重复项重复计分。
+\`RetrievalPlan.postprocess.dedupe\` 控制结果去重。去重阶段位于扩展和本地算法之后、External Rerank 之前。它优先保留同一逻辑文档/chunk 的代表候选，并可结合 exact/semantic 条件；因此 external reranker 不会对同一内容的重复项重复计分。
 
 ## Time Decay
 
-\`timeDecayEnabled\` 打开后，按 recorded time 与 \`timeDecayNow\`、\`timeDecayHalfLife\`、\`timeDecayUpperBound\` 计算时间影响。它位于 External Rerank 之后。没有可用 recorded time 时按 stage 的默认保留语义处理；时间衰减不是删除，也不是永久修改源文档。
+\`RetrievalPlan.postprocess.timeDecay\` 打开后，按 recorded time 与 \`timeDecayNow\`、\`timeDecayHalfLife\`、\`timeDecayUpperBound\` 计算时间影响。它位于 External Rerank 之后。没有可用 recorded time 时按 stage 的默认保留语义处理；时间衰减不是删除，也不是永久修改源文档。
 
 ## Truncate 与 minScore
 
-\`truncateEnabled\` 打开后，Truncator 应用：
+\`RetrievalPlan.postprocess.truncate\` 打开后，Truncator 应用：
 
 - \`truncateMinScore\`：阶段级最低分；
 - \`maxResults\`/相关 topK：结果数量上限；

@@ -1,4 +1,4 @@
-import type { MemoryConfigOverrides, SearchOptions } from "../types/config.js";
+import type { ResolvedMemoryConfigOverrides, SearchOptions } from "../types/config.js";
 import type { PipelineContextLike } from "../types/pipeline.js";
 import {
   applyRetrievalPlan,
@@ -18,11 +18,32 @@ export interface SearchPlanResolverOptions {
   hasConfiguredDefaultPlan: boolean;
 }
 
+const SEARCH_OPTION_KEYS = new Set<keyof SearchOptions>([
+  "retrievalPlan",
+  "inheritRetrievalDefaults",
+  "topK",
+  "indexNames",
+  "spaces",
+  "queryExpansion",
+  "queryEpsilon",
+]);
+
+function assertKnownSearchOptions(options: SearchOptions): void {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("SearchOptions must be an object");
+  }
+  for (const key of Object.keys(options)) {
+    if (!SEARCH_OPTION_KEYS.has(key as keyof SearchOptions)) {
+      throw new TypeError(`Unknown SearchOptions key: ${key}`);
+    }
+  }
+}
+
 /** Merge configs without allowing explicit undefined values to erase defaults. */
 export function mergeSearchConfig(
-  base: MemoryConfigOverrides,
-  extra: MemoryConfigOverrides = {},
-): MemoryConfigOverrides {
+  base: ResolvedMemoryConfigOverrides,
+  extra: ResolvedMemoryConfigOverrides = {},
+): ResolvedMemoryConfigOverrides {
   const result = { ...base };
   const target = result as Record<string, unknown>;
   for (const [key, value] of Object.entries(extra)) {
@@ -31,39 +52,15 @@ export function mergeSearchConfig(
   return result;
 }
 
-/** Project legacy per-call aliases into the canonical retrieval plan. */
-function projectLegacySearchOptions(options: SearchOptions): SearchOptions {
-  const hasFilters = options.retrievalFilters !== undefined;
-  const hasExternalRerank = options.externalRerank !== undefined;
-  if (!hasFilters && !hasExternalRerank) return options;
-
-  const retrievalPlan = options.retrievalPlan || { strategy: "auto" as const };
-  return {
-    ...options,
-    retrievalPlan: {
-      ...retrievalPlan,
-      ...(hasFilters ? { filters: options.retrievalFilters } : {}),
-      ...(hasExternalRerank
-        ? {
-            externalRerank: {
-              ...(retrievalPlan.externalRerank || {}),
-              enabled: options.externalRerank,
-            },
-          }
-        : {}),
-    },
-  };
-}
-
 /**
  * Keep automatic planning additive for configured callers. Explicit plan input
  * remains authoritative and can disable every gate.
  */
 function mergeAutomaticSearchPlan(
-  base: MemoryConfigOverrides,
-  planned: MemoryConfigOverrides,
+  base: ResolvedMemoryConfigOverrides,
+  planned: ResolvedMemoryConfigOverrides,
   requestedPlan?: RetrievalPlanInput | null,
-): MemoryConfigOverrides {
+): ResolvedMemoryConfigOverrides {
   const result = mergeSearchConfig(base, planned);
   const target = result as Record<string, unknown>;
   const autoPlan =
@@ -137,12 +134,15 @@ function mergeAutomaticSearchPlan(
   ];
   for (const key of planControlledKeys) {
     if (Object.prototype.hasOwnProperty.call(planned, key)) {
-      target[key] = planned[key as keyof MemoryConfigOverrides];
+      target[key] = planned[key as keyof ResolvedMemoryConfigOverrides];
     }
   }
   for (const key of preserveKeys) {
-    if (base[key as keyof MemoryConfigOverrides] !== undefined && !overrides.has(key)) {
-      target[key] = base[key as keyof MemoryConfigOverrides];
+    if (
+      base[key as keyof ResolvedMemoryConfigOverrides] !== undefined &&
+      !overrides.has(key)
+    ) {
+      target[key] = base[key as keyof ResolvedMemoryConfigOverrides];
     }
   }
   return result;
@@ -156,17 +156,15 @@ export default class SearchPlanResolver {
     query: string,
     options: SearchOptions = {},
     ctx: Partial<PipelineContextLike> = {},
-    pipelineConfig: MemoryConfigOverrides = {},
+    pipelineConfig: ResolvedMemoryConfigOverrides = {},
   ): Promise<RetrievalExplanation> {
-    const effectiveOptions = projectLegacySearchOptions(options);
-    const rawPlan = effectiveOptions.retrievalPlan;
+    assertKnownSearchOptions(options);
+    const rawPlan = options.retrievalPlan;
     assertValidRetrievalPlanInput(rawPlan);
     const queryPlanOverride = rawPlan == null ? undefined : rawPlan;
-    const inheritRetrievalDefaults =
-      effectiveOptions.inheritRetrievalDefaults !== false;
+    const inheritRetrievalDefaults = options.inheritRetrievalDefaults !== false;
     const hasQueryPlanOverride =
-      queryPlanOverride !== undefined ||
-      effectiveOptions.inheritRetrievalDefaults === false;
+      queryPlanOverride !== undefined || options.inheritRetrievalDefaults === false;
     const planInput =
       hasQueryPlanOverride || this.options.hasConfiguredDefaultPlan
         ? mergeRetrievalPlan(
@@ -208,10 +206,10 @@ export default class SearchPlanResolver {
 
   resolveRunConfig(
     resolution: RetrievalExplanation,
-    pipelineConfig: MemoryConfigOverrides,
-    contextConfig: MemoryConfigOverrides = {},
+    pipelineConfig: ResolvedMemoryConfigOverrides,
+    contextConfig: ResolvedMemoryConfigOverrides = {},
     options: SearchOptions = {},
-  ): MemoryConfigOverrides {
+  ): ResolvedMemoryConfigOverrides {
     const baseConfig = mergeSearchConfig(pipelineConfig, contextConfig);
     const plannedConfig = applyRetrievalPlan(resolution.plan);
     const runConfig = resolution.explicit

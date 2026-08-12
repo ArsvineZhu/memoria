@@ -4,7 +4,7 @@ import type {
   UnknownRecord,
   VectorLike,
 } from "./common.js";
-import type { MemoryConfigOverrides, SearchOptions } from "./config.js";
+import type { ResolvedMemoryConfigOverrides, SearchOptions } from "./config.js";
 import type {
   ChunkEntry,
   MemoryDocumentFormat,
@@ -82,6 +82,12 @@ export interface PipelineData extends UnknownRecord {
   query?: string;
   options?: SearchOptions | TdbSearchOptions;
   retrievalPlan?: import("../retrieval/retrieval-plan.js").RetrievalPlan;
+  /** Internal single-resolution query execution snapshot. */
+  resolvedSearchExecution?: import("../pipelines/search-run-preparation.js").ResolvedSearchExecution;
+  /** Native artifact frozen for this query snapshot. */
+  tagGraphArtifact?: Partial<
+    import("../native/tag-graph-runtime-types.js").NativeArtifactState
+  >;
   spaces?: string[];
   indexNames?: string[];
   libraries?: string[];
@@ -124,7 +130,10 @@ export interface PipelineData extends UnknownRecord {
   truncationStats?: TruncationStats;
   expansionStats?: ExpansionStats;
   tagRetrievalFailure?:
-    "artifact_build_failed" | "backend_unavailable" | "invalid_result";
+    | "artifact_build_failed"
+    | "artifact_unavailable"
+    | "backend_unavailable"
+    | "invalid_result";
   nativeTagRetrievalFailure?:
     "native_backend_failed" | "artifact_unavailable" | "invalid_result";
   nativePropagationSupportFailure?:
@@ -163,7 +172,7 @@ export interface TagBasisProjectionLike {
 }
 
 export interface PipelineContextOptions {
-  config: MemoryConfigOverrides;
+  config: ResolvedMemoryConfigOverrides;
   embeddingProvider?: EmbeddingProviderContract | null;
   vectorStore?: VectorStoreContract | null;
   metadataStore?: MetadataStoreContract | null;
@@ -187,7 +196,7 @@ export interface Stage<Input = PipelineData, Output = PipelineData> {
 }
 
 export interface PipelineContextLike {
-  config: MemoryConfigOverrides;
+  config: ResolvedMemoryConfigOverrides;
   embeddingProvider?: EmbeddingProviderContract | null;
   vectorStore?: VectorStoreContract | null;
   metadataStore?: MetadataStoreContract | null;

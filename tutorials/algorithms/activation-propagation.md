@@ -22,7 +22,7 @@ Activation Propagation 在 tag association graph 上传播由查询得到的 see
 
 ## gate 与连续阶段
 
-\`tagGraphPropagationEnabled\` 控制本阶段，默认关闭。它发生在 Tag Residual Decomposition 之后，并且必须紧接 [Graph Diffusion](./graph-diffusion.md)。如果 propagation 没有执行，diffusion 也不会凭空创建传播输入。
+\`RetrievalPlan.associative.tagGraphPropagation\` 控制本阶段，默认关闭。它发生在 Tag Residual Decomposition 之后，并且必须紧接 [Graph Diffusion](./graph-diffusion.md)。如果 propagation 没有执行，diffusion 也不会凭空创建传播输入。
 
 ## 核心计算
 
@@ -42,6 +42,6 @@ Activation Propagation 在 tag association graph 上传播由查询得到的 see
 - 数值非法或图输入结构不符合 contract 时由算法校验拒绝。
 - 达到 \`maxPropagationStates\` 会记录 truncation，而不是无限扩张。
 - 图传播不会直接替代 vector/BM25 结果；它通过后续 tag retrieval/rerank 阶段影响候选。
-- 传播结果是一次查询的内存状态；是否持久化由 Propagation History gate 决定。
+- 传播结果是一次查询的内存状态；是否持久化由 `RetrievalPlan.propagationHistory.enabled` 决定。
 
 源码：[activation-propagation.ts](../../src/algorithms/tag-graph/activation-propagation.ts)、[stage](../../src/stages/tag-retrieval/activation-propagation.ts)。

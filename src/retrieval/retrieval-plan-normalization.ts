@@ -1,4 +1,4 @@
-import type { MemoryConfigOverrides } from "../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../types/config.js";
 import type { RetrievalPlan, RetrievalPlanInput } from "./retrieval-plan-types.js";
 import {
   assertRetrievalPlanShape,
@@ -215,7 +215,9 @@ export function normalizeRetrievalPlan(
 }
 
 /** Convert a normalized public plan into per-run canonical config gates. */
-export function applyRetrievalPlan(input: RetrievalPlan): MemoryConfigOverrides {
+export function applyRetrievalPlan(
+  input: RetrievalPlan,
+): ResolvedMemoryConfigOverrides {
   const plan = normalizeRetrievalPlan(input);
   const associative = plan.associative ?? {};
   const structural = plan.structural ?? {};
@@ -225,7 +227,7 @@ export function applyRetrievalPlan(input: RetrievalPlan): MemoryConfigOverrides 
   const associatorEnabled = plan.expansion?.associate === true;
   const relationExpansionEnabled =
     plan.expansion?.related === true || structural.relationExpansion === true;
-  const config: MemoryConfigOverrides = {
+  const config: ResolvedMemoryConfigOverrides = {
     retrievalPlan: plan,
     tagBasisProjectionEnabled: associative.tagBasisProjection === true,
     tagResidualDecompositionEnabled: associative.tagResidualDecomposition === true,

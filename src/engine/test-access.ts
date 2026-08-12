@@ -1,7 +1,7 @@
 import type DeletePipeline from "../pipelines/delete-pipeline.js";
 import type IngestPipeline from "../pipelines/ingest-pipeline.js";
 import type SearchPipeline from "../pipelines/search-pipeline.js";
-import type { MemoryConfig } from "../types/config.js";
+import type { ResolvedMemoryConfig } from "../types/config.js";
 import type {
   RuntimeEmbeddingProvider,
   RuntimeMetadataStore,
@@ -10,7 +10,7 @@ import type {
 
 /** Test-only accessors; this module is intentionally not exported from the package root. */
 export interface MemoryEngineTestInternals {
-  readonly config: MemoryConfig;
+  readonly config: ResolvedMemoryConfig;
   /** Test-only escape hatch; intentionally excluded from the public package API. */
   readonly metadataStore: RuntimeMetadataStore;
   readonly vectorStore: RuntimeVectorStore;

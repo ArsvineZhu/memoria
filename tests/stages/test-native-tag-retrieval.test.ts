@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import NativeTagRetrievalStage from "../../src/stages/tag-retrieval/native-tag-retrieval.js";
+import { ensureTagRetrievalArtifact } from "../../src/native/tag-graph-artifact-runtime.js";
 import TagBasisProjectionStage from "../../src/stages/tag-retrieval/tag-basis-projection.js";
 import TagResidualDecompositionStage from "../../src/stages/tag-retrieval/tag-residual-decomposition.js";
 import PropagationStructureRerankerStage from "../../src/stages/tag-retrieval/propagation-structure-reranker.js";
@@ -106,6 +107,11 @@ test("NativeTagRetrievalStage uses the canonical artifact and pipeline ABI", asy
     query: "semantic",
     queryVector: new Float32Array([1, 0]),
     queries: [{ text: "semantic", vector: new Float32Array([1, 0]) }],
+    tagGraphArtifact: {
+      dbPath: "C:/data/memory.sqlite",
+      artifactSig: "artifact-1",
+      generation: 1,
+    },
   };
 
   const output = await new NativeTagRetrievalStage().process(input, ctx);
@@ -119,7 +125,34 @@ test("NativeTagRetrievalStage uses the canonical artifact and pipeline ABI", asy
     (output.tagGraphArtifact as Record<string, unknown> | undefined)?.artifactSig,
     "artifact-1",
   );
-  assert.equal(native.artifactBuildCount, 1);
+  assert.equal(native.artifactBuildCount, 0);
+});
+
+test("NativeTagRetrievalStage never builds an artifact during stage execution", async () => {
+  const native = makeNative();
+  const output = await new NativeTagRetrievalStage().process(
+    {
+      query: "semantic",
+      queryVector: new Float32Array([1, 0]),
+      queries: [{ text: "semantic", vector: new Float32Array([1, 0]) }],
+    },
+    makeContext(native),
+  );
+
+  assert.equal(output.tagRetrievalSkipped, true);
+  assert.equal(output.tagRetrievalFailure, "artifact_unavailable");
+  assert.equal(native.artifactBuildCount, 0);
+});
+
+test("native artifact cache is disabled when metadata generation is unavailable", async () => {
+  const native = makeNative();
+  const ctx = makeContext(native);
+  ctx.metadataStore = {} as never;
+
+  await ensureTagRetrievalArtifact(ctx, native as never);
+  await ensureTagRetrievalArtifact(ctx, native as never);
+
+  assert.equal(native.artifactBuildCount, 2);
 });
 
 test("NativeTagRetrievalStage reuses an artifact for one generation and rebuilds after invalidation", async () => {
@@ -131,29 +164,29 @@ test("NativeTagRetrievalStage reuses an artifact for one generation and rebuilds
       return key === "metadata_generation" ? metadataGeneration : "0";
     },
   } as never;
-  const stage = new NativeTagRetrievalStage();
-  const input: PipelineData = {
-    query: "semantic",
-    queryVector: new Float32Array([1, 0]),
-    queries: [{ text: "semantic", vector: new Float32Array([1, 0]) }],
-  };
-
-  await stage.process(input, ctx);
-  await stage.process(input, ctx);
+  await ensureTagRetrievalArtifact(ctx, native as never);
+  await ensureTagRetrievalArtifact(ctx, native as never);
   assert.equal(native.artifactBuildCount, 1);
 
   metadataGeneration = "2";
-  await stage.process(input, ctx);
+  await ensureTagRetrievalArtifact(ctx, native as never);
   assert.equal(native.artifactBuildCount, 2);
 
   ctx.config.routingBudget = 9;
-  await stage.process(input, ctx);
+  await ensureTagRetrievalArtifact(ctx, native as never);
   assert.equal(native.artifactBuildCount, 3);
 });
 
 test("NativeTagRetrievalStage fails closed for in-memory databases", async () => {
   const output = await new NativeTagRetrievalStage().process(
-    { queryVector: new Float32Array([1, 0]) },
+    {
+      queryVector: new Float32Array([1, 0]),
+      tagGraphArtifact: {
+        dbPath: ":memory:",
+        artifactSig: "artifact-1",
+        generation: 1,
+      },
+    },
     makeContext(makeNative(), ":memory:"),
   );
   assert.equal(output.tagRetrievalSkipped, true);
@@ -169,7 +202,15 @@ test("NativeTagRetrievalStage does not expose native error details", async () =>
     },
   });
   const output = await new NativeTagRetrievalStage().process(
-    { query: "private", queryVector: new Float32Array([1, 0]) },
+    {
+      query: "private",
+      queryVector: new Float32Array([1, 0]),
+      tagGraphArtifact: {
+        dbPath: "C:/data/memory.sqlite",
+        artifactSig: "artifact-1",
+        generation: 1,
+      },
+    },
     makeContext(native),
   );
   assert.equal(output.tagRetrievalFailure, "backend_unavailable");
@@ -291,6 +332,11 @@ test("native success reuses one canonical observation without TS kernel calls", 
       query: "semantic",
       queryVector: new Float32Array([1, 0]),
       queries: [{ text: "semantic", vector: new Float32Array([1, 0]) }],
+      tagGraphArtifact: {
+        dbPath: "C:/data/memory.sqlite",
+        artifactSig: "artifact-1",
+        generation: 1,
+      },
     },
     ctx,
   );

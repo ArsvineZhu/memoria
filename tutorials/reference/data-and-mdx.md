@@ -40,7 +40,7 @@ front matter 的 key 必须保持可序列化；正文应有实际内容。解�
 
 ## Relations
 
-显式 relation 来自 source metadata 或正式 relation contract；derived relation 由 relation graph 阶段产生。relation 有 kind、origin、status、confidence、weight、provenance 和 source revision。关系扩展不是默认搜索的一部分，必须通过 gate 或 retrieval plan 开启。
+显式 relation 来自 source metadata 或正式 relation contract；derived relation 由 relation graph 阶段产生。relation 有 kind、origin、status、confidence、weight、provenance 和 source revision。关系扩展不是默认搜索的一部分，必须通过 `RetrievalPlan.expansion.related` 开启。
 
 ## 数据边界
 

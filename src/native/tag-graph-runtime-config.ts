@@ -1,13 +1,10 @@
 import type { MemoryConfigOverrides } from "../types/config.js";
 import type { UnknownRecord } from "../types/common.js";
+import { normalizeSupportSelectionMethod } from "../config/support-selection.js";
 
 function number(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === "boolean" ? value : fallback;
 }
 
 export function nativeDatabasePath(ctx: {
@@ -50,7 +47,9 @@ export function buildNativeArtifactConfig(
       diffusionMaxIterations: number(config.diffusionMaxIterations, 200),
       localDiffusionTolerance: number(config.localDiffusionTolerance, 1e-9),
       extendedDiffusionTolerance: number(config.extendedDiffusionTolerance, 1e-9),
-      supportSelectionMethod: String(config.supportSelectionMethod || "mass_ratio"),
+      supportSelectionMethod: normalizeSupportSelectionMethod(
+        config.supportSelectionMethod,
+      ),
       localSupportMassRatio: number(config.localSupportMassRatio, 0.8),
       extendedSupportMassRatio: number(config.extendedSupportMassRatio, 0.9),
     },
@@ -59,10 +58,6 @@ export function buildNativeArtifactConfig(
 
 export function nativePipelineConfig(config: MemoryConfigOverrides): UnknownRecord {
   return {
-    tagBasisClusterCount: number(config.tagBasisClusterCount, 64),
-    tagBasisMaxDimensions: number(config.tagBasisMaxDimensions, 64),
-    tagBasisPerCandidateAnalysis: boolean(config.tagBasisPerCandidateAnalysis, false),
-    strictOrthogonalization: boolean(config.strictOrthogonalization, true),
     residualMaxSteps: number(config.residualMaxSteps, 3),
     tagResidualDecompositionTopK: number(config.residualTagTopK, 5),
     residualStopEnergyRatio: number(config.residualStopEnergyRatio, 0.1),
@@ -73,7 +68,9 @@ export function nativePipelineConfig(config: MemoryConfigOverrides): UnknownReco
     extendedDiffusionTolerance: number(config.extendedDiffusionTolerance, 1e-9),
     localSupportMassRatio: number(config.localSupportMassRatio, 0.8),
     extendedSupportMassRatio: number(config.extendedSupportMassRatio, 0.9),
-    supportSelectionMethod: String(config.supportSelectionMethod || "mass_ratio"),
+    supportSelectionMethod: normalizeSupportSelectionMethod(
+      config.supportSelectionMethod,
+    ),
     activationPropagation: {
       propagationMaxHops: number(config.propagationMaxHops, 4),
       baseRoutingBudget: number(config.routingBudget, 20),

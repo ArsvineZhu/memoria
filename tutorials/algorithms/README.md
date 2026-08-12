@@ -13,7 +13,7 @@
 
 ## 阶段顺序
 
-默认流水线按下面的依赖关系组织。某些阶段由 gate 控制，关闭时不会产生对应诊断字段；基础向量/BM25 检索仍可单独运行。
+默认流水线按下面的依赖关系组织。某些阶段由 retrieval plan 控制，关闭时不会产生对应诊断字段；基础向量/BM25 检索仍可单独运行。
 
 \`\`\`text
 query embedding
@@ -36,7 +36,7 @@ query embedding
 
 ## 共通说明
 
-- 配置 gate 默认值以 [tutorials/reference/configuration.md](../reference/configuration.md) 和源码 \`src/config/default-config.ts\` 为准。
+- plan selection 以 [tutorials/reference/retrieval-plan.md](../reference/retrieval-plan.md) 为准；运行参数默认值以源码 \`src/config/default-config.ts\` 为准。
 - 算法阶段是库内部实现，教程只通过 \`MemoryEngine.search()\`、\`MemoryEngine.explain()\`、\`QueryBuilder\` 和公开结果字段观察它们。
 - 空输入、维度不一致、缺少 derived artifact、provider 失败等情况不会被 fake provider 自动掩盖；请看各章节的失败语义。
 - “重排”在本文中分为确定性本地重排和调用者注入的 external/model rerank；基础排序本身不等于模型重排。

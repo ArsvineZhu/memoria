@@ -63,8 +63,9 @@ tag basis projection
 ## 与后处理的组合
 
 `filters` 在候选范围边界生效；`expansion` 在去重前增加同文档、关系或关联候选；
-`externalRerank` 只在显式配置 provider 时调用；`postprocess` 负责 time decay、dedupe、
-truncate、结果上限和正文长度。每个阶段的实际执行情况应从结果 trace 读取。
+`externalRerank` 只在显式配置 provider 且 `enabled` 为 `true` 时调用；`postprocess` 负责
+time decay、dedupe、truncate、结果上限和正文长度。每个 capability 的公开结果应从
+`retrieval.evidence` 和 `retrieval.fallbacks` 读取，raw stage trace 不属于 API 契约。
 
 ## scope 和 spaces
 

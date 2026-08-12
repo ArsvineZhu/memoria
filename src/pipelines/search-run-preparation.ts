@@ -1,17 +1,25 @@
 import type {
   MemoryConfig,
-  MemoryConfigOverrides,
+  ResolvedMemoryConfigOverrides,
   SearchOptions,
 } from "../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../types/pipeline.js";
 import type { RetrievalExplanation } from "../retrieval/query-planner.js";
 import type { RetrievalPlan } from "../retrieval/retrieval-plan.js";
+import type { NativeArtifactState } from "../native/tag-graph-runtime-types.js";
+
+export interface ResolvedSearchExecution {
+  resolution: RetrievalExplanation;
+  runConfig: ResolvedMemoryConfigOverrides;
+  authorityGeneration?: string;
+  nativeArtifact?: NativeArtifactState;
+}
 
 export interface SearchRunPreparationOptions {
   source: PipelineData;
   options: SearchOptions;
   ctx: Partial<PipelineContextLike>;
-  runConfig: MemoryConfigOverrides;
+  runConfig: ResolvedMemoryConfigOverrides;
   resolution: RetrievalExplanation;
   defaultRetrievalPlan: RetrievalPlan;
 }

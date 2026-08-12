@@ -11,7 +11,7 @@ Propagation Support Rerank 用候选 chunk 的 tag/support 信号，对基础候
 - merged/expanded candidates；
 - 查询 tag basis/residual 和传播输出；
 - candidate 的 tags、向量或 support 数据；
-- \`propagationSupportRerankEnabled\` 及相关 support 权重/阈值。
+- \`RetrievalPlan.associative.propagationSupport\` 及相关 support 权重/阈值。
 
 输出：
 
@@ -37,7 +37,7 @@ Propagation Support Rerank 用候选 chunk 的 tag/support 信号，对基础候
 
 ## 边界
 
-- gate 默认关闭；
+- plan section 默认关闭；
 - 没有 propagation 或 candidate tags 时会保持候选或跳过；
 - 关闭本阶段不会影响基础向量/BM25；
 - support 分数不是概率，不能跨不同配置直接比较；

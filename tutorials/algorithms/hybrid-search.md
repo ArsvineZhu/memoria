@@ -16,7 +16,7 @@ Hybrid Search 同时利用语义相似度和词法匹配，得到比单一路径
 
 中间输出包括 \`vectorResults\`、\`bm25Results\`、\`mergedCandidates\`；这些字段只存在于内部 pipeline。公开的 \`SearchEnvelope\` 只返回最终结果和稳定的 \`retrieval.evidence\`。
 
-## 阶段与 gate
+## 阶段与计划
 
 阶段顺序是：
 
@@ -28,7 +28,7 @@ Candidate Merger
 BM25 Searcher
 \`\`\`
 
-这部分没有 external rerank gate。只要 engine 初始化成功并且索引可用，默认搜索就能执行；默认不会因为搜索而访问网络。
+这部分不依赖 external rerank plan section。只要 engine 初始化成功并且索引可用，默认搜索就能执行；默认不会因为搜索而访问网络。
 
 ## 实现解释
 

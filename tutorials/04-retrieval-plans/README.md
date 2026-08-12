@@ -129,13 +129,13 @@ corepack pnpm tutorial:04
 
 ## 预期输出
 
-程序会打印 explanation 解析出的策略、实际 stage order，以及 object-style 和 chain-style 的结果数量。trace 只在当前搜索 envelope 开启时出现；不能假定每个自定义 provider 都会补充额外诊断。
+程序会打印 explanation 解析出的策略、规范化 plan，以及 object-style 和 chain-style 的结果数量。公开 envelope 只保证 `retrieval.strategy`、`retrieval.plan`、`retrieval.evidence` 和 `retrieval.fallbacks`；不能假定每个自定义 provider 都会补充额外诊断。
 
 ## 常见错误
 
 - 同一个 builder 同时选择不同 core strategy 会失败。
 - `QueryBuilder.run()` 不接受 `retrievalPlan` 和 `inheritRetrievalDefaults`，这两个选项必须在 builder 上配置。
-- `associative` 或 `structural` 阶段的 gate 关闭时，plan 中的 section 不代表阶段一定执行。
+- `associative` 或 `structural` 阶段的 section 关闭时，plan 不代表阶段一定产生有效信号；应检查 `retrieval.evidence` 和 `retrieval.fallbacks`。
 
 ## 下一章
 

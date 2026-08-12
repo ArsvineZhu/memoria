@@ -195,6 +195,17 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
   );
 });
 
+test("public config rejects stage-selection gates and unknown support methods", () => {
+  assert.throws(
+    () => mergeConfig({ externalRerankEnabled: true } as never),
+    /Unknown MemoryConfig key: externalRerankEnabled/,
+  );
+  assert.throws(
+    () => mergeConfig({ supportSelectionMethod: "activation" } as never),
+    /Invalid supportSelectionMethod/,
+  );
+});
+
 test("MemoryEngine fixes and exposes the normalized default retrieval plan", async () => {
   const defaultRetrievalPlan = {
     strategy: "associative" as const,

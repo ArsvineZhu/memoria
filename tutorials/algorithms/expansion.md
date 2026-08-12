@@ -8,15 +8,15 @@ Expansion 在初始候选之外补充相关 chunk，再让统一的 dedupe、rer
 
 ### Tag Expansion
 
-\`tagExpansionEnabled\` 打开后，stage 使用 tag retrieval 输出查找带有相关 tags 的 chunks。配置决定 seed 数量、每个 tag 的候选上限、boost 和允许的 scope。新增候选会标记 \`source: "tag-expansion"\` 等来源诊断。
+\`RetrievalPlan.associative.tagExpansion\` 打开后，stage 使用 tag retrieval 输出查找带有相关 tags 的 chunks。配置决定 seed 数量、每个 tag 的候选上限、boost 和允许的 scope。新增候选会标记 \`source: "tag-expansion"\` 等来源诊断。
 
 ### Relation Expansion
 
-\`relationExpansionEnabled\` 打开后，stage 从当前候选的 relation seeds 沿显式/derived relations 走有限 hop。相关配置包括 hop、seed、max added、boost 和 scope。关系距离和置信度会影响新增候选分数。
+\`RetrievalPlan.expansion.related\` 打开后，stage 从当前候选的 relation seeds 沿显式/derived relations 走有限 hop。相关配置包括 hop、seed、max added、boost 和 scope。关系距离和置信度会影响新增候选分数。
 
 ### 同文档/关联扩展
 
-\`expansionEnabled\`、\`fullDocumentExpansionEnabled\` 和 \`associatorEnabled\` 控制同文件 sibling、完整文档或关联 chunk 的补充。它们属于候选生产阶段，必须在 common tail 之前完成。
+\`RetrievalPlan.expansion.sameDocument\`、\`fullDocument\` 和 \`associate\` 控制同文件 sibling、完整文档或关联 chunk 的补充。它们属于候选生产阶段，必须在 common tail 之前完成。
 
 ## 阶段与输出
 

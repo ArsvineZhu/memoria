@@ -1,7 +1,6 @@
 import type { ChunkCandidate } from "../../types/documents.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import {
-  ensureTagRetrievalArtifact,
   getTagRetrievalIndex,
   nativeDatabasePath,
   readDistribution,
@@ -32,15 +31,7 @@ export default class PropagationStructureNativeAdapter {
 
     let artifact = readRecord(info.tagGraphArtifact);
     if (typeof artifact.artifactSig !== "string" || !artifact.artifactSig) {
-      const built = await ensureTagRetrievalArtifact(ctx, index);
-      if (!built.state) {
-        return this.failure(
-          built.failure === "invalid_result"
-            ? "invalid_result"
-            : "artifact_unavailable",
-        );
-      }
-      artifact = built.state as unknown as Record<string, unknown>;
+      return this.failure("artifact_unavailable");
     }
 
     const candidates = Array.isArray(info.mergedCandidates)

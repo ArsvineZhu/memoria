@@ -10,7 +10,10 @@ import type { EmbeddingProviderContract } from "./embedding.js";
 import type { MetadataStoreContract } from "./metadata.js";
 import type { VectorStoreContract } from "./vector.js";
 
-/** Fully materialised runtime configuration. */
+export type SupportSelectionMethod =
+  "mass_ratio" | "tail_budget" | "shannon" | "participation_ratio" | "largest_mass_gap";
+
+/** Public configuration contains retrieval parameters, not per-query stage selection. */
 export interface MemoryConfig {
   dataPath: string;
   rootPath: string;
@@ -42,23 +45,7 @@ export interface MemoryConfig {
   relationGraphEnabled: boolean;
   checkpoint: boolean | { enabled?: boolean; interval?: number };
   checkpointInterval: number;
-  tagBasisProjectionEnabled: boolean;
-  tagResidualDecompositionEnabled: boolean;
-  tagGraphPropagationEnabled: boolean;
-  propagationSupportRerankEnabled: boolean;
-  propagationStructureRerankEnabled: boolean;
-  propagationHistoryEnabled: boolean;
-  embeddingRerankEnabled: boolean;
-  nativeTagRetrievalEnabled: boolean;
-  tagExpansionEnabled: boolean;
-  associatorEnabled: boolean;
-  externalRerankEnabled: boolean;
-  timeDecayEnabled: boolean;
-  truncateEnabled: boolean;
   truncateMinScore?: number;
-  expansionEnabled: boolean;
-  fullDocumentExpansionEnabled: boolean;
-  relationExpansionEnabled: boolean;
   relationMaxHops: number;
   relationMaxAdded: number;
   relationExpansionSeeds: number;
@@ -80,7 +67,6 @@ export interface MemoryConfig {
   minScore: number;
   vectorWeight: number;
   bm25Weight: number;
-  dedupeEnabled: boolean;
   dedupeSemantic: boolean;
   semanticThreshold: number;
   dedupeMaxResults: number;
@@ -127,7 +113,7 @@ export interface MemoryConfig {
   diffusionMaxIterations: number;
   localDiffusionTolerance: number;
   extendedDiffusionTolerance: number;
-  supportSelectionMethod: string;
+  supportSelectionMethod: SupportSelectionMethod;
   localSupportMassRatio: number;
   extendedSupportMassRatio: number;
   historyUpdateScale: number;
@@ -150,11 +136,33 @@ export interface MemoryConfig {
   tdbMinScore: number;
   tdbExpandDepth: number;
   tdbTimeDecayEnabled: boolean;
+}
+
+/** Internal plan-compiled configuration used only by the search pipeline. */
+export interface ResolvedMemoryConfig extends MemoryConfig {
+  tagBasisProjectionEnabled: boolean;
+  tagResidualDecompositionEnabled: boolean;
+  tagGraphPropagationEnabled: boolean;
+  propagationSupportRerankEnabled: boolean;
+  propagationStructureRerankEnabled: boolean;
+  propagationHistoryEnabled: boolean;
+  embeddingRerankEnabled: boolean;
+  nativeTagRetrievalEnabled: boolean;
+  tagExpansionEnabled: boolean;
+  associatorEnabled: boolean;
+  externalRerankEnabled: boolean;
+  timeDecayEnabled: boolean;
+  truncateEnabled: boolean;
+  expansionEnabled: boolean;
+  fullDocumentExpansionEnabled: boolean;
+  relationExpansionEnabled: boolean;
+  dedupeEnabled: boolean;
   retrievalPlan?: RetrievalPlan;
   retrievalFilters?: RetrievalPlan["filters"];
 }
 
 export type MemoryConfigOverrides = Partial<MemoryConfig>;
+export type ResolvedMemoryConfigOverrides = Partial<ResolvedMemoryConfig>;
 
 export interface MemoryEngineOptions {
   config?: MemoryConfigOverrides;
@@ -166,7 +174,7 @@ export interface MemoryEngineOptions {
   metadataStore?: MetadataStoreContract;
   /** Optional model reranker injected into the external rerank stage. */
   reranker?: ExternalReranker;
-  searchOptions?: SearchOptions;
+  searchOptions?: Pick<SearchOptions, "queryExpansion" | "queryEpsilon">;
   onReady?: (engine: MemoryEngine) => void | Promise<void>;
 }
 
@@ -176,8 +184,6 @@ export interface SearchOptions {
   topK?: number;
   indexNames?: string[];
   spaces?: string[];
-  retrievalFilters?: RetrievalPlan["filters"];
   queryExpansion?: number;
   queryEpsilon?: number | null;
-  externalRerank?: boolean;
 }

@@ -31,6 +31,17 @@ const runtimeExportSourcePath = resolve(repositoryRoot, "src/index.ts");
 const runtimeExportDocumentationPath = resolve(repositoryRoot, "docs/API.md");
 const runtimeExportStartMarker = "<!-- runtime-exports:start -->";
 const runtimeExportEndMarker = "<!-- runtime-exports:end -->";
+const persistenceSchemaSourcePath = resolve(
+  repositoryRoot,
+  "src/providers/sqlite/schema.ts",
+);
+const propagationHistorySourcePath = resolve(
+  repositoryRoot,
+  "src/stages/tag-retrieval/propagation-history.ts",
+);
+const persistenceDocumentationPath = resolve(repositoryRoot, "docs/PERSISTENCE.md");
+const persistenceContractStartMarker = "<!-- canonical-schema:start -->";
+const persistenceContractEndMarker = "<!-- canonical-schema:end -->";
 
 function isExcludedPath(filePath) {
   const relativePath = relative(repositoryRoot, filePath);
@@ -259,9 +270,113 @@ function findRuntimeExportDrift() {
   }
 }
 
+function extractCanonicalPersistenceContract(schemaSource, historySource) {
+  const tableBlock = schemaSource.match(
+    /export const CANONICAL_TABLE_DEFINITIONS[\s\S]*?\n};\n\nexport const CANONICAL_SCHEMA_VERSION/,
+  );
+  const version = schemaSource.match(
+    /export const CANONICAL_SCHEMA_VERSION\s*=\s*(\d+);/,
+  );
+  const historySchema = historySource.match(
+    /PROPAGATION_HISTORY_SCHEMA\s*=\s*["']([^"']+)["']/,
+  );
+  if (!tableBlock || !version || !historySchema) {
+    throw new Error("canonical persistence source markers not found");
+  }
+
+  const tables = [...tableBlock[0].matchAll(/^  ([A-Za-z0-9_]+):\s*`/gm)].map(
+    (match) => match[1],
+  );
+  const historyTables = tables.filter((table) =>
+    table.startsWith("propagation_history_"),
+  );
+  return {
+    schemaVersion: Number(version[1]),
+    historySchema: historySchema[1],
+    historyStorage:
+      historyTables.includes("propagation_history_state") &&
+      historyTables.includes("propagation_history_edges")
+        ? "relational-tables"
+        : "unknown",
+    tables,
+  };
+}
+
+function extractMarkedPersistenceContract(document) {
+  const start = document.indexOf(persistenceContractStartMarker);
+  const end = document.indexOf(persistenceContractEndMarker);
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error(
+      `Persistence contract markers not found in ${persistenceDocumentationPath}`,
+    );
+  }
+
+  const lines = document
+    .slice(start + persistenceContractStartMarker.length, end)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const schemaVersion = lines.find((line) => line.startsWith("schema-version:"));
+  const historySchema = lines.find((line) => line.startsWith("history-schema:"));
+  const historyStorage = lines.find((line) => line.startsWith("history-storage:"));
+  const tableStart = lines.indexOf("tables:");
+  if (!schemaVersion || !historySchema || !historyStorage || tableStart < 0) {
+    throw new Error("incomplete persistence contract marker block");
+  }
+  return {
+    schemaVersion: Number(schemaVersion.slice("schema-version:".length).trim()),
+    historySchema: historySchema.slice("history-schema:".length).trim(),
+    historyStorage: historyStorage.slice("history-storage:".length).trim(),
+    tables: lines.slice(tableStart + 1),
+  };
+}
+
+function findPersistenceContractDrift() {
+  try {
+    const expected = extractCanonicalPersistenceContract(
+      readFileSync(persistenceSchemaSourcePath, "utf8"),
+      readFileSync(propagationHistorySourcePath, "utf8"),
+    );
+    const documented = extractMarkedPersistenceContract(
+      readFileSync(persistenceDocumentationPath, "utf8"),
+    );
+    if (
+      expected.schemaVersion === documented.schemaVersion &&
+      expected.historySchema === documented.historySchema &&
+      expected.historyStorage === documented.historyStorage &&
+      JSON.stringify(expected.tables) === JSON.stringify(documented.tables)
+    ) {
+      return [];
+    }
+    return [
+      {
+        file: relative(repositoryRoot, persistenceDocumentationPath),
+        line: 1,
+        target: "canonical persistence contract",
+        reason: "persistence-contract-drift",
+        detail: `source=${JSON.stringify(expected)} docs=${JSON.stringify(documented)}`,
+      },
+    ];
+  } catch (error) {
+    return [
+      {
+        file: relative(repositoryRoot, persistenceDocumentationPath),
+        line: 1,
+        target: "canonical persistence contract",
+        reason: "persistence-contract-drift",
+        detail: error instanceof Error ? error.message : String(error),
+      },
+    ];
+  }
+}
+
 function main() {
   const documents = collectDocuments().sort((left, right) => left.localeCompare(right));
-  const errors = [...documents.flatMap(findBrokenLinks), ...findRuntimeExportDrift()];
+  const errors = [
+    ...documents.flatMap(findBrokenLinks),
+    ...findRuntimeExportDrift(),
+    ...findPersistenceContractDrift(),
+  ];
 
   if (errors.length > 0) {
     console.error(`Documentation verification failed (${errors.length} issue(s)):`);
@@ -269,9 +384,11 @@ function main() {
       const detail =
         error.reason === "runtime-export-drift"
           ? error.detail
-          : error.reason === "excluded"
-            ? "target is outside the maintained documentation scope"
-            : `resolved path does not exist: ${error.resolvedPath}`;
+          : error.reason === "persistence-contract-drift"
+            ? error.detail
+            : error.reason === "excluded"
+              ? "target is outside the maintained documentation scope"
+              : `resolved path does not exist: ${error.resolvedPath}`;
       console.error(`- ${error.file}:${error.line} -> ${error.target} (${detail})`);
     }
     process.exitCode = 1;
@@ -293,6 +410,9 @@ export {
   extractRuntimeExportsFromSource,
   findBrokenLinks,
   findRuntimeExportDrift,
+  extractCanonicalPersistenceContract,
+  extractMarkedPersistenceContract,
+  findPersistenceContractDrift,
   normalizeTarget,
   resolveDocumentTarget,
 };

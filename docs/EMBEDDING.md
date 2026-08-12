@@ -104,7 +104,10 @@ const engine = createMemoryEngine({
     apiKey: "your-api-key",
     model: "reranker-model",
   }),
-  config: { externalRerankEnabled: true },
+  defaultRetrievalPlan: {
+    strategy: "semantic",
+    externalRerank: { enabled: true },
+  },
 });
 ```
 

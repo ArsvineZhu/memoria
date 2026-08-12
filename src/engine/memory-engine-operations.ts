@@ -5,7 +5,7 @@ import IngestPipeline from "../pipelines/ingest-pipeline.js";
 import SearchPipeline from "../pipelines/search-pipeline.js";
 import type { FileRow, MetadataStoreContract } from "../types/metadata.js";
 import type { ReconciliationReport } from "../types/vector.js";
-import type { MemoryConfig, SearchOptions } from "../types/config.js";
+import type { ResolvedMemoryConfig, SearchOptions } from "../types/config.js";
 import type {
   DeleteEnvelope,
   FileInput,
@@ -18,14 +18,25 @@ import type {
 import type { PipelineData } from "../types/pipeline.js";
 import type { PropagationHistorySnapshot } from "../types/retrieval.js";
 import { asMemoriaError, MemoriaError } from "../errors.js";
+import { readMetadataGeneration } from "../core/authority-generation.js";
 import { isRecord, normalizeFiles } from "./input-normalization.js";
 import type { RuntimeMetadataStore, RuntimeVectorStore } from "./runtime-types.js";
 import { logicalDocumentPath, normalizeDocumentId } from "../utils/logical-document.js";
 import { projectSearchEnvelope } from "../pipelines/search-public-envelope.js";
+import { withRetrievalTrace } from "../pipelines/search-pipeline-trace.js";
+import { mergeRunOptions } from "../pipelines/search-run-preparation.js";
 import {
   ensureTagRetrievalArtifact,
   getTagRetrievalIndex,
 } from "../native/tag-graph-artifact-runtime.js";
+import type { ResolvedSearchExecution } from "../pipelines/search-run-preparation.js";
+
+class SearchSnapshotChanged extends Error {
+  constructor() {
+    super("Authority generation changed while preparing a search snapshot.");
+    this.name = "SearchSnapshotChanged";
+  }
+}
 
 type ReadyOperation = <T>(name: string, operation: () => Promise<T>) => Promise<T>;
 type AuthorityInput = { path: string; relPath?: string; documentId?: string };
@@ -35,7 +46,7 @@ type AuthorityMutation = <T>(
 ) => Promise<T>;
 
 export interface MemoryEngineOperationsOptions {
-  config: MemoryConfig;
+  config: ResolvedMemoryConfig;
   ingestPipeline: IngestPipeline;
   deletePipeline: DeletePipeline;
   searchPipeline: SearchPipeline;
@@ -322,43 +333,160 @@ export default class MemoryEngineOperations {
       ...options,
       ...(input.options || {}),
     };
+    input.options = mergeRunOptions(input, input.options as SearchOptions);
     try {
       const context = this.options.getContext();
-      const explanation = await this.options.searchPipeline.explain(
-        String(input.query || ""),
-        input.options as SearchOptions,
-        context,
-      );
-      const plan = explanation.plan;
-      const nativeRequired =
-        plan.structural?.enabled === true ||
-        plan.associative?.nativeTagRetrieval === true;
-      if (nativeRequired) {
-        const index = getTagRetrievalIndex(context);
-        if (index) {
-          const artifact = await this.options.vectorCoordinator.runDerivedMaintenance(
-            "tag-retrieval-artifact",
-            () => ensureTagRetrievalArtifact(context, index),
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const prepared = await this.options.vectorCoordinator.runStableRead(
+            async () => {
+              const before = await readMetadataGeneration(context.metadataStore);
+              const execution = await this._resolveSearchExecution(
+                String(input.query || ""),
+                input.options as SearchOptions,
+                context,
+              );
+              const after = await readMetadataGeneration(context.metadataStore);
+              if (before !== null && after !== null && before !== after) {
+                throw new SearchSnapshotChanged();
+              }
+              return {
+                execution: {
+                  ...execution,
+                  authorityGeneration: after ?? before ?? undefined,
+                },
+                authorityGeneration: after ?? before,
+              };
+            },
           );
-          if (artifact.state) input.tagGraphArtifact = artifact.state;
+          const plan = prepared.execution.resolution.plan;
+          const nativeRequired =
+            plan.structural?.enabled === true ||
+            plan.associative?.nativeTagRetrieval === true;
+          const executionInput = {
+            ...input,
+            resolvedSearchExecution: prepared.execution,
+          } as PipelineData;
+
+          const output = nativeRequired
+            ? await this.options.vectorCoordinator.runDerivedMaintenanceAndStableRead(
+                "tag-retrieval-artifact",
+                async () => {
+                  await this._assertSearchGeneration(
+                    context,
+                    prepared.authorityGeneration,
+                  );
+                  const index = getTagRetrievalIndex(context);
+                  if (!index) return undefined;
+                  const artifact = await ensureTagRetrievalArtifact(context, index);
+                  return artifact.state
+                    ? {
+                        ...artifact.state,
+                        metadataGeneration: prepared.authorityGeneration ?? undefined,
+                      }
+                    : undefined;
+                },
+                async (artifact) => {
+                  await this._assertSearchGeneration(
+                    context,
+                    prepared.authorityGeneration,
+                  );
+                  const runInput = artifact
+                    ? { ...executionInput, tagGraphArtifact: artifact }
+                    : executionInput;
+                  return (await this.options.searchPipeline.run(
+                    runInput,
+                    context,
+                    prepared.execution,
+                  )) as PipelineData;
+                },
+              )
+            : await this.options.vectorCoordinator.runStableRead(async () => {
+                await this._assertSearchGeneration(
+                  context,
+                  prepared.authorityGeneration,
+                );
+                return (await this.options.searchPipeline.run(
+                  executionInput,
+                  context,
+                  prepared.execution,
+                )) as PipelineData;
+              });
+
+          return await this._completeSearch(output, prepared.execution.resolution);
+        } catch (error) {
+          if (error instanceof SearchSnapshotChanged && attempt < 2) continue;
+          throw error;
         }
       }
-      const output = await this.options.vectorCoordinator.runStableRead(
-        async () =>
-          (await this.options.searchPipeline.run(input, context)) as PipelineData,
-      );
-      const observation = output.propagationHistoryObservation;
-      const store = this.options.getMetadataStore();
-      if (observation && typeof store.commitPropagationObservation === "function") {
-        const snapshot = await store.commitPropagationObservation(observation);
-        return projectSearchEnvelope(this._applyCommittedHistory(output, snapshot));
-      }
-      return projectSearchEnvelope(this._stripInternalSearchData(output));
+      throw new SearchSnapshotChanged();
     } catch (error) {
       throw asMemoriaError(error, "retrieval", "MemoryEngine search failed.", {
         retryable: true,
       });
     }
+  }
+
+  private async _resolveSearchExecution(
+    query: string,
+    options: SearchOptions,
+    context: PipelineContext,
+  ): Promise<ResolvedSearchExecution> {
+    const pipeline = this.options.searchPipeline as SearchPipeline & {
+      resolveExecution?: SearchPipeline["resolveExecution"];
+    };
+    if (typeof pipeline.resolveExecution === "function") {
+      return pipeline.resolveExecution(query, options, context);
+    }
+    const resolution = await pipeline.explain(query, options, context);
+    return { resolution, runConfig: this.options.config };
+  }
+
+  private async _assertSearchGeneration(
+    context: PipelineContext,
+    expected: string | null,
+  ): Promise<void> {
+    if (expected === null) return;
+    const current = await readMetadataGeneration(context.metadataStore);
+    if (current !== null && current !== expected) throw new SearchSnapshotChanged();
+  }
+
+  private async _completeSearch(
+    output: PipelineData,
+    resolution: ResolvedSearchExecution["resolution"],
+  ): Promise<SearchEnvelope> {
+    const observation = output.propagationHistoryObservation;
+    const store = this.options.getMetadataStore();
+    if (observation && typeof store.commitPropagationObservation === "function") {
+      const result = await this.options.vectorCoordinator.runDerivedMaintenance(
+        "propagation-history",
+        async () => {
+          try {
+            return {
+              snapshot: await store.commitPropagationObservation!(observation),
+            };
+          } catch {
+            return { snapshot: null };
+          }
+        },
+      );
+      if (result.snapshot) {
+        return projectSearchEnvelope(
+          this._applyCommittedHistory(output, result.snapshot),
+        );
+      }
+      const degraded = {
+        ...output,
+        propagationHistorySkipped: true,
+        propagationHistorySkipReason: "history-persistence-failed",
+      };
+      return projectSearchEnvelope(
+        this._stripInternalSearchData(
+          withRetrievalTrace(degraded, this.options.searchPipeline, resolution),
+        ),
+      );
+    }
+    return projectSearchEnvelope(this._stripInternalSearchData(output));
   }
 
   private _applyCommittedHistory(

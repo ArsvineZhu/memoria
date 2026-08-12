@@ -598,13 +598,13 @@ test("GraphDiffusionStage: disabled is a passthrough that keeps activation outpu
   );
 });
 
-test("GraphDiffusionStage: pruneByActivation strips weak distribution entries", async () => {
+test("GraphDiffusionStage keeps the full solved distribution without legacy pruning", async () => {
   const stage = new GraphDiffusionStage();
   const { metaStore, c1 } = await seedTagGraphPropagationStore();
   const ctx = new PipelineContext({
     config: {
       tagGraphPropagationEnabled: true,
-      supportSelectionMethod: "activation",
+      supportSelectionMethod: "mass_ratio",
       dimension: dim,
     },
     metadataStore: metaStore,
@@ -619,8 +619,8 @@ test("GraphDiffusionStage: pruneByActivation strips weak distribution entries", 
     ctx,
   );
   const out = await stage.process(activationOutput, ctx);
-  assert.strictEqual(out.tagGraphPropagation!.pruneSkipped, false);
-  assert.ok(out.tagGraphPropagation!.prunedDistributionEntries! >= 0);
+  assert.strictEqual(out.tagGraphPropagation!.pruneSkipped, true);
+  assert.strictEqual(out.tagGraphPropagation!.prunedDistributionEntries, 0);
 });
 
 // ── PropagationHistoryStage and PropagationStructureRerankerStage ─────────────
@@ -711,6 +711,18 @@ test("PropagationHistoryStage computes an observation without mutating history",
     Math.abs(state.edgeTotals.find(([key]) => key === "1:2")![1] - 0.6) < 1e-9,
     "edge totals accumulate across sequences",
   );
+});
+
+test("PropagationHistoryStage preserves an explicit zero update scale", async () => {
+  const out = await new PropagationHistoryStage().process(
+    basePropagationInput(),
+    propagationContext(new InMemoryPropagationHistoryStore(), {
+      historyUpdateScale: 0,
+    }),
+  );
+
+  assert.equal(out.propagationHistory?.tickFlowMass, 0);
+  assert.deepEqual(out.propagationHistoryObservation?.edges, []);
 });
 
 test("PropagationHistoryStage merges convergent branches into target support", async () => {

@@ -33,19 +33,11 @@ const config: MemoryConfigOverrides = {
   storePath: "indices",
 };
 
-const canonicalConfig: MemoryConfigOverrides = {
-  ...config,
-  tagBasisProjectionEnabled: true,
-  tagResidualDecompositionEnabled: true,
-  tagGraphPropagationEnabled: true,
-  propagationSupportRerankEnabled: true,
-  propagationStructureRerankEnabled: true,
-  propagationHistoryEnabled: false,
-  embeddingRerankEnabled: true,
-  nativeTagRetrievalEnabled: false,
-  tagExpansionEnabled: true,
-  relationExpansionEnabled: true,
-};
+const canonicalConfig: MemoryConfigOverrides = config;
+
+// Stage selection belongs to RetrievalPlan, not public MemoryConfig.
+// @ts-expect-error stage-selection gates are internal resolved config fields.
+const _removedSelectionConfig: MemoryConfigOverrides = { externalRerankEnabled: true };
 
 const provider: EmbeddingProvider = {
   getDimension: () => 128,
@@ -75,6 +67,11 @@ const options: MemoryEngineOptions = {
 const searchOptions: SearchOptions = {
   retrievalPlan: { strategy: "structural" },
   inheritRetrievalDefaults: true,
+};
+
+const _removedSearchAliases: SearchOptions = {
+  // @ts-expect-error legacy per-call aliases are not part of SearchOptions.
+  retrievalFilters: { spaces: ["legacy"] },
 };
 
 const retrievalStrategy: RetrievalStrategy = "auto";

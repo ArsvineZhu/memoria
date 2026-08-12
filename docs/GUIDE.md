@@ -79,7 +79,7 @@ await engine.close();
 
 默认搜索只做向量/BM25 基础融合。若要启用模型重排，应从
 `memoria/providers/openai-compatible` 创建 reranker，传入 `MemoryEngineOptions.reranker`，
-并同时设置 `externalRerankEnabled: true`；详见 [API.md](API.md)。
+并在 `retrievalPlan.externalRerank.enabled` 中显式开启；详见 [API.md](API.md)。
 
 ## 3. 从文件摄入
 

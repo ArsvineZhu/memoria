@@ -1,13 +1,18 @@
 "use strict";
 
 import * as path from "node:path";
-import type { MemoryConfig, MemoryConfigOverrides } from "../types/config.js";
+import { normalizeSupportSelectionMethod } from "./support-selection.js";
+import type {
+  MemoryConfig,
+  MemoryConfigOverrides,
+  ResolvedMemoryConfig,
+} from "../types/config.js";
 
 const DEFAULT_DATA_PATH = path.join(process.cwd(), "data");
 const DEFAULT_MEMORIA_DATA_PATH = path.join(DEFAULT_DATA_PATH, "memoria");
 const DEFAULT_TDB_DATA_PATH = path.join(DEFAULT_DATA_PATH, "tdb");
 
-const DEFAULT_CONFIG: MemoryConfig = {
+const DEFAULT_CONFIG: ResolvedMemoryConfig = {
   dataPath: DEFAULT_DATA_PATH,
   rootPath: path.join(DEFAULT_DATA_PATH, "content"),
   storePath: path.join(DEFAULT_MEMORIA_DATA_PATH, "indexes"),
@@ -170,12 +175,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function mergeConfig(userConfig?: MemoryConfigOverrides | null): MemoryConfig {
+function mergeConfig(userConfig?: MemoryConfigOverrides | null): ResolvedMemoryConfig {
   const merged = { ...DEFAULT_CONFIG };
   if (userConfig == null) return merged;
   if (!isRecord(userConfig)) throw new TypeError("MemoryConfig must be an object");
 
-  const knownKeys = new Set(Object.keys(DEFAULT_CONFIG));
+  const internalKeys = new Set([
+    "tagBasisProjectionEnabled",
+    "tagResidualDecompositionEnabled",
+    "tagGraphPropagationEnabled",
+    "propagationSupportRerankEnabled",
+    "propagationStructureRerankEnabled",
+    "propagationHistoryEnabled",
+    "embeddingRerankEnabled",
+    "nativeTagRetrievalEnabled",
+    "tagExpansionEnabled",
+    "associatorEnabled",
+    "externalRerankEnabled",
+    "timeDecayEnabled",
+    "truncateEnabled",
+    "expansionEnabled",
+    "fullDocumentExpansionEnabled",
+    "relationExpansionEnabled",
+    "dedupeEnabled",
+    "retrievalPlan",
+    "retrievalFilters",
+  ]);
+  // Internal callers such as TDB may pass a config that has already been
+  // resolved. Keep that boundary separate from the public partial config:
+  // accepting a complete resolved object must not make individual internal
+  // gate keys valid in public MemoryEngineOptions.config.
+  const isResolvedConfig = Object.keys(DEFAULT_CONFIG).every((key) =>
+    Object.prototype.hasOwnProperty.call(userConfig, key),
+  );
+  const knownKeys = new Set(
+    isResolvedConfig
+      ? [
+          ...Object.keys(DEFAULT_CONFIG),
+          ...internalKeys,
+          "retrievalPlan",
+          "retrievalFilters",
+        ]
+      : Object.keys(DEFAULT_CONFIG).filter((key) => !internalKeys.has(key)),
+  );
   const target = merged as unknown as Record<string, unknown>;
   for (const [key, value] of Object.entries(userConfig)) {
     if (!knownKeys.has(key)) throw new TypeError(`Unknown MemoryConfig key: ${key}`);
@@ -183,6 +225,9 @@ function mergeConfig(userConfig?: MemoryConfigOverrides | null): MemoryConfig {
     const base = target[key];
     target[key] = isRecord(value) && isRecord(base) ? { ...base, ...value } : value;
   }
+  target.supportSelectionMethod = normalizeSupportSelectionMethod(
+    userConfig.supportSelectionMethod,
+  );
 
   if (typeof userConfig.dataPath === "string" && userConfig.dataPath.length > 0) {
     const dataPath = userConfig.dataPath;

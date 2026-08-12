@@ -7,9 +7,10 @@ import {
   buildNativeArtifactConfig,
   nativePipelineConfig,
 } from "../../src/native/tag-graph-runtime-config.js";
+import type { MemoryConfigOverrides } from "../../src/types/config.js";
 
 test("native tag retrieval receives one canonical propagation configuration", () => {
-  const config = {
+  const config: MemoryConfigOverrides = {
     propagationMaxHops: 7,
     residualTagTopK: 13,
     routingBudget: 11,

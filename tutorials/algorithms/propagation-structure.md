@@ -11,7 +11,7 @@ Propagation Structure Rerank 使用图的节点/边结构和传播诊断，对�
 - candidate pool；
 - association graph 的 node/edge graph score；
 - propagation/structure observation；
-- \`propagationStructureRerankEnabled\`；
+- \`RetrievalPlan.structural.propagationStructure\`；
 - structure bonus cap、sparse threshold、spread/association 相关配置。
 
 输出：
@@ -22,7 +22,7 @@ Propagation Structure Rerank 使用图的节点/边结构和传播诊断，对�
 
 ## 阶段与策略
 
-本阶段通常由 \`structural\` retrieval strategy 或 config gate 激活，位于 propagation/history 相关阶段之后。它必须在 dedupe 前完成，这样 duplicate candidate 的结构分数不会被重复计入；随后仍要经过 common postprocess tail。
+本阶段通常由 \`structural\` retrieval strategy 或 plan section 激活，位于 propagation/history 相关阶段之后。它必须在 dedupe 前完成，这样 duplicate candidate 的结构分数不会被重复计入；随后仍要经过 common postprocess tail。
 
 示例：
 
@@ -39,7 +39,7 @@ console.log(result.results.map((item) => item.chunk?.chunkId));
 
 ## 边界
 
-- 没有 graph artifact、没有传播结果或 gate 关闭时，结构重排可能跳过。
+- 没有 graph artifact、没有传播结果或 plan section 关闭时，结构重排可能跳过。
 - 结构分数只在同一配置和同一查询上下文中有意义。
 - native 与 JS 路径应保持结果语义；native binary 缺失时是否可 fallback 由当前 backend resolution 决定，不应在应用层自行调用内部 native API。
 

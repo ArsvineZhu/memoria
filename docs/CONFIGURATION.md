@@ -33,27 +33,32 @@ const engine = createMemoryEngine({
 或索引目录时，应使用新的 SQLite/vector-index 目录并重新摄入；本次命名 reset 不迁移
 旧数据库或 derived artifacts。
 
-## canonical retrieval gates
+## RetrievalPlan 是 selection authority
 
-以下开关是检索增强的唯一命名：
+`MemoryConfig` 只保存 embedding、索引、阈值、reranker 参数和其他运行参数；它不公开
+按查询选择 retrieval stage 的 `*Enabled` gate。查询选择统一写入 `retrievalPlan`，
+engine 级默认选择统一写入 `defaultRetrievalPlan`：
 
-| 开关                                |  默认值 | 负责的阶段                     |
-| ----------------------------------- | ------: | ------------------------------ |
-| `tagBasisProjectionEnabled`         |  `true` | tag basis projection           |
-| `tagResidualDecompositionEnabled`   |  `true` | tag residual decomposition     |
-| `tagGraphPropagationEnabled`        | `false` | activation propagation         |
-| `propagationSupportRerankEnabled`   | `false` | propagation support reranker   |
-| `propagationStructureRerankEnabled` | `false` | propagation structure reranker |
-| `propagationHistoryEnabled`         | `false` | persistent propagation history |
-| `embeddingRerankEnabled`            | `false` | embedding reranker             |
-| `nativeTagRetrievalEnabled`         | `false` | Rust tag-retrieval runtime     |
-| `tagExpansionEnabled`               | `false` | tag expansion                  |
-| `relationExpansionEnabled`          | `false` | relation expansion             |
+```ts
+const engine = createMemoryEngine({
+  embeddingProvider,
+  defaultRetrievalPlan: {
+    strategy: "auto",
+    externalRerank: { enabled: true, mode: "ordered", alpha: 0.5 },
+  },
+});
 
-其他正式开关包括 `associatorEnabled`、`externalRerankEnabled`、`timeDecayEnabled`、
-`dedupeEnabled`、`truncateEnabled`、`expansionEnabled`、`fullDocumentExpansionEnabled`、
-`relationGraphEnabled`、`checkpoint` 和 `persistTagVectorIndex`。它们只在
-`MemoryConfig` 中声明的类型范围内配置。
+const result = await engine.search("来源关系", {
+  retrievalPlan: {
+    strategy: "structural",
+    structural: { enabled: true, propagationStructure: true },
+    filters: { spaces: ["research"] },
+  },
+});
+```
+
+计划未启用的 capability 不会被 base config 反向打开；计划中的参数会编译到内部
+resolved search config。完整字段见 [RETRIEVAL_PLAN.md](RETRIEVAL_PLAN.md)。
 
 ## basis、residual、propagation、diffusion 和 history
 
@@ -109,8 +114,8 @@ TDB 仍使用自己的正式 library 术语和配置：`tdbEnabled`、`tdbRootPa
 ## Provider 和注入
 
 `embeddingProvider` 必须提供 `embedBatch()`、`getDimension()`，并可选提供 `embed()`。
-`reranker` 是可选的 `ExternalReranker` 函数注入；只有同时开启
-`externalRerankEnabled` 才会执行。正式替换边界是 `VectorStoreContract` 和
+`reranker` 是可选的 `ExternalReranker` 函数注入；只有 retrieval plan 中的
+`externalRerank.enabled` 为 `true` 才会执行。正式替换边界是 `VectorStoreContract` 和
 `MetadataStoreContract`。provider/store/reranker 只通过 `MemoryEngineOptions` 注入；
 native runtime 由内部 backend resolution 获取，应用不能把 native index 作为公开 option
 传入。

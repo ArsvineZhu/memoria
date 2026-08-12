@@ -14,11 +14,9 @@ import type {
   DistributionOperator,
 } from "../../algorithms/tag-graph/graph-diffusion-solver.js";
 import { mergeTagRetrievalObservation } from "./tag-retrieval-observation.js";
+import { normalizeSupportSelectionMethod } from "../../config/support-selection.js";
 
 type DistributionEntry = readonly [number, number];
-type PrunedDistribution = Array<DistributionEntry> & {
-  prunedDistributionEntries: number;
-};
 
 /**
  * GraphDiffusionStage — dual graph-diffusion over activation output.
@@ -36,7 +34,8 @@ type PrunedDistribution = Array<DistributionEntry> & {
  *   - tagGraphPropagationEnabled      gate (default false)
  *   - local.alpha / transfer.alpha / tolerances / maxIterations (solver passthrough)
  *   - tagGraphBonusCap       rerank bonus cap (default 0.08)
- *   - supportSelectionMethod = activation     weak distribution entry pruning
+ *   - supportSelectionMethod = mass_ratio | tail_budget | shannon |
+ *     participation_ratio | largest_mass_gap
  * Context (ctx):
  *   - ctx.tagAssociationGraph           Map<tagId, Map<neighborId, associationWeight>>
  *   - ctx.metadataStore       tag id/name resolution for rerank and readout
@@ -128,7 +127,7 @@ class GraphDiffusionStage extends Stage {
           tolerance: config.extendedDiffusionTolerance ?? 1e-9,
         },
         support: {
-          method: config.supportSelectionMethod || "mass_ratio",
+          method: normalizeSupportSelectionMethod(config.supportSelectionMethod),
           localSupportMassRatio: config.localSupportMassRatio ?? 0.8,
           extendedSupportMassRatio: config.extendedSupportMassRatio ?? 0.9,
         },
@@ -146,17 +145,8 @@ class GraphDiffusionStage extends Stage {
 
     const nameById = await this._nameIndex(ctx);
     const seedDistribution = distributionToEntries(solved.sourceVector, operator);
-    const pruneConfig = {
-      enabled: config.supportSelectionMethod === "activation",
-      minActivation: 0,
-    };
-    const localDistribution: ReadonlyArray<DistributionEntry> = pruneConfig.enabled
-      ? this._pruneDistribution(solved.localDistribution, pruneConfig.minActivation)
-      : solved.localDistribution;
-    const prunedDistributionEntries = pruneConfig.enabled
-      ? this._pruneDistribution(solved.localDistribution, pruneConfig.minActivation)
-          .prunedDistributionEntries
-      : 0;
+    const localDistribution: ReadonlyArray<DistributionEntry> =
+      solved.localDistribution;
 
     const ranked = localDistribution
       .map((entry) => ({
@@ -194,12 +184,6 @@ class GraphDiffusionStage extends Stage {
       prunedDistributionEntries: 0,
       ...(previousTrace ? { propagationTrace: previousTrace } : {}),
     };
-
-    if (pruneConfig.enabled) {
-      tagGraphPropagation.pruneSkipped = false;
-      tagGraphPropagation.prunedDistributionEntries = prunedDistributionEntries;
-      tagGraphPropagation.pruneThreshold = pruneConfig.minActivation;
-    }
 
     return {
       ...info,
@@ -253,23 +237,6 @@ class GraphDiffusionStage extends Stage {
       if (Number.isFinite(id) && activation > 0) entries.push([id, activation]);
     }
     return entries;
-  }
-
-  _pruneDistribution(
-    distribution: ReadonlyArray<DistributionEntry>,
-    minActivation: number,
-  ): PrunedDistribution {
-    const retained: PrunedDistribution = [] as unknown as PrunedDistribution;
-    let prunedEntries = 0;
-    for (const entry of distribution) {
-      if ((Number(entry[1]) || 0) < minActivation) {
-        prunedEntries += 1;
-        continue;
-      }
-      retained.push(entry);
-    }
-    retained.prunedDistributionEntries = prunedEntries;
-    return retained;
   }
 
   async _nameIndex(ctx: PipelineContextLike): Promise<Map<number, string>> {

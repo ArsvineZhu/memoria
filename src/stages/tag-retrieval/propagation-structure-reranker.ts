@@ -1,5 +1,5 @@
 import type { ChunkCandidate } from "../../types/documents.js";
-import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { PropagationStructureData } from "../../types/retrieval.js";
 import Stage from "../../core/stage.js";
@@ -53,7 +53,10 @@ class PropagationStructureRerankerStage extends Stage {
       }
     }
 
-    const local = rankPropagationStructure(info, ctx.config as MemoryConfigOverrides);
+    const local = rankPropagationStructure(
+      info,
+      ctx.config as ResolvedMemoryConfigOverrides,
+    );
     return {
       ...info,
       propagationStructure: {

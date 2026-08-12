@@ -3,7 +3,6 @@ import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js"
 import type { PropagationSupportData } from "../../types/retrieval.js";
 import { createTagRetrievalRuntimeFacade } from "../../native/tag-retrieval-runtime.js";
 import {
-  ensureTagRetrievalArtifact,
   getTagRetrievalIndex,
   nativeDatabasePath,
   readRecord,
@@ -27,13 +26,7 @@ export async function rerankNative(
   }
   let artifact = readRecord(info.tagGraphArtifact);
   if (typeof artifact.artifactSig !== "string" || !artifact.artifactSig) {
-    const built = await ensureTagRetrievalArtifact(ctx, index);
-    if (!built.state) {
-      return unavailable(
-        built.failure === "invalid_result" ? "invalid_result" : "artifact_unavailable",
-      );
-    }
-    artifact = built.state as unknown as Record<string, unknown>;
+    return unavailable("artifact_unavailable");
   }
 
   const observation = info.tagRetrievalObservation;

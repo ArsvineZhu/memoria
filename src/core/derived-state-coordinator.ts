@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { MemoriaError } from "../errors.js";
 
 type AsyncTask<T> = () => T | Promise<T>;
-type Phase = "read" | "mutation" | "reconcile";
+type Phase = "read" | "mutation" | "maintenance" | "reconcile";
 type ActivePhase = Phase | "idle";
 
 interface PhaseContext {
@@ -23,8 +23,10 @@ class DerivedStateCoordinator {
   private _phase: ActivePhase = "idle";
   private _activeReaders = 0;
   private _activeMutations = 0;
+  private _activeMaintenances = 0;
   private _pendingReaders = 0;
   private _queuedMutations = 0;
+  private _pendingMaintenances = 0;
   private _pendingReconciles = 0;
   private _phaseWaiters: Array<() => void> = [];
   private _reconcilePromise: Promise<void> | null = null;
@@ -110,24 +112,75 @@ class DerivedStateCoordinator {
 
   /** Serialize derived-artifact maintenance without dirtying vector state. */
   async runDerivedMaintenance<T>(key: string, task: AsyncTask<T>): Promise<T> {
-    this._assertNoConflictingReentry("mutation");
-    this._queuedMutations += 1;
+    this._assertNoConflictingReentry("maintenance");
+    this._pendingMaintenances += 1;
 
     const normalizedKey = `maintenance:${key || "__default__"}`;
     const previous = this._maintenanceTails.get(normalizedKey) ?? Promise.resolve();
     const run = previous.then(async () => {
-      let queueTicketConsumed = false;
+      let pendingTicketConsumed = false;
       try {
         await this._ensureClean();
-        const release = await this._acquireMutation();
-        queueTicketConsumed = true;
+        const release = await this._acquireMaintenance();
+        pendingTicketConsumed = true;
         try {
-          return await this._phaseContext.run({ phase: "mutation" }, task);
+          return await this._phaseContext.run({ phase: "maintenance" }, task);
         } finally {
           release();
         }
       } finally {
-        if (!queueTicketConsumed) this._queuedMutations -= 1;
+        if (!pendingTicketConsumed) this._pendingMaintenances -= 1;
+      }
+    });
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this._maintenanceTails.set(normalizedKey, tail);
+    void tail.then(() => {
+      if (this._maintenanceTails.get(normalizedKey) === tail) {
+        this._maintenanceTails.delete(normalizedKey);
+      }
+    });
+    return run;
+  }
+
+  /**
+   * Run exclusive derived maintenance and promote it directly into a stable
+   * read. The promotion closes the otherwise observable gap in which an
+   * authority mutation could enter between artifact publication and query
+   * execution.
+   */
+  async runDerivedMaintenanceAndStableRead<T, R>(
+    key: string,
+    maintenance: AsyncTask<T>,
+    read: (value: T) => R | Promise<R>,
+  ): Promise<R> {
+    this._assertNoConflictingReentry("maintenance");
+    this._pendingMaintenances += 1;
+
+    const normalizedKey = `maintenance:${key || "__default__"}`;
+    const previous = this._maintenanceTails.get(normalizedKey) ?? Promise.resolve();
+    const run = previous.then(async () => {
+      let pendingTicketConsumed = false;
+      let releaseRead: (() => void) | null = null;
+      try {
+        await this._ensureClean();
+        const releaseMaintenance = await this._acquireMaintenance();
+        pendingTicketConsumed = true;
+        try {
+          const value = await this._phaseContext.run(
+            { phase: "maintenance" },
+            maintenance,
+          );
+          releaseRead = this._promoteMaintenanceToRead();
+          return await this._phaseContext.run({ phase: "read" }, () => read(value));
+        } finally {
+          if (releaseRead) releaseRead();
+          else releaseMaintenance();
+        }
+      } finally {
+        if (!pendingTicketConsumed) this._pendingMaintenances -= 1;
       }
     });
     const tail = run.then(
@@ -246,6 +299,7 @@ class DerivedStateCoordinator {
       for (;;) {
         const canEnter =
           this._queuedMutations === 0 &&
+          this._pendingMaintenances === 0 &&
           this._pendingReconciles === 0 &&
           (this._phase === "idle" || this._phase === "read");
         if (canEnter) {
@@ -274,6 +328,7 @@ class DerivedStateCoordinator {
     try {
       for (;;) {
         const canEnter =
+          this._pendingMaintenances === 0 &&
           this._pendingReconciles === 0 &&
           this._activeReaders === 0 &&
           (this._phase === "idle" || this._phase === "mutation");
@@ -305,7 +360,8 @@ class DerivedStateCoordinator {
         if (
           this._phase === "idle" &&
           this._activeReaders === 0 &&
-          this._activeMutations === 0
+          this._activeMutations === 0 &&
+          this._activeMaintenances === 0
         ) {
           this._pendingReconciles -= 1;
           this._phase = "reconcile";
@@ -324,6 +380,55 @@ class DerivedStateCoordinator {
       this._notifyPhaseChange();
       throw error;
     }
+  }
+
+  private async _acquireMaintenance(): Promise<() => void> {
+    try {
+      for (;;) {
+        if (
+          this._phase === "idle" &&
+          this._activeReaders === 0 &&
+          this._activeMutations === 0 &&
+          this._activeMaintenances === 0
+        ) {
+          this._pendingMaintenances -= 1;
+          this._phase = "maintenance";
+          this._activeMaintenances += 1;
+          let released = false;
+          return () => {
+            if (released) return;
+            released = true;
+            this._activeMaintenances -= 1;
+            if (this._activeMaintenances === 0) this._phase = "idle";
+            this._notifyPhaseChange();
+          };
+        }
+        await this._waitForPhaseChange();
+      }
+    } catch (error) {
+      this._notifyPhaseChange();
+      throw error;
+    }
+  }
+
+  private _promoteMaintenanceToRead(): () => void {
+    if (this._phase !== "maintenance" || this._activeMaintenances !== 1) {
+      throw new MemoriaError(
+        "concurrency",
+        "Cannot promote inactive derived maintenance to a stable read.",
+      );
+    }
+    this._activeMaintenances -= 1;
+    this._phase = "read";
+    this._activeReaders += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this._activeReaders -= 1;
+      if (this._activeReaders === 0) this._phase = "idle";
+      this._notifyPhaseChange();
+    };
   }
 
   private _waitForPhaseChange(): Promise<void> {

@@ -89,6 +89,7 @@ fn open_readonly(path: &str) -> std::result::Result<Connection, String> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct PipelineInput {
     #[serde(default)]
     query_id: Option<String>,
@@ -105,6 +106,7 @@ struct PipelineInput {
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct SupplementalTagInput {
     name: String,
     vector: Vec<f32>,
@@ -114,6 +116,7 @@ struct SupplementalTagInput {
 
 #[derive(Deserialize)]
 #[serde(default, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct PipelineConfig {
     base_tag_boost: f64,
     core_boost_factor: f64,
@@ -124,7 +127,7 @@ struct PipelineConfig {
     extended_diffusion_tolerance: f64,
     local_support_mass_ratio: f64,
     extended_support_mass_ratio: f64,
-    support_selection_method: String,
+    support_selection_method: SupportSelectionMethod,
     residual_max_steps: usize,
     tag_residual_decomposition_top_k: usize,
     residual_stop_energy_ratio: f64,
@@ -144,6 +147,22 @@ struct PipelineConfig {
     activation_propagation: ActivationPropagationConfig,
 }
 
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SupportSelectionMethod {
+    MassRatio,
+    TailBudget,
+    Shannon,
+    ParticipationRatio,
+    LargestMassGap,
+}
+
+impl Default for SupportSelectionMethod {
+    fn default() -> Self {
+        Self::MassRatio
+    }
+}
+
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
@@ -156,7 +175,7 @@ impl Default for PipelineConfig {
             extended_diffusion_tolerance: 1e-9,
             local_support_mass_ratio: 0.8,
             extended_support_mass_ratio: 0.9,
-            support_selection_method: "mass_ratio".to_string(),
+            support_selection_method: SupportSelectionMethod::MassRatio,
             residual_max_steps: 3,
             tag_residual_decomposition_top_k: 10,
             residual_stop_energy_ratio: 0.1,
@@ -1105,7 +1124,7 @@ fn distribution_mass(distribution: &[f64]) -> f64 {
 fn effective_domain(
     artifact: &crate::propagation_structure_reranker::TagGraphArtifact,
     distribution: &[f64],
-    method: &str,
+    method: SupportSelectionMethod,
     ratio: f64,
 ) -> Vec<i64> {
     let total = distribution_mass(distribution);
@@ -1127,9 +1146,8 @@ fn effective_domain(
             .then_with(|| left.0.cmp(&right.0))
     });
 
-    let normalized_method = method.to_ascii_lowercase();
-    let target_count = match normalized_method.as_str() {
-        "shannon" => {
+    let target_count = match method {
+        SupportSelectionMethod::Shannon => {
             let entropy = ranked
                 .iter()
                 .map(|(_, value)| {
@@ -1139,7 +1157,7 @@ fn effective_domain(
                 .sum::<f64>();
             entropy.exp().ceil().max(1.0) as usize
         }
-        "participation_ratio" => {
+        SupportSelectionMethod::ParticipationRatio => {
             let square_mass = ranked.iter().map(|(_, value)| value * value).sum::<f64>();
             if square_mass > 0.0 {
                 ((total * total) / square_mass).ceil().max(1.0) as usize
@@ -1147,7 +1165,7 @@ fn effective_domain(
                 1
             }
         }
-        "largest_mass_gap" if ranked.len() > 1 => {
+        SupportSelectionMethod::LargestMassGap if ranked.len() > 1 => {
             let mut largest_gap = f64::NEG_INFINITY;
             let mut largest_gap_index = 0usize;
             for index in 0..(ranked.len() - 1) {
@@ -1164,7 +1182,10 @@ fn effective_domain(
 
     let mut retained = Vec::new();
     let mut mass = 0.0;
-    if matches!(normalized_method.as_str(), "mass_ratio" | "tail_budget") {
+    if matches!(
+        method,
+        SupportSelectionMethod::MassRatio | SupportSelectionMethod::TailBudget
+    ) {
         for (id, value) in ranked {
             retained.push(id);
             mass += value;
@@ -1311,13 +1332,13 @@ fn solve_dual_distributions(
     let local_support_ids = effective_domain(
         artifact,
         &local,
-        &config.support_selection_method,
+        config.support_selection_method,
         config.local_support_mass_ratio,
     );
     let extended_support_ids = effective_domain(
         artifact,
         &transfer,
-        &config.support_selection_method,
+        config.support_selection_method,
         config.extended_support_mass_ratio,
     );
     let local_vector = project_distribution(index, artifact, &local, dimension)?;

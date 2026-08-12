@@ -1,5 +1,5 @@
 import type { ChunkCandidate } from "../../types/documents.js";
-import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../../types/config.js";
 import type { EmbeddingVector } from "../../types/common.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { EmbeddingRerankData } from "../../types/retrieval.js";
@@ -128,7 +128,7 @@ class EmbeddingRerankStage extends Stage {
   }
 
   _resolveDimension(
-    config: MemoryConfigOverrides,
+    config: ResolvedMemoryConfigOverrides,
     queryVector: EmbeddingVector,
   ): number {
     if (config.dimension && Number.isFinite(Number(config.dimension))) {

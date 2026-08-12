@@ -11,8 +11,8 @@
 同时确认：
 
 1. MemoryEngineOptions.reranker 已注入；
-2. externalRerankEnabled 为 true；
-3. per-query plan 的 externalRerank.enabled 没有关闭；
+2. 当前 retrieval plan 的 externalRerank.enabled 为 true；
+3. reranker provider 没有被其他运行时条件跳过；
 4. candidate 数量没有在 reranker 前被截断为空。
 
 ## SQLite schema 错误

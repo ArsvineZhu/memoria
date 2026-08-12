@@ -146,22 +146,22 @@ builder immutable；ScopeBuilder、ExpansionBuilder、RerankBuilder 和 Postproc
 
 方法语义：
 
-| 方法                                                                  | 作用                                                   |
-| --------------------------------------------------------------------- | ------------------------------------------------------ |
-| `using(indexNames)`                                                   | 指定要搜索的 vector index。                            |
-| `auto()`/`semantic()`/`associative()`/`structural()`                  | 选择 retrieval strategy。策略冲突会在规范化时失败。    |
-| `tagBasisProjection()`、`tagResidualDecomposition()`                  | 请求对应 tag 分析阶段。                                |
-| `activationPropagation()`、`graphDiffusion()`、`propagationHistory()` | 请求图传播、diffusion 和 history；传播顺序固定。       |
-| `propagationSupport()`、`propagationStructure()`、`embeddingRerank()` | 请求本地确定性重排。                                   |
-| `tagExpansion()`、`structuralRelations()`                             | 请求 tag/relation expansion。                          |
-| `nativeTagRetrieval()`                                                | 请求 native tag retrieval gate；不暴露 native handle。 |
-| `where(callback)`                                                     | 设置 spaces、document、时间和 metadata scope/filter。  |
-| `expand(callback)`                                                    | 设置同文档、relation 或关联候选扩展。                  |
-| `rerank(callback)`                                                    | 设置 external rerank gate、mode 和 alpha。             |
-| `postprocess(callback)`                                               | 设置 dedupe、time decay、minScore、limit 和内容长度。  |
-| `withoutDefaults()`/`withDefaults()`                                  | 控制是否继承 engine default retrieval plan。           |
-| `toPlan()`                                                            | 返回规范化的 immutable plan，不执行搜索。              |
-| `run()`                                                               | 以当前 plan 调用同一个 engine search 生命周期。        |
+| 方法                                                                  | 作用                                                         |
+| --------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `using(indexNames)`                                                   | 指定要搜索的 vector index。                                  |
+| `auto()`/`semantic()`/`associative()`/`structural()`                  | 选择 retrieval strategy。策略冲突会在规范化时失败。          |
+| `tagBasisProjection()`、`tagResidualDecomposition()`                  | 请求对应 tag 分析阶段。                                      |
+| `activationPropagation()`、`graphDiffusion()`、`propagationHistory()` | 请求图传播、diffusion 和 history；传播顺序固定。             |
+| `propagationSupport()`、`propagationStructure()`、`embeddingRerank()` | 请求本地确定性重排。                                         |
+| `tagExpansion()`、`structuralRelations()`                             | 请求 tag/relation expansion。                                |
+| `nativeTagRetrieval()`                                                | 请求 native tag retrieval capability；不暴露 native handle。 |
+| `where(callback)`                                                     | 设置 spaces、document、时间和 metadata scope/filter。        |
+| `expand(callback)`                                                    | 设置同文档、relation 或关联候选扩展。                        |
+| `rerank(callback)`                                                    | 设置 external rerank selection、mode 和 alpha。              |
+| `postprocess(callback)`                                               | 设置 dedupe、time decay、minScore、limit 和内容长度。        |
+| `withoutDefaults()`/`withDefaults()`                                  | 控制是否继承 engine default retrieval plan。                 |
+| `toPlan()`                                                            | 返回规范化的 immutable plan，不执行搜索。                    |
+| `run()`                                                               | 以当前 plan 调用同一个 engine search 生命周期。              |
 
 没有 chain 等价物的能力包括 `initialize`、`reconcile`、文件系统 `scan/sync`、
 `listFiles`、`getStats` 和 `close`；这些仍应直接调用正式 API。

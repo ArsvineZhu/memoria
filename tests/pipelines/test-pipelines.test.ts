@@ -15,9 +15,9 @@ import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
 import ResultFormatterStage from "../../src/stages/output/result-formatter.js";
 import type {
   EmbeddingProviderContract,
-  MemoryConfigOverrides,
   MetadataStoreContract,
   PipelineData,
+  ResolvedMemoryConfigOverrides,
   VectorStoreContract,
 } from "../../src/types.js";
 
@@ -63,7 +63,7 @@ function clearSaveTimers(vectorStore: VexusVectorStore): void {
 }
 
 function makeContext(
-  config: MemoryConfigOverrides = {},
+  config: ResolvedMemoryConfigOverrides = {},
   deps: {
     embeddingProvider?: EmbeddingProviderContract;
     metadataStore?: MetadataStoreContract;
@@ -232,7 +232,7 @@ test("SearchPipeline keeps model rerank between dedupe and downstream score stag
 });
 
 test("SearchPipeline gates can be switched off individually", () => {
-  const names = (config: MemoryConfigOverrides) =>
+  const names = (config: ResolvedMemoryConfigOverrides) =>
     new SearchPipeline(config).stages.map((s) => s.name);
 
   const noMemo = names({

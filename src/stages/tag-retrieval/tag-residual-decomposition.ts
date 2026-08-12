@@ -1,5 +1,5 @@
 import type { EmbeddingVector } from "../../types/common.js";
-import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../../types/config.js";
 import type { TagRow } from "../../types/metadata.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { TagResidualDecompositionData } from "../../types/retrieval.js";
@@ -173,7 +173,10 @@ class TagResidualDecompositionStage extends Stage {
     return async () => [];
   }
 
-  _resolveDimension(config: MemoryConfigOverrides, fallback: EmbeddingVector): number {
+  _resolveDimension(
+    config: ResolvedMemoryConfigOverrides,
+    fallback: EmbeddingVector,
+  ): number {
     if (config.dimension && Number.isFinite(Number(config.dimension))) {
       return Number(config.dimension);
     }

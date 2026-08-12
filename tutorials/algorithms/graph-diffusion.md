@@ -15,15 +15,15 @@ Graph Diffusion 使用 Activation Propagation 的输出，在 tag graph 上计�
 
 输出会进入公开的 \`tagGraphPropagation\`/结构相关 envelope 字段，具体字段以当前 public declaration 为准；常见诊断包括扩散分布、收敛/迭代状态、spread diagnostics 和失败/跳过标记。
 
-## gate 与顺序
+## 计划与顺序
 
-\`tagGraphPropagationEnabled\` 同时控制 Activation Propagation 与 Graph Diffusion 的连续组合。流水线必须保持：
+\`RetrievalPlan.associative.tagGraphPropagation\` 同时控制 Activation Propagation 与 Graph Diffusion 的连续组合。流水线必须保持：
 
 \`\`\`text
 Activation Propagation → Graph Diffusion
 \`\`\`
 
-\`structural\` strategy 会请求结构路径，但是否能产生有效结果还取决于图 artifact 和配置。关闭 gate、缺少 graph artifact 或没有 propagation state 时，阶段应报告 skipped/empty，而不是伪造结构分数。
+\`structural\` strategy 会请求结构路径，但是否能产生有效结果还取决于图 artifact 和配置。关闭 plan section、缺少 graph artifact 或没有 propagation state 时，阶段应报告 skipped/empty，而不是伪造结构分数。
 
 ## 求解说明
 
@@ -35,7 +35,7 @@ solver 根据图边权、节点状态和配置计算传播分布；实现使用�
 const explanation = await engine.explain("相关主题", {
 retrievalPlan: { strategy: "structural" },
 });
-console.log(explanation.trace?.stageOrder);
+console.log(explanation.plan);
 \`\`\`
 
 可以确认是否走了结构路径。

@@ -10,7 +10,7 @@ Propagation History 将一次查询的传播观察保存为有序历史，使后
 
 - 当前 propagation/graph observation；
 - history store；
-- \`propagationHistoryEnabled\`；
+- \`RetrievalPlan.propagationHistory.enabled\`；
 - history length、decay、support 等配置。
 
 输出字段使用 canonical 结构：
@@ -21,7 +21,7 @@ Propagation History 将一次查询的传播观察保存为有序历史，使后
 
 ## 阶段与持久化
 
-本阶段位于 Graph Diffusion 之后、结构/support 重排之前。关闭 gate 时不会写入历史。历史数据属于 derived artifact/KV payload，不是源 MDX 的一部分；持久化失败时应报告错误或跳过状态，不能静默改写为旧格式。
+本阶段位于 Graph Diffusion 之后、结构/support 重排之前。关闭 plan section 时不会写入历史。历史数据属于 SQLite relational adaptive state，不是源 MDX 或可重建 artifact 的一部分；持久化失败时应报告 `history-persistence-failed` 或跳过状态，不能静默改写为旧格式。
 
 ## 语义
 

@@ -2,7 +2,7 @@
 
 import Pipeline from "../core/pipeline.js";
 import Stage from "../core/stage.js";
-import type { MemoryConfigOverrides, SearchOptions } from "../types/config.js";
+import type { ResolvedMemoryConfigOverrides, SearchOptions } from "../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../types/pipeline.js";
 import {
   freezeRetrievalPlan,
@@ -17,7 +17,11 @@ import {
   buildDefaultSearchStages,
 } from "./search-pipeline-stages.js";
 import SearchPlanResolver from "./search-plan-resolver.js";
-import { mergeRunOptions, prepareSearchRun } from "./search-run-preparation.js";
+import {
+  mergeRunOptions,
+  prepareSearchRun,
+  type ResolvedSearchExecution,
+} from "./search-run-preparation.js";
 import { withRetrievalTrace } from "./search-pipeline-trace.js";
 
 export interface SearchPipelineOptions {
@@ -31,12 +35,15 @@ export interface SearchPipelineOptions {
  * focused modules so stage orchestration remains easy to inspect.
  */
 class SearchPipeline extends Pipeline {
-  config: MemoryConfigOverrides;
+  config: ResolvedMemoryConfigOverrides;
   readonly defaultRetrievalPlan: RetrievalPlan;
   private readonly customStages: boolean;
   private readonly planResolver: SearchPlanResolver;
 
-  constructor(config: MemoryConfigOverrides = {}, options: SearchPipelineOptions = {}) {
+  constructor(
+    config: ResolvedMemoryConfigOverrides = {},
+    options: SearchPipelineOptions = {},
+  ) {
     const effectiveConfig = { ...DEFAULT_SEARCH_GATES, ...config };
     const stages = Array.isArray(options.stages)
       ? options.stages
@@ -56,7 +63,7 @@ class SearchPipeline extends Pipeline {
   }
 
   /** Build the default search chain honoring the effective config gates. */
-  static defaultStages(config: MemoryConfigOverrides): Stage[] {
+  static defaultStages(config: ResolvedMemoryConfigOverrides): Stage[] {
     return buildDefaultSearchStages(config);
   }
 
@@ -65,29 +72,44 @@ class SearchPipeline extends Pipeline {
     options: SearchOptions = {},
     ctx: Partial<PipelineContextLike> = {},
   ): Promise<RetrievalExplanation> {
-    return this.planResolver.resolve(String(query ?? ""), options, ctx, this.config);
+    const execution = await this.resolveExecution(query, options, ctx);
+    return execution.resolution;
+  }
+
+  async resolveExecution(
+    query: string,
+    options: SearchOptions = {},
+    ctx: Partial<PipelineContextLike> = {},
+  ): Promise<ResolvedSearchExecution> {
+    const resolution = await this.planResolver.resolve(
+      String(query ?? ""),
+      options,
+      ctx,
+      this.config,
+    );
+    return {
+      resolution,
+      runConfig: this.planResolver.resolveRunConfig(
+        resolution,
+        this.config,
+        ctx.config,
+        options,
+      ),
+    };
   }
 
   override async run(
     input: PipelineData,
     ctx: Partial<PipelineContextLike> = {},
+    resolvedExecution?: ResolvedSearchExecution,
   ): Promise<PipelineData> {
     const source = input || {};
     const options = (source.options || {}) as SearchOptions;
     const runOptions = mergeRunOptions(source, options);
     const query = typeof source.query === "string" ? source.query : "";
-    const resolution = await this.planResolver.resolve(
-      query,
-      runOptions,
-      ctx,
-      this.config,
-    );
-    const runConfig = this.planResolver.resolveRunConfig(
-      resolution,
-      this.config,
-      ctx.config,
-      runOptions,
-    );
+    const execution =
+      resolvedExecution || (await this.resolveExecution(query, runOptions, ctx));
+    const { resolution, runConfig } = execution;
     const prepared = await prepareSearchRun({
       source,
       options: runOptions,

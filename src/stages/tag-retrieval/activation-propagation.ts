@@ -1,5 +1,5 @@
 import type { ChunkCandidate } from "../../types/documents.js";
-import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type {
   PropagationTrace,
@@ -237,7 +237,7 @@ class ActivationPropagationStage extends Stage {
     return names;
   }
 
-  _propagateConfig(config: MemoryConfigOverrides): Record<string, unknown> {
+  _propagateConfig(config: ResolvedMemoryConfigOverrides): Record<string, unknown> {
     const passthrough: Record<string, unknown> = {};
     const source = config as unknown as Record<string, unknown>;
     for (const key of [

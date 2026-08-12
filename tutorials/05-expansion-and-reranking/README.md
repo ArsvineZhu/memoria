@@ -13,7 +13,7 @@
 
 1. 基础排序先融合 vector 与 BM25 候选。
 2. 本地重排可以启用 embedding、propagation support 和 propagation structure；它们不访问网络。
-3. 模型重排通过注入的 `ExternalReranker` 执行。`MemoryConfig` 只保存 `externalRerankEnabled` gate，函数对象通过 `MemoryEngineOptions.reranker` 注入。
+3. 模型重排通过注入的 `ExternalReranker` 执行。选择由 `RetrievalPlan.externalRerank.enabled` 控制，函数对象通过 `MemoryEngineOptions.reranker` 注入。
 
 模型重排不会默认执行。当前顺序是：
 
@@ -45,26 +45,10 @@ import { prepareTutorialRuntime, SHARED_CONTENT_ROOT } from "../_support/paths.j
 import { heading, printProviderSelection, printResults } from "../_support/terminal.js";
 
 export async function run(): Promise<void> {
-  // The helper injects the reranker and this config explicitly enables it.
+  // The helper injects the reranker; the query plan below explicitly selects it.
   // Local rerank stages remain deterministic and do not require this provider.
   const { engine, paths, providers } = createTutorialEngine(
     "05-expansion-and-reranking",
-    {
-      enableExternalRerank: true,
-      config: {
-        tagGraphPropagationEnabled: true,
-        propagationSupportRerankEnabled: true,
-        propagationStructureRerankEnabled: true,
-        propagationHistoryEnabled: true,
-        embeddingRerankEnabled: true,
-        tagExpansionEnabled: true,
-        relationExpansionEnabled: true,
-        expansionEnabled: true,
-        externalRerankEnabled: true,
-        timeDecayEnabled: true,
-        truncateEnabled: true,
-      },
-    },
   );
   await prepareTutorialRuntime(paths);
   const filesystem = new FilesystemIngestionAdapter(engine, {
@@ -139,7 +123,7 @@ await engine
 
 ## 常见错误
 
-- 只注入 reranker 而不开启 `externalRerankEnabled` 不会访问它。
+- 只注入 reranker 而不在 plan 中开启 `externalRerank.enabled` 不会访问它。
 - 只在 plan 中设置 external rerank 而没有注入 provider 会在执行阶段失败。
 - `ordered` 与 `rrf` 是两种不同的融合方式，不能把它们描述成同一算法。
 - native retrieval 不可用时应观察明确的 failure/skip 诊断，不应在教程中导入 native runtime。

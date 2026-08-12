@@ -43,6 +43,57 @@ test("different mutation keys can run concurrently while same keys stay serializ
   assert.deepEqual(order, ["a:start", "b:start", "a:end", "same:start"]);
 });
 
+test("derived maintenance is exclusive against authority mutations", async () => {
+  const coordinator = new DerivedStateCoordinator(async () => undefined);
+  const maintenanceStarted = deferred();
+  const releaseMaintenance = deferred();
+  let mutationStarted = false;
+
+  const maintenance = coordinator.runDerivedMaintenance(
+    "tag-retrieval-artifact",
+    async () => {
+      maintenanceStarted.resolve();
+      await releaseMaintenance.promise;
+    },
+  );
+  await maintenanceStarted.promise;
+
+  const mutation = coordinator.runMutation("doc:other", async () => {
+    mutationStarted = true;
+  });
+
+  await Promise.resolve();
+  assert.equal(mutationStarted, false);
+  releaseMaintenance.resolve();
+  await Promise.all([maintenance, mutation]);
+  assert.equal(mutationStarted, true);
+});
+
+test("derived maintenance can recover dirty vector state before building", async () => {
+  const order: string[] = [];
+  const coordinator = new DerivedStateCoordinator(async () => {
+    order.push("reconcile");
+  });
+
+  await assert.rejects(() =>
+    coordinator.runMutation("doc:failed", async () => {
+      throw new Error("vector failure");
+    }),
+  );
+
+  await Promise.race([
+    coordinator.runDerivedMaintenance("tag-retrieval-artifact", async () => {
+      order.push("maintenance");
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("maintenance recovery timed out")), 100),
+    ),
+  ]);
+
+  assert.deepEqual(order, ["reconcile", "maintenance"]);
+  assert.equal(coordinator.isDirty, false);
+});
+
 test("stable reads wait for mutations and block new mutation admission", async () => {
   const coordinator = new DerivedStateCoordinator(async () => undefined);
   const started = deferred();

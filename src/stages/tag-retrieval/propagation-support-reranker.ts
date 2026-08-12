@@ -1,5 +1,5 @@
 import type { ChunkCandidate } from "../../types/documents.js";
-import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { ResolvedMemoryConfigOverrides } from "../../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 
 import Stage from "../../core/stage.js";
@@ -125,12 +125,12 @@ class PropagationSupportRerankerStage extends Stage {
     };
   }
 
-  private alpha(config: MemoryConfigOverrides): number {
+  private alpha(config: ResolvedMemoryConfigOverrides): number {
     const value = Number(config.supportRerankAlpha);
     return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : DEFAULT_ALPHA;
   }
 
-  private minSupportSamples(config: MemoryConfigOverrides): number {
+  private minSupportSamples(config: ResolvedMemoryConfigOverrides): number {
     const value = Number(config.supportRerankMinSamples);
     return Number.isFinite(value)
       ? Math.max(1, Math.round(value))

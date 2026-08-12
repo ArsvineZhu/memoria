@@ -44,12 +44,10 @@ export default class SqliteAuthorityRepository {
     replacement: DocumentTagReplacement,
   ): Promise<DocumentTagReplacementResult> {
     const { file, tags, orderedTagNames } = replacement;
-    const now = Math.floor(Date.now() / 1000);
-
     return this.db.transaction(() => {
       const existing = this.metadata.findFile(file);
       const previousIndexName = existing?.space ?? null;
-      const fileId = this.metadata.upsertFileRow(file, existing, now);
+      const fileId = this.metadata.upsertFileRow(file, existing);
       const { tagIds, tagIdsByName } = this.metadata.upsertTagsInTransaction(tags);
 
       const previousTagIds = this.metadata.getFileTagIds(fileId);
@@ -90,7 +88,7 @@ export default class SqliteAuthorityRepository {
     const { file, chunks, tags, orderedTagNames } = replacement;
     const preserveChunks = replacement.preserveChunks === true;
     const preserveTags = replacement.preserveTags === true;
-    const now = Math.floor(Date.now() / 1000);
+    const now = Date.now();
 
     return this.db.transaction(() => {
       const existing = this.metadata.findFile(file);
@@ -100,7 +98,7 @@ export default class SqliteAuthorityRepository {
           ? this.metadata.getChunkIdsByFileId(existing.id)
           : [];
 
-      const fileId = this.metadata.upsertFileRow(file, existing, now);
+      const fileId = this.metadata.upsertFileRow(file, existing);
       const existingChunkIds = preserveChunks
         ? this.metadata.getChunkIdsByFileId(fileId, "chunk_index")
         : [];
@@ -128,7 +126,7 @@ export default class SqliteAuthorityRepository {
           replacement.relationSourceRevision ?? null,
           replacement.explicitRelations ?? [],
           [...relationKeys],
-          now * 1000,
+          now,
         );
       }
 

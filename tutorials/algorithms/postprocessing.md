@@ -35,7 +35,7 @@ Expansion
 → Result Formatter
 \`\`\`
 
-这是库保证的可观察顺序。可以通过 \`retrievalTrace.stageOrder\` 验证：
+这是库内部保证的执行顺序；stage 名称不进入公开搜索结果。公开结果只提供稳定的 \`retrieval\` strategy、evidence 和 fallbacks：
 
 \`\`\`ts
 const result = await engine.search("项目计划", {
@@ -45,7 +45,7 @@ externalRerank: { enabled: true, mode: "ordered" },
 postprocess: { timeDecay: true, truncate: true, maxResults: 5 },
 },
 });
-console.log(result.retrievalTrace?.stageOrder);
+console.log(result.retrieval);
 \`\`\`
 
 ## 空输入与失败

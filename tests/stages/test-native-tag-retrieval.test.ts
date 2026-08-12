@@ -4,6 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import NativeTagRetrievalStage from "../../src/stages/tag-retrieval/native-tag-retrieval.js";
+import TagBasisProjectionStage from "../../src/stages/tag-retrieval/tag-basis-projection.js";
+import TagResidualDecompositionStage from "../../src/stages/tag-retrieval/tag-residual-decomposition.js";
 import PropagationStructureRerankerStage from "../../src/stages/tag-retrieval/propagation-structure-reranker.js";
 import type { PipelineContextLike, PipelineData } from "../../src/types.js";
 
@@ -23,6 +25,32 @@ function makeNative(overrides: Record<string, unknown> = {}) {
     async runTagRetrievalPipeline() {
       return {
         enhancedVector: [0.8, 0.6],
+        localVector: [0.6, 0.8],
+        extendedVector: [0.4, 0.9],
+        localDistribution: [[1, 1]],
+        extendedDistribution: [[1, 0.5]],
+        localSupportIds: [1],
+        extendedSupportIds: [1],
+        tagBasisProjection: {
+          ready: true,
+          queryAnalysis: {
+            projectionConcentration: 0.5,
+            entropy: 0.5,
+            dominantAxes: [],
+            axisCoactivation: { axisCoactivation: 0, coactiveAxisPairs: [] },
+          },
+          candidateAnalyses: [],
+        },
+        tagResidualDecomposition: {
+          levels: [],
+          features: {
+            depth: 0,
+            coverage: 0,
+            novelty: 0,
+            coherence: 0,
+            propagationReadiness: 0,
+          },
+        },
         observation: {
           seedDistribution: [[1, 1]],
           nodes: [{ id: 1, hop: 0, sourceType: "seed" }],
@@ -160,7 +188,7 @@ test("PropagationStructureRerankerStage uses the canonical native ABI", async ()
     tagRetrieval: {
       observationHandle: "obs-1",
       localVector: [0.6, 0.8],
-      transferVector: [0.4, 0.9],
+      extendedVector: [0.4, 0.9],
       localDistribution: [[1, 1]],
       extendedDistribution: [[1, 0.5]],
       localSupportIds: [1],
@@ -170,6 +198,21 @@ test("PropagationStructureRerankerStage uses the canonical native ABI", async ()
         nodes: [{ id: 1, hop: 0, sourceType: "seed" }],
         edges: [],
       },
+    },
+    tagRetrievalObservation: {
+      source: "native",
+      nativeObservation: {
+        seedDistribution: [[1, 1]],
+        nodes: [{ id: 1, hop: 0, sourceType: "seed" }],
+        edges: [],
+      },
+      localVector: [0.6, 0.8],
+      extendedVector: [0.4, 0.9],
+      localDistribution: [[1, 1]],
+      extendedDistribution: [[1, 0.5]],
+      localSupportIds: [1],
+      extendedSupportIds: [1],
+      observationHandle: "obs-1",
     },
   };
 
@@ -182,4 +225,111 @@ test("PropagationStructureRerankerStage uses the canonical native ABI", async ()
   assert.equal(structure?.spreadClass, "broad");
   assert.equal(candidate?.score, 0.9);
   assert.equal(candidate?.structureBonus, 0.1);
+});
+
+test("native success reuses one canonical observation without TS kernel calls", async () => {
+  let basisCalls = 0;
+  let residualSearchCalls = 0;
+  const native = makeNative();
+  const ctx = makeContext(native);
+  ctx.config.tagBasisProjectionEnabled = true;
+  ctx.config.tagResidualDecompositionEnabled = true;
+  ctx.tagBasisProjection = {
+    initialized: true,
+    project(_vector) {
+      basisCalls += 1;
+      return {
+        projections: null,
+        probabilities: null,
+        entropy: 0,
+        projectionConcentration: 0,
+        dominantAxes: [],
+      };
+    },
+    detectCrossDomainAxisCoactivation() {
+      return { axisCoactivation: 0, coactiveAxisPairs: [] };
+    },
+  };
+  ctx.vectorStore = {
+    search: async () => {
+      residualSearchCalls += 1;
+      return [{ id: 1, score: 1 }];
+    },
+  } as never;
+
+  const nativeOutput = await new NativeTagRetrievalStage().process(
+    {
+      query: "semantic",
+      queryVector: new Float32Array([1, 0]),
+      queries: [{ text: "semantic", vector: new Float32Array([1, 0]) }],
+    },
+    ctx,
+  );
+  const basisOutput = await new TagBasisProjectionStage().process(nativeOutput, ctx);
+  const output = await new TagResidualDecompositionStage().process(basisOutput, ctx);
+
+  assert.equal(basisCalls, 0);
+  assert.equal(residualSearchCalls, 0);
+  const nativeObservation = output.tagRetrievalObservation as
+    { source?: string; basis?: unknown; residual?: unknown } | undefined;
+  assert.equal(nativeObservation?.source, "native");
+  assert.ok(nativeObservation?.basis);
+  assert.ok(nativeObservation?.residual);
+});
+
+test("native failure runs each TypeScript fallback kernel once", async () => {
+  let basisCalls = 0;
+  let residualSearchCalls = 0;
+  const native = makeNative({
+    async runTagRetrievalPipeline() {
+      throw new Error("native backend unavailable");
+    },
+  });
+  const ctx = makeContext(native);
+  ctx.config.tagBasisProjectionEnabled = true;
+  ctx.config.tagResidualDecompositionEnabled = true;
+  ctx.tagBasisProjection = {
+    initialized: true,
+    project() {
+      basisCalls += 1;
+      return {
+        projections: null,
+        probabilities: null,
+        entropy: 0,
+        projectionConcentration: 0,
+        dominantAxes: [],
+      };
+    },
+    detectCrossDomainAxisCoactivation() {
+      return { axisCoactivation: 0, coactiveAxisPairs: [] };
+    },
+  };
+  ctx.vectorStore = {
+    search: async () => {
+      residualSearchCalls += 1;
+      return [{ id: 1, score: 1 }];
+    },
+  } as never;
+  ctx.metadataStore = {
+    async getTagsByIds() {
+      return [
+        { id: 1, name: "tag", vector: Buffer.from(new Float32Array([1, 0]).buffer) },
+      ];
+    },
+  } as never;
+
+  const nativeOutput = await new NativeTagRetrievalStage().process(
+    { query: "semantic", queryVector: new Float32Array([1, 0]) },
+    ctx,
+  );
+  const basisOutput = await new TagBasisProjectionStage().process(nativeOutput, ctx);
+  const output = await new TagResidualDecompositionStage().process(basisOutput, ctx);
+
+  assert.equal(basisCalls, 1);
+  assert.equal(residualSearchCalls, 1);
+  const fallbackObservation = output.tagRetrievalObservation as
+    { source?: string; basis?: unknown; residual?: unknown } | undefined;
+  assert.equal(fallbackObservation?.source, "typescript");
+  assert.ok(fallbackObservation?.basis);
+  assert.ok(fallbackObservation?.residual);
 });

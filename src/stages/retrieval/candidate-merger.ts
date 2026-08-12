@@ -1,7 +1,4 @@
-import type {
-  ChunkCandidate,
-  VectorResult,
-} from "../../types/documents.js";
+import type { ChunkCandidate, VectorResult } from "../../types/documents.js";
 import type { MemoryConfigOverrides } from "../../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 

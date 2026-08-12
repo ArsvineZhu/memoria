@@ -17,7 +17,7 @@ path
 library
 title
 now
-mtime
+sourceUpdatedAt、recordedAt、indexedAt 均使用 Unix epoch milliseconds。
 size
 ```
 

@@ -25,6 +25,8 @@ import PropagationStructureStage from "../../src/stages/tag-retrieval/propagatio
 import type {
   MemoryConfigOverrides,
   PipelineData,
+  PropagationHistoryObservation,
+  PropagationHistorySnapshot,
   PropagationHistoryStore,
 } from "../../src/types.js";
 
@@ -252,14 +254,14 @@ async function seedTagGraphPropagationStore() {
     path: "a.md",
     space: "d",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const f2 = (await metaStore.upsertFile({
     path: "b.md",
     space: "d",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [c1] = await metaStore.insertChunks(f1, [
@@ -576,19 +578,40 @@ test("GraphDiffusionStage: pruneByActivation strips weak distribution entries", 
 
 // ── PropagationHistoryStage and PropagationStructureRerankerStage ─────────────
 
-class InMemoryKvStore implements PropagationHistoryStore {
-  rows: Map<string, string>;
+class InMemoryPropagationHistoryStore implements PropagationHistoryStore {
+  sequence = 0;
+  totalMass = 0;
+  edgeTotals = new Map<string, number>();
+  readError: Error | null = null;
 
-  constructor() {
-    this.rows = new Map<string, string>();
+  async readPropagationHistory(
+    nodeIds: readonly number[],
+  ): Promise<PropagationHistorySnapshot> {
+    if (this.readError) throw this.readError;
+    const ids = new Set(nodeIds);
+    return {
+      sequence: this.sequence,
+      totalMass: this.totalMass,
+      edgeTotals: [...this.edgeTotals].filter(([key]) => {
+        const [source, target] = key.split(":").map(Number);
+        return ids.has(source) || ids.has(target);
+      }),
+    };
   }
 
-  async getKv(key: string): Promise<string | null> {
-    return this.rows.has(key) ? this.rows.get(key)! : null;
-  }
-
-  async setKv(key: string, value: string): Promise<void> {
-    this.rows.set(key, value);
+  async commitPropagationObservation(
+    observation: PropagationHistoryObservation,
+  ): Promise<PropagationHistorySnapshot> {
+    this.sequence += 1;
+    for (const edge of observation.edges) {
+      this.edgeTotals.set(
+        `${edge.sourceId}:${edge.targetId}`,
+        (this.edgeTotals.get(`${edge.sourceId}:${edge.targetId}`) || 0) +
+          edge.increment,
+      );
+      this.totalMass += edge.increment;
+    }
+    return this.readPropagationHistory(observation.nodeIds);
   }
 }
 
@@ -609,7 +632,7 @@ function basePropagationInput(): PipelineData {
 }
 
 function propagationContext(
-  store: InMemoryKvStore,
+  store: InMemoryPropagationHistoryStore,
   config: MemoryConfigOverrides = {},
 ) {
   return new PipelineContext({
@@ -618,38 +641,39 @@ function propagationContext(
   });
 }
 
-test("PropagationHistoryStage persists canonical edge totals across sequences", async () => {
+test("PropagationHistoryStage computes an observation without mutating history", async () => {
   const stage = new PropagationHistoryStage();
   assert.strictEqual(stage.name, "propagationHistory");
 
-  const store = new InMemoryKvStore();
+  const store = new InMemoryPropagationHistoryStore();
   const ctx = propagationContext(store, { historyUpdateScale: 1.0 });
 
-  for (let sequence = 1; sequence <= 3; sequence++) {
-    const out = await stage.process(basePropagationInput(), ctx);
-    assert.strictEqual(
-      out.propagationHistory!.sequence,
-      sequence,
-      `sequence ${sequence} state must persist`,
-    );
-  }
+  const out = await stage.process(basePropagationInput(), ctx);
+  assert.strictEqual(out.propagationHistory!.sequence, 1);
+  assert.ok(out.propagationHistoryObservation);
+  assert.equal(store.sequence, 0);
+  assert.equal(store.edgeTotals.size, 0);
 
-  const state = JSON.parse((await store.getKv("propagation_history"))!);
-  assert.strictEqual(state.schema, "propagation-history-v1");
-  assert.strictEqual(state.sequence, 3);
+  await store.commitPropagationObservation(out.propagationHistoryObservation!);
+  await store.commitPropagationObservation(out.propagationHistoryObservation!);
+  await store.commitPropagationObservation(out.propagationHistoryObservation!);
+
+  const state = await store.readPropagationHistory([1, 2]);
+  assert.strictEqual(store.sequence, 3);
   assert.ok(
-    Math.abs(state.edgeTotals["1:2"] - 0.6) < 1e-9,
+    Math.abs(state.edgeTotals.find(([key]) => key === "1:2")![1] - 0.6) < 1e-9,
     "edge totals accumulate across sequences",
   );
 });
 
 test("PropagationHistoryStage merges convergent branches into target support", async () => {
   const stage = new PropagationHistoryStage();
-  const store = new InMemoryKvStore();
+  const store = new InMemoryPropagationHistoryStore();
   const ctx = propagationContext(store);
 
   const first = basePropagationInput();
-  await stage.process(first, ctx);
+  const firstOut = await stage.process(first, ctx);
+  await store.commitPropagationObservation(firstOut.propagationHistoryObservation!);
 
   const second = basePropagationInput();
   second.tagGraphPropagation!.propagationTrace!.edges = [
@@ -662,6 +686,7 @@ test("PropagationHistoryStage merges convergent branches into target support", a
     },
   ];
   const out = await stage.process(second, ctx);
+  await store.commitPropagationObservation(out.propagationHistoryObservation!);
 
   assert.ok(
     out.propagationHistory!.nodeTotals!["2"] >= 0.4,
@@ -672,7 +697,7 @@ test("PropagationHistoryStage merges convergent branches into target support", a
 test("PropagationStructureRerankerStage uses canonical spread distributions", async () => {
   const stage = new PropagationStructureStage();
   assert.strictEqual(stage.name, "propagationStructureReranker");
-  const store = new InMemoryKvStore();
+  const store = new InMemoryPropagationHistoryStore();
   const ctx = new PipelineContext({
     config: { propagationStructureRerankEnabled: true },
     propagationHistoryStore: store,
@@ -703,7 +728,7 @@ test("PropagationStructureRerankerStage uses canonical spread distributions", as
 
 test("PropagationStructureStage: disabled is a passthrough", async () => {
   const stage = new PropagationStructureStage();
-  const store = new InMemoryKvStore();
+  const store = new InMemoryPropagationHistoryStore();
   const ctx = new PipelineContext({
     config: { propagationStructureRerankEnabled: false },
     propagationHistoryStore: store,
@@ -711,6 +736,22 @@ test("PropagationStructureStage: disabled is a passthrough", async () => {
   const input = basePropagationInput();
   const out = await stage.process(input, ctx);
   assert.strictEqual(out.propagationStructureSkipped, true);
+});
+
+test("PropagationHistoryStage never overwrites history after a read failure", async () => {
+  const stage = new PropagationHistoryStage();
+  const store = new InMemoryPropagationHistoryStore();
+  store.sequence = 7;
+  store.edgeTotals.set("1:2", 4);
+  store.totalMass = 4;
+  store.readError = new Error("temporary history read failure");
+
+  await assert.rejects(
+    () => stage.process(basePropagationInput(), propagationContext(store)),
+    /temporary history read failure/,
+  );
+  assert.equal(store.sequence, 7);
+  assert.equal(store.edgeTotals.get("1:2"), 4);
 });
 
 // ── Integration: candidate merger → activation propagation → graph diffusion ─

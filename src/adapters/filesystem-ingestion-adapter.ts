@@ -23,8 +23,12 @@ export interface FilesystemIngestionTarget {
     sourceContent?: string;
     revision?: string;
     source?: { type: "filesystem"; path: string };
-    metadata?: UnknownRecord & { path: string; mtime: number; size: number };
-    updatedAt?: number;
+    metadata?: UnknownRecord & {
+      path: string;
+      sourceUpdatedAt: number;
+      size: number;
+    };
+    recordedAt?: number;
   }): Promise<MemoryDocumentIngestResult>;
   remove?(documentId: string): Promise<MemoryDocumentDeleteResult>;
   flushBatch?(files: readonly FileInput[]): Promise<IngestEnvelope[]>;
@@ -109,7 +113,7 @@ class FilesystemIngestionAdapter {
       const metadata = {
         ...(snapshot.documentMetadata ?? {}),
         path: relativePath,
-        mtime: snapshot.mtime ?? 0,
+        sourceUpdatedAt: snapshot.sourceUpdatedAt ?? 0,
         size: snapshot.size ?? 0,
       };
       const logicalResult = await this.target.ingest({
@@ -120,7 +124,7 @@ class FilesystemIngestionAdapter {
         revision: snapshot.revision,
         source: { type: "filesystem", path: relativePath },
         metadata,
-        updatedAt: snapshot.mtime,
+        recordedAt: snapshot.recordedAt,
       });
       return [logicalResult];
     }

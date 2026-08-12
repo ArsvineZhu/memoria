@@ -7,9 +7,10 @@ export interface FileQueryRow {
   path: string;
   space: string;
   checksum: string;
-  mtime: number;
+  source_updated_at: number;
   size: number;
-  updated_at?: number | null;
+  recorded_at: number;
+  indexed_at: number;
   document_id?: string | null;
   revision?: string | null;
   source_json?: string | null;
@@ -23,18 +24,24 @@ export default class SqliteFileRepository {
   constructor(private readonly db: BetterSqlite3.Database) {}
 
   upsertFile(fileMeta: FileMetadataInput): number | null {
-    const now = Math.floor(Date.now() / 1000);
+    const recordedAt = Number.isFinite(Number(fileMeta.recordedAt))
+      ? Number(fileMeta.recordedAt)
+      : Number(fileMeta.sourceUpdatedAt);
+    const indexedAt = Number.isFinite(Number(fileMeta.indexedAt))
+      ? Number(fileMeta.indexedAt)
+      : Date.now();
     const stmt = this.db.prepare(`
       INSERT INTO files (
-        path, space, checksum, mtime, size, updated_at,
+        path, space, checksum, source_updated_at, size, recorded_at, indexed_at,
         document_id, revision, source_json, metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
         space = excluded.space,
         checksum = excluded.checksum,
-        mtime = excluded.mtime,
+        source_updated_at = excluded.source_updated_at,
         size = excluded.size,
-        updated_at = excluded.updated_at,
+        recorded_at = excluded.recorded_at,
+        indexed_at = excluded.indexed_at,
         document_id = excluded.document_id,
         revision = excluded.revision,
         source_json = excluded.source_json,
@@ -44,9 +51,10 @@ export default class SqliteFileRepository {
       fileMeta.path,
       fileMeta.space,
       fileMeta.checksum,
-      fileMeta.mtime,
+      fileMeta.sourceUpdatedAt,
       fileMeta.size,
-      now,
+      recordedAt,
+      indexedAt,
       fileMeta.documentId ?? null,
       fileMeta.revision ?? null,
       fileMeta.sourceJson ?? null,
@@ -72,11 +80,19 @@ export default class SqliteFileRepository {
       return { fileId, changed: true };
     }
 
+    const recordedAt = Number.isFinite(Number(fileMeta.recordedAt))
+      ? Number(fileMeta.recordedAt)
+      : Number(fileMeta.sourceUpdatedAt);
+    const indexedAt = Number.isFinite(Number(fileMeta.indexedAt))
+      ? Number(fileMeta.indexedAt)
+      : Date.now();
+
     const changed =
       existing.space !== fileMeta.space ||
       existing.checksum !== fileMeta.checksum ||
-      existing.mtime !== fileMeta.mtime ||
+      existing.source_updated_at !== fileMeta.sourceUpdatedAt ||
       existing.size !== fileMeta.size ||
+      existing.recorded_at !== recordedAt ||
       (existing.document_id ?? null) !== (fileMeta.documentId ?? null) ||
       (existing.revision ?? null) !== (fileMeta.revision ?? null) ||
       (existing.source_json ?? null) !== (fileMeta.sourceJson ?? null) ||
@@ -86,16 +102,17 @@ export default class SqliteFileRepository {
     this.db
       .prepare(
         `UPDATE files SET
-          space = ?, checksum = ?, mtime = ?, size = ?, updated_at = ?,
+          space = ?, checksum = ?, source_updated_at = ?, size = ?, recorded_at = ?, indexed_at = ?,
           document_id = ?, revision = ?, source_json = ?, metadata_json = ?
          WHERE id = ?`,
       )
       .run(
         fileMeta.space,
         fileMeta.checksum,
-        fileMeta.mtime,
+        fileMeta.sourceUpdatedAt,
         fileMeta.size,
-        Math.floor(Date.now() / 1000),
+        recordedAt,
+        indexedAt,
         fileMeta.documentId ?? null,
         fileMeta.revision ?? null,
         fileMeta.sourceJson ?? null,
@@ -123,18 +140,21 @@ export default class SqliteFileRepository {
       FileQueryRow | undefined;
   }
 
-  upsertFileRow(
-    file: FileMetadataInput,
-    existing: FileQueryRow | undefined,
-    now: number,
-  ): number {
+  upsertFileRow(file: FileMetadataInput, existing: FileQueryRow | undefined): number {
+    const recordedAt = Number.isFinite(Number(file.recordedAt))
+      ? Number(file.recordedAt)
+      : Number(file.sourceUpdatedAt);
+    const indexedAt = Number.isFinite(Number(file.indexedAt))
+      ? Number(file.indexedAt)
+      : Date.now();
     const values = [
       file.path,
       file.space,
       file.checksum,
-      file.mtime,
+      file.sourceUpdatedAt,
       file.size,
-      now,
+      recordedAt,
+      indexedAt,
       file.documentId ?? null,
       file.revision ?? null,
       file.sourceJson ?? null,
@@ -144,8 +164,8 @@ export default class SqliteFileRepository {
       this.db
         .prepare(
           `UPDATE files SET
-            path = ?, space = ?, checksum = ?, mtime = ?, size = ?,
-            updated_at = ?, document_id = ?, revision = ?, source_json = ?,
+            path = ?, space = ?, checksum = ?, source_updated_at = ?, size = ?,
+            recorded_at = ?, indexed_at = ?, document_id = ?, revision = ?, source_json = ?,
             metadata_json = ? WHERE id = ?`,
         )
         .run(...values, existing.id);
@@ -154,9 +174,9 @@ export default class SqliteFileRepository {
     const info = this.db
       .prepare(
         `INSERT INTO files (
-          path, space, checksum, mtime, size, updated_at,
+          path, space, checksum, source_updated_at, size, recorded_at, indexed_at,
           document_id, revision, source_json, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(...values);
     return Number(info.lastInsertRowid);
@@ -187,9 +207,9 @@ export default class SqliteFileRepository {
   }
 
   getLastIndexedAt(): number | null {
-    const row = this.db.prepare("SELECT MAX(updated_at) AS m FROM files").get() as
+    const row = this.db.prepare("SELECT MAX(indexed_at) AS m FROM files").get() as
       { m?: number | null } | undefined;
-    return row?.m == null ? null : Number(row.m) * 1000;
+    return row?.m == null ? null : Number(row.m);
   }
 
   listSpaces(): string[] {

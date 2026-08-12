@@ -65,14 +65,14 @@ function matchesMetadataJson(
   });
 }
 
-function scopeEpochSeconds(value: number | string | undefined): number | null {
+function scopeEpochMilliseconds(value: number | string | undefined): number | null {
   if (value === undefined) return null;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return null;
-    return Math.abs(value) > 1e12 ? value / 1000 : value;
+    return value;
   }
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed / 1000 : null;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** Read-only retrieval projections over the SQLite authority. */
@@ -125,14 +125,14 @@ export default class SqliteRetrievalRepository {
       where.push(`f.document_id IN (${filters.documentIds.map(() => "?").join(", ")})`);
       params.push(...filters.documentIds.map(String));
     }
-    const after = scopeEpochSeconds(filters.recordedAfter);
-    const before = scopeEpochSeconds(filters.recordedBefore);
+    const after = scopeEpochMilliseconds(filters.recordedAfter);
+    const before = scopeEpochMilliseconds(filters.recordedBefore);
     if (after !== null) {
-      where.push("COALESCE(f.updated_at, f.mtime) >= ?");
+      where.push("f.recorded_at >= ?");
       params.push(after);
     }
     if (before !== null) {
-      where.push("COALESCE(f.updated_at, f.mtime) <= ?");
+      where.push("f.recorded_at <= ?");
       params.push(before);
     }
 

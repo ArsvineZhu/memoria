@@ -36,24 +36,21 @@ export async function rerankNative(
     artifact = built.state as unknown as Record<string, unknown>;
   }
 
-  const tagRetrieval = readRecord(info.tagRetrieval);
+  const observation = info.tagRetrievalObservation;
   const candidates = Array.isArray(info.mergedCandidates) ? info.mergedCandidates : [];
   const originalById = new Map(
     candidates.map((candidate) => [Number(candidate.chunkId), candidate]),
   );
   const options = info.options && typeof info.options === "object" ? info.options : {};
-  const observationHandle =
-    typeof tagRetrieval.observationHandle === "string"
-      ? tagRetrieval.observationHandle
-      : undefined;
+  const observationHandle = observation?.observationHandle;
   const originalQuery = info.nativeQueryVector ?? info.queryVector;
   const enhancedQuery = info.queryVector;
   const payload: Record<string, unknown> = {
     dimension: Number(ctx.config.dimension),
     observationHandle,
     queryRetrievalState: {
-      tagBasisProjection: info.tagBasisProjection || {},
-      tagResidualDecomposition: info.tagResidualDecomposition || {},
+      tagBasisProjection: observation?.basis || {},
+      tagResidualDecomposition: observation?.residual || {},
     },
     topK: Math.max(
       1,
@@ -74,7 +71,7 @@ export async function rerankNative(
     config: { alpha, minSupportSamples },
   };
   if (!observationHandle) {
-    payload.observation = tagRetrieval.observation || {};
+    payload.observation = observation?.nativeObservation || {};
     payload.originalQueryVector = vectorArray(originalQuery);
     payload.enhancedQueryVector = vectorArray(enhancedQuery);
   }

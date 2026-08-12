@@ -81,7 +81,7 @@ function fileInfo(overrides = {}) {
     relPath: "space1/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000000,
+    sourceUpdatedAt: 1700000000000,
     size: 1024,
     content: "hello memory",
     tags: ["alpha", "beta"],
@@ -115,7 +115,7 @@ test("MetadataWriterStage upserts file metadata and returns fileId", async (t) =
   assert.strictEqual(file.checksum, "abc123");
   assert.strictEqual(file.size, 1024);
   assert.strictEqual(out.fileId, file.id);
-  assert.ok(file.updated_at! > 0, "updated_at should be populated");
+  assert.ok(file.indexed_at! > 0, "indexed_at should be populated");
 });
 
 test("MetadataWriterStage uses the atomic replacement capability when available", async (t) => {

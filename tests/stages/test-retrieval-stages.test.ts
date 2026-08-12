@@ -107,14 +107,14 @@ test("space-only filters remain fail-closed after related expansion", async () =
     path: "a/note.md",
     space: "A",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const fileB = (await metadataStore.upsertFile({
     path: "b/note.md",
     space: "B",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [chunkA] = await metadataStore.insertChunks(fileA, [
@@ -159,14 +159,14 @@ test("retrieval filter spaces remain hard filters when caller scope is broader",
     path: "a/note.md",
     space: "A",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const fileB = (await metadataStore.upsertFile({
     path: "b/note.md",
     space: "B",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [chunkA] = await metadataStore.insertChunks(fileA, [
@@ -198,21 +198,21 @@ test("SqliteMetadataStore.getDistinctSpaces returns unique space names", async (
     path: "d1/a.md",
     space: "space1",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   await store.upsertFile({
     path: "d1/b.md",
     space: "space1",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   await store.upsertFile({
     path: "d2/c.md",
     space: "space2",
     checksum: "c",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
 
@@ -226,14 +226,14 @@ test("getMetadataStore getFileIdsByTagId returns file ids tagged with a tag", as
     path: "x/a.md",
     space: "d",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const f2 = (await store.upsertFile({
     path: "x/b.md",
     space: "d",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [tag1, tag2] = await store.upsertTags([
@@ -257,7 +257,7 @@ test("getMetadataStore getAllChunks returns every chunk row with content", async
     path: "a.md",
     space: "d",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   await store.insertChunks(f1, [
@@ -277,7 +277,7 @@ test("getMetadataStore getFileByChunkId resolves a chunk to its file row", async
     path: "a.md",
     space: "spaceX",
     checksum: "a",
-    mtime: 123,
+    sourceUpdatedAt: 123,
     size: 5,
   }))!;
   const [c1] = await store.insertChunks(f1, [{ chunkIndex: 0, content: "hello" }]);
@@ -428,14 +428,14 @@ test("VectorSearcherStage supports searchAllIndices via metadata store space nam
     path: "d1/x.md",
     space: "spaceA",
     checksum: "x",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   await metaStore.upsertFile({
     path: "d2/y.md",
     space: "spaceB",
     checksum: "y",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
 
@@ -465,14 +465,14 @@ test("VectorSearcherStage expands tag hits to chunks of tagged files", async () 
     path: "a.md",
     space: "space1",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const f2 = (await metaStore.upsertFile({
     path: "b.md",
     space: "space1",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const chunkIds1 = await metaStore.insertChunks(f1, [
@@ -526,7 +526,7 @@ test("VectorSearcherStage does not let tag search escape an explicit empty scope
     path: "tagged.md",
     space: "space1",
     checksum: "tagged",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [chunkId] = await metadataStore.insertChunks(file, [
@@ -603,21 +603,21 @@ async function seedBm25Corpus() {
     path: "a.md",
     space: "d",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const f2 = (await store.upsertFile({
     path: "b.md",
     space: "d",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const f3 = (await store.upsertFile({
     path: "c.md",
     space: "d",
     checksum: "c",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [c1] = await store.insertChunks(f1, [{ chunkIndex: 0, content: "alpha beta" }]);
@@ -717,14 +717,14 @@ test("retrieval stages honor one resolved scope across vector and BM25", async (
     path: "a.md",
     space: "A",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const fileB = (await metadataStore.upsertFile({
     path: "b.md",
     space: "B",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [chunkA] = await metadataStore.insertChunks(fileA, [
@@ -827,20 +827,20 @@ test("CandidateMergerStage honors configurable vector/bm25 weights", async () =>
 test("CandidateMergerStage leaves recency unchanged for TimeDecayStage", async () => {
   const stage = new CandidateMergerStage();
   const metaStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
 
   const oldFile = (await metaStore.upsertFile({
     path: "old.md",
     space: "d",
     checksum: "o",
-    mtime: nowSec - 30 * 86400,
+    sourceUpdatedAt: nowMs - 30 * 86400 * 1000,
     size: 1,
   }))!;
   const newFile = (await metaStore.upsertFile({
     path: "new.md",
     space: "d",
     checksum: "n",
-    mtime: nowSec - 3 * 86400,
+    sourceUpdatedAt: nowMs - 3 * 86400 * 1000,
     size: 1,
   }))!;
   const [oldChunk] = await metaStore.insertChunks(oldFile, [
@@ -849,13 +849,13 @@ test("CandidateMergerStage leaves recency unchanged for TimeDecayStage", async (
   const [newChunk] = await metaStore.insertChunks(newFile, [
     { chunkIndex: 0, content: "new" },
   ]);
-  // Backdate updated_at explicitly (ingest-time timestamp is what counts).
+  // Backdate recorded_at explicitly (ingest-time timestamp is what counts).
   metaStore.db
-    .prepare("UPDATE files SET updated_at = ? WHERE id = ?")
-    .run(nowSec - 30 * 86400, oldFile);
+    .prepare("UPDATE files SET recorded_at = ? WHERE id = ?")
+    .run(nowMs - 30 * 86400 * 1000, oldFile);
   metaStore.db
-    .prepare("UPDATE files SET updated_at = ? WHERE id = ?")
-    .run(nowSec - 3 * 86400, newFile);
+    .prepare("UPDATE files SET recorded_at = ? WHERE id = ?")
+    .run(nowMs - 3 * 86400 * 1000, newFile);
 
   const ctx = new PipelineContext({
     config: { timeDecayHalfLife: 10, vectorWeight: 1, bm25Weight: 0 },
@@ -897,14 +897,14 @@ test("full retrieval pipeline: query -> embed -> vector + bm25 -> merged", async
     path: "d1/a.md",
     space: "space1",
     checksum: "a",
-    mtime: 1000,
+    sourceUpdatedAt: 1000,
     size: 4,
   }))!;
   const fB = (await metaStore.upsertFile({
     path: "d1/b.md",
     space: "space1",
     checksum: "b",
-    mtime: 1000,
+    sourceUpdatedAt: 1000,
     size: 4,
   }))!;
   const [cA] = await metaStore.insertChunks(fA, [

@@ -1,4 +1,8 @@
-import type { PipelineContextLike, PipelineData, Stage as StageContract } from "../types/pipeline.js";
+import type {
+  PipelineContextLike,
+  PipelineData,
+  Stage as StageContract,
+} from "../types/pipeline.js";
 
 /**
  * @abstract

@@ -17,6 +17,7 @@ import type {
 import TDBSearchPipeline from "./tdb-search-pipeline.js";
 import TdbTriviumSearch from "./trivium-search.js";
 import { resolveLibrary } from "./path-utils.js";
+import { projectTdbSearchEnvelope } from "../pipelines/search-public-envelope.js";
 
 export interface TdbQueryServiceOptions {
   config: MemoryConfig;
@@ -50,9 +51,10 @@ export default class TdbQueryService {
           this.options.context(),
         )) as TdbSearchEnvelope;
       }
-      return settings.expand
+      const expanded = settings.expand
         ? { ...output, results: await this.expandHits(output.results) }
         : output;
+      return projectTdbSearchEnvelope(expanded);
     } catch (error) {
       throw asMemoriaError(error, "retrieval", "TDB search failed.", {
         retryable: true,
@@ -73,9 +75,10 @@ export default class TdbQueryService {
             { query, vector, options: settings },
             this.options.context(),
           )) as TdbSearchEnvelope);
-      return settings.expand
+      const expanded = settings.expand
         ? { ...output, results: await this.expandHits(output.results) }
         : output;
+      return projectTdbSearchEnvelope(expanded);
     } catch (error) {
       throw asMemoriaError(error, "retrieval", "TDB vector search failed.", {
         retryable: true,

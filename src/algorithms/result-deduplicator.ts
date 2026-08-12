@@ -63,7 +63,10 @@ class ResultDeduplicator {
       next.dimension = Math.floor(Number(config.dimension));
     }
     if (Number.isFinite(Number(config.semanticThreshold))) {
-      next.semanticThreshold = Math.max(-1, Math.min(1, Number(config.semanticThreshold)));
+      next.semanticThreshold = Math.max(
+        -1,
+        Math.min(1, Number(config.semanticThreshold)),
+      );
     }
     if (Number.isFinite(Number(config.maxResults)) && Number(config.maxResults) > 0) {
       next.maxResults = Math.floor(Number(config.maxResults));
@@ -162,7 +165,8 @@ class ResultDeduplicator {
         ...this._getExactIdentities(existing || candidate),
         ...identities,
       ];
-      for (const identity of mergedIdentities) identityOwner.set(identity, existingIndex);
+      for (const identity of mergedIdentities)
+        identityOwner.set(identity, existingIndex);
     }
     return selected;
   }

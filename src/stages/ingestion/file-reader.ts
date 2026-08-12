@@ -18,11 +18,11 @@ import {
  *
  * Decision rule (ported from ingestionPipeline._flushBatch):
  * a file does NOT need re-embedding when a stored metadata row exists for
- * its relative path and checksum/size/mtime all match the current snapshot.
+ * its relative path and checksum/size/sourceUpdatedAt all match the current snapshot.
  *
- * @param {{ path: string, content?: string, mtime?: number, size?: number }} input
+ * @param {{ path: string, content?: string, sourceUpdatedAt?: number, recordedAt?: number, size?: number }} input
  *   - path: absolute file path
- *   - content/mtime/size: optional pre-read snapshot (fallbackRead mode);
+ *   - content/sourceUpdatedAt/recordedAt/size: optional pre-read snapshot (fallbackRead mode);
  *     when provided the stage skips filesystem reads entirely.
  */
 class FileReaderStage extends Stage {
@@ -42,7 +42,8 @@ class FileReaderStage extends Stage {
       | "space"
       | "content"
       | "checksum"
-      | "mtime"
+      | "sourceUpdatedAt"
+      | "recordedAt"
       | "size"
       | "needsEmbedding"
       | "needsChunkEmbedding"
@@ -55,7 +56,8 @@ class FileReaderStage extends Stage {
       space: string;
       content: string;
       checksum: string;
-      mtime: number;
+      sourceUpdatedAt: number;
+      recordedAt: number;
       size: number;
       needsEmbedding: boolean;
       needsChunkEmbedding: boolean;
@@ -72,17 +74,19 @@ class FileReaderStage extends Stage {
     const rootPath = ctx.config && ctx.config.rootPath;
 
     let content = input.content;
-    let mtime = input.mtime;
+    let sourceUpdatedAt = input.sourceUpdatedAt;
+    let recordedAt = input.recordedAt;
     let size = input.size;
     let unstable = false;
 
     if (
       typeof content !== "string" ||
-      typeof mtime !== "number" ||
+      typeof sourceUpdatedAt !== "number" ||
       typeof size !== "number"
     ) {
       const statsBefore = await fs.promises.stat(filePath);
-      mtime = Math.trunc(statsBefore.mtimeMs);
+      sourceUpdatedAt = Math.trunc(statsBefore.mtimeMs);
+      recordedAt = typeof recordedAt === "number" ? recordedAt : sourceUpdatedAt;
       size = statsBefore.size;
       content = await fs.promises.readFile(filePath, "utf-8");
 
@@ -97,7 +101,7 @@ class FileReaderStage extends Stage {
       if (
         statsAfter &&
         (statsAfter.size !== statsBefore.size ||
-          Math.trunc(statsAfter.mtimeMs) !== mtime)
+          Math.trunc(statsAfter.mtimeMs) !== sourceUpdatedAt)
       ) {
         unstable = true;
       }
@@ -121,6 +125,11 @@ class FileReaderStage extends Stage {
     if (typeof content !== "string") {
       throw new TypeError("FileReaderStage could not obtain text content");
     }
+    if (typeof sourceUpdatedAt !== "number") {
+      throw new TypeError("FileReaderStage could not determine sourceUpdatedAt");
+    }
+    let resolvedRecordedAt =
+      typeof recordedAt === "number" ? recordedAt : sourceUpdatedAt;
 
     const sourceContent =
       typeof input.sourceContent === "string" ? input.sourceContent : content;
@@ -155,15 +164,32 @@ class FileReaderStage extends Stage {
         const documentId = input.documentId ?? null;
         const revision = input.revision ?? null;
         needsEmbedding = row.checksum !== checksum || row.space !== space;
-        needsMetadataWrite =
+        const sourceIdentityChanged =
           row.space !== space ||
           row.checksum !== checksum ||
-          row.mtime !== mtime ||
           row.size !== size ||
           (row.document_id ?? null) !== documentId ||
           (row.revision ?? null) !== revision ||
           (row.source_json ?? null) !== sourceJson ||
           (row.metadata_json ?? null) !== metadataJson;
+
+        // A logical document without an explicit recordedAt gets its time
+        // from the first ingestion. Re-ingesting the unchanged identity must
+        // remain idempotent instead of becoming a metadata-only write merely
+        // because Date.now() advanced between calls.
+        if (
+          typeof input.documentId === "string" &&
+          typeof input.recordedAt !== "number" &&
+          !sourceIdentityChanged
+        ) {
+          sourceUpdatedAt = row.source_updated_at;
+          resolvedRecordedAt = row.recorded_at ?? row.source_updated_at;
+        }
+
+        needsMetadataWrite =
+          sourceIdentityChanged ||
+          row.source_updated_at !== sourceUpdatedAt ||
+          row.recorded_at !== resolvedRecordedAt;
       }
     }
 
@@ -176,7 +202,8 @@ class FileReaderStage extends Stage {
       content,
       sourceContent,
       checksum,
-      mtime,
+      sourceUpdatedAt,
+      recordedAt: resolvedRecordedAt,
       size,
       documentMetadata,
       needsEmbedding,

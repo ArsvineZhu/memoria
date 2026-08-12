@@ -94,9 +94,7 @@ export async function run(): Promise<void> {
         postprocess.timeDecay().dedupe().truncate().limit(5),
       )
       .run();
-    console.log(
-      `stage order=${envelope.retrievalTrace?.stageOrder?.join(" -> ") ?? "not returned"}`,
-    );
+    console.log(`strategy=${envelope.retrieval?.strategy ?? "not returned"}`);
     printResults(envelope.results);
   } finally {
     await filesystem.close();
@@ -137,7 +135,7 @@ await engine
 
 ## 预期输出
 
-输出会显示完整 `stageOrder`，其中 `externalReranker` 位于 dedupe 之后、time decay 和 truncator 之前。结果中的 `rerankScore`、`decay`、`supportScore` 等字段取决于实际启用的阶段。
+输出会显示稳定的 `retrieval.strategy` 诊断。内部 stage 顺序不属于公开结果契约；结果中的 `rerankScore`、`decay`、`supportScore` 等字段取决于实际启用的阶段。
 
 ## 常见错误
 

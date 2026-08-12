@@ -59,12 +59,8 @@ export default class SqliteMetadataRepository {
     return this.files.findFile(file);
   }
 
-  upsertFileRow(
-    file: FileMetadataInput,
-    existing: FileQueryRow | undefined,
-    now: number,
-  ): number {
-    return this.files.upsertFileRow(file, existing, now);
+  upsertFileRow(file: FileMetadataInput, existing: FileQueryRow | undefined): number {
+    return this.files.upsertFileRow(file, existing);
   }
 
   findByPath(filePath: string): FileRow | null {

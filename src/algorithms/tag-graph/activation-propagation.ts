@@ -154,7 +154,8 @@ function propagate(options: ActivationOptions = {}): ActivationPropagationResult
         if (
           !previousParent ||
           injectedCurrent > previousParent.flow ||
-          (injectedCurrent === previousParent.flow && state.hop + 1 < previousParent.hop)
+          (injectedCurrent === previousParent.flow &&
+            state.hop + 1 < previousParent.hop)
         ) {
           strongestParentByNode.set(targetId, {
             parentId: sourceId,

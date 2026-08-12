@@ -29,14 +29,14 @@ function parseMetadata(value: unknown): UnknownRecord {
   }
 }
 
-function epochSeconds(value: number | string | undefined): number | null {
+function epochMilliseconds(value: number | string | undefined): number | null {
   if (value === undefined) return null;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return null;
-    return Math.abs(value) > 1e12 ? value / 1000 : value;
+    return value;
   }
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed / 1000 : null;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {
@@ -178,8 +178,8 @@ class RetrievalFilterResolverStage extends Stage {
         retrievalFilter: { matchedChunks: 0, unavailable: true },
       };
     }
-    const after = epochSeconds(filters?.recordedAfter);
-    const before = epochSeconds(filters?.recordedBefore);
+    const after = epochMilliseconds(filters?.recordedAfter);
+    const before = epochMilliseconds(filters?.recordedBefore);
     const allowed = new Set<number>();
     const allowedDocumentKeys = new Set<string>();
     let chunks;
@@ -193,7 +193,7 @@ class RetrievalFilterResolverStage extends Stage {
         const space = String(file.space || "Root");
         if (allowedSpaces && !allowedSpaces.has(space)) continue;
         if (documentIds && !documentIds.has(String(file.document_id ?? ""))) continue;
-        const recorded = Number(file.updated_at ?? file.mtime);
+        const recorded = Number(file.recorded_at);
         if (after !== null && (!Number.isFinite(recorded) || recorded < after))
           continue;
         if (before !== null && (!Number.isFinite(recorded) || recorded > before))

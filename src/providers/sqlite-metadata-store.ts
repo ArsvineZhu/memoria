@@ -24,6 +24,10 @@ import type {
   TagRow,
 } from "../types/metadata.js";
 import type { MemoryRelationRecord, RelationListOptions } from "../types/relations.js";
+import type {
+  PropagationHistoryObservation,
+  PropagationHistorySnapshot,
+} from "../types/retrieval.js";
 import type { SearchCorpusChunk } from "../types/vector.js";
 import SqliteAuthorityRepository from "./sqlite/authority-repository.js";
 import SqliteHealthRepository from "./sqlite/sqlite-health-repository.js";
@@ -32,6 +36,7 @@ import SqliteRetrievalRepository from "./sqlite/retrieval-repository.js";
 import SqliteRelationRepository from "./sqlite/relation-repository.js";
 import SqliteSchemaManager from "./sqlite/sqlite-schema-manager.js";
 import SqliteStateRepository from "./sqlite/sqlite-state-repository.js";
+import SqlitePropagationHistoryRepository from "./sqlite/sqlite-propagation-history-repository.js";
 
 const requireFromProvider = createRequire(import.meta.url);
 let DatabaseCtor: typeof BetterSqlite3 | null = null;
@@ -76,6 +81,7 @@ class SqliteMetadataStore extends MetadataStore {
   private readonly relations: SqliteRelationRepository;
   private readonly authority: SqliteAuthorityRepository;
   private readonly state: SqliteStateRepository;
+  private readonly propagationHistory: SqlitePropagationHistoryRepository;
   private readonly health: SqliteHealthRepository;
   /**
    * @param {object} config
@@ -109,6 +115,7 @@ class SqliteMetadataStore extends MetadataStore {
     schema.initialize();
     this.state = new SqliteStateRepository(this.db);
     this.state.initializeDefaults();
+    this.propagationHistory = new SqlitePropagationHistoryRepository(this.db);
     this.health = new SqliteHealthRepository(this.db);
     this.metadata = new SqliteMetadataRepository(this.db);
     this.retrieval = new SqliteRetrievalRepository(this.db);
@@ -352,6 +359,18 @@ class SqliteMetadataStore extends MetadataStore {
 
   async setKv(key: string, value: string): Promise<void> {
     this.state.set(key, value);
+  }
+
+  async readPropagationHistory(
+    nodeIds: readonly number[],
+  ): Promise<PropagationHistorySnapshot> {
+    return this.propagationHistory.read(nodeIds);
+  }
+
+  async commitPropagationObservation(
+    observation: PropagationHistoryObservation,
+  ): Promise<PropagationHistorySnapshot> {
+    return this.propagationHistory.commit(observation);
   }
 
   async getGenerationState(): Promise<GenerationState> {

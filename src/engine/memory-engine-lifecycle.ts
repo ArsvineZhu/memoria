@@ -6,6 +6,7 @@ import PipelineContext from "../core/context.js";
 import { asMemoriaError, MemoriaError } from "../errors.js";
 import type { MemoryConfig, MemoryEngineOptions } from "../types/config.js";
 import type { ReconciliationReport } from "../types/vector.js";
+import type { MemoryEngine } from "../engine.js";
 import MemoryVectorRecovery from "./vector-recovery.js";
 import type {
   RuntimeEmbeddingProvider,
@@ -24,7 +25,7 @@ interface LifecycleContext {
 
 export interface MemoryEngineLifecycleOptions {
   options: MemoryEngineOptions;
-  getPublicEngine: () => unknown;
+  getPublicEngine: () => MemoryEngine;
   config: MemoryConfig;
   activeOperations: ActiveOperationRegistry;
   ownedResources: OwnedResourceSet;
@@ -45,7 +46,6 @@ export interface MemoryEngineLifecycleOptions {
     state: "created" | "initializing" | "ready" | "closing" | "closed",
   ) => void;
   getState: () => "created" | "initializing" | "ready" | "closing" | "closed";
-  setClosed: (closed: boolean) => void;
   setVectorState: (complete: boolean, failed: boolean) => void;
   isVectorStateComplete: () => boolean;
   isVectorMutationFailed: () => boolean;
@@ -83,7 +83,6 @@ export default class MemoryEngineLifecycle {
     }
 
     this.options.setState("initializing");
-    this.options.setClosed(false);
     this.options.setVectorState(false, false);
     const initialization = (async () => {
       await this.createProviders();
@@ -108,9 +107,7 @@ export default class MemoryEngineLifecycle {
       this.options.setLastReconciliation(await this.recoverIndexes());
       if (typeof this.options.options.onReady === "function") {
         await this.context.run({ phase: "onReady" }, () =>
-          this.options.options.onReady!(
-            this.options.getPublicEngine() as MemoryEngineOptions,
-          ),
+          this.options.options.onReady!(this.options.getPublicEngine()),
         );
       }
       this.options.setState("ready");
@@ -133,7 +130,6 @@ export default class MemoryEngineLifecycle {
       }
       this.options.setContext(undefined);
       this.options.setState("created");
-      this.options.setClosed(false);
       throw asMemoriaError(
         error,
         "configuration",
@@ -157,7 +153,6 @@ export default class MemoryEngineLifecycle {
       if (this.options.getState() === "created") {
         await this.options.ownedResources.dispose();
         this.options.setState("closed");
-        this.options.setClosed(true);
         return;
       }
 
@@ -188,13 +183,11 @@ export default class MemoryEngineLifecycle {
       }
       if (firstError) throw firstError;
       this.options.setState("closed");
-      this.options.setClosed(true);
     })();
     this.closePromise = closing;
     try {
       await closing;
     } catch (error) {
-      this.options.setClosed(false);
       throw asMemoriaError(error, "lifecycle", "MemoryEngine close failed.", {
         retryable: true,
       });

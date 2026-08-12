@@ -1,6 +1,4 @@
-import type {
-  ChunkCandidate,
-} from "../../types/documents.js";
+import type { ChunkCandidate } from "../../types/documents.js";
 import type { MemoryConfigOverrides } from "../../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type {
@@ -12,6 +10,7 @@ import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 import { propagate } from "../../algorithms/tag-graph/activation-propagation.js";
 import type { ActivationSeedInput } from "../../algorithms/tag-graph/activation-propagation.js";
+import { mergeTagRetrievalObservation } from "./tag-retrieval-observation.js";
 
 /**
  * ActivationPropagationStage — activation propagation over the tag association graph.
@@ -106,19 +105,24 @@ class ActivationPropagationStage extends Stage {
         );
       });
 
+    const tagGraphPropagation: TagGraphPropagationData = {
+      schema: "tag-graph-activation-propagation-v1",
+      algorithmVersion: "tag-graph-activation-propagation",
+      activations: observed.activations,
+      ranked,
+      iterations: observed.iterations,
+      propagationTrace: observed.propagationTrace as PropagationTrace,
+      propagationProvenance: observed.propagationProvenance,
+      diagnostics: observed.diagnostics,
+      seedFallback: fallbackSeeds,
+    };
     return {
       ...info,
-      tagGraphPropagation: {
-        schema: "tag-graph-activation-propagation-v1",
-        algorithmVersion: "tag-graph-activation-propagation",
-        activations: observed.activations,
-        ranked,
-        iterations: observed.iterations,
-        propagationTrace: observed.propagationTrace as PropagationTrace,
-        propagationProvenance: observed.propagationProvenance,
-        diagnostics: observed.diagnostics,
-        seedFallback: fallbackSeeds,
-      },
+      tagGraphPropagation,
+      tagRetrievalObservation: mergeTagRetrievalObservation(info, {
+        source: "typescript",
+        propagation: tagGraphPropagation,
+      }),
     };
   }
 

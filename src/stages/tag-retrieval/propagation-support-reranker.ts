@@ -39,7 +39,7 @@ class PropagationSupportRerankerStage extends Stage {
 
     if (
       config.nativeTagRetrievalEnabled === true &&
-      info.tagRetrievalSkipped === false
+      info.tagRetrievalObservation?.source === "native"
     ) {
       const native = await rerankNative(info, ctx, alpha, minSupportSamples);
       if (native.output) {

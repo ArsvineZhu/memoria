@@ -48,19 +48,19 @@ export default class PropagationStructureNativeAdapter {
       : [];
     if (candidates.length === 0) return this.failure("invalid_result");
 
-    const tagRetrieval = readRecord(info.tagRetrieval);
-    const observation = readRecord(tagRetrieval.observation);
+    const retrievalObservation = info.tagRetrievalObservation;
+    const observation = retrievalObservation?.nativeObservation || {};
     const originalVector = this.vectorArray(info.nativeQueryVector ?? info.queryVector);
     const enhancedVector = this.vectorArray(info.queryVector);
-    const localVector = this.vectorArray(tagRetrieval.localVector);
-    const transferVector = this.vectorArray(tagRetrieval.transferVector);
+    const localVector = this.vectorArray(retrievalObservation?.localVector);
+    const extendedVector = this.vectorArray(retrievalObservation?.extendedVector);
     const dimension = Math.max(0, Math.floor(Number(ctx.config.dimension) || 0));
     if (
       dimension <= 0 ||
       originalVector.length !== dimension ||
       enhancedVector.length !== dimension ||
       localVector.length !== dimension ||
-      transferVector.length !== dimension
+      extendedVector.length !== dimension
     ) {
       return this.failure("invalid_result");
     }
@@ -79,10 +79,7 @@ export default class PropagationStructureNativeAdapter {
         },
       ];
     });
-    const tagRetrievalHandle =
-      typeof tagRetrieval.observationHandle === "string"
-        ? tagRetrieval.observationHandle
-        : undefined;
+    const tagRetrievalHandle = retrievalObservation?.observationHandle;
     const options =
       info.options && typeof info.options === "object" ? info.options : {};
     const topK = Math.max(
@@ -106,7 +103,7 @@ export default class PropagationStructureNativeAdapter {
       },
       denoisedVector: enhancedVector,
       localVector,
-      transferVector,
+      extendedVector,
       candidates: candidates
         .map((candidate) => ({
           id: Number(candidate.chunkId),
@@ -116,10 +113,12 @@ export default class PropagationStructureNativeAdapter {
       queryState: {
         queryId: typeof info.queryId === "string" ? info.queryId : undefined,
         seedDistribution: readDistribution(observation.seedDistribution),
-        localDistribution: readDistribution(tagRetrieval.localDistribution),
-        extendedDistribution: readDistribution(tagRetrieval.extendedDistribution),
-        localSupportIds: this.numberArray(tagRetrieval.localSupportIds),
-        extendedSupportIds: this.numberArray(tagRetrieval.extendedSupportIds),
+        localDistribution: readDistribution(retrievalObservation?.localDistribution),
+        extendedDistribution: readDistribution(
+          retrievalObservation?.extendedDistribution,
+        ),
+        localSupportIds: this.numberArray(retrievalObservation?.localSupportIds),
+        extendedSupportIds: this.numberArray(retrievalObservation?.extendedSupportIds),
         propagationNodes: nodes,
         propagationEdges: edges,
         distributionProvenance: provenance,

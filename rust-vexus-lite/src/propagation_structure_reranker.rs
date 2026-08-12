@@ -93,7 +93,7 @@ struct NativeInput {
     #[serde(default)]
     denoised_vector: Vec<f32>,
     local_vector: Vec<f32>,
-    transfer_vector: Vec<f32>,
+    extended_vector: Vec<f32>,
     #[serde(default)]
     candidates: Vec<CandidateInput>,
     query_state: QueryStateInput,
@@ -351,7 +351,7 @@ pub(crate) struct TagRetrievalObservation {
     pub(crate) original_query_vector: Arc<Vec<f32>>,
     pub(crate) enhanced_query_vector: Arc<Vec<f32>>,
     pub(crate) local_vector: Arc<Vec<f32>>,
-    pub(crate) transfer_vector: Arc<Vec<f32>>,
+    pub(crate) extended_vector: Arc<Vec<f32>>,
     pub(crate) local_distribution: Arc<Vec<(i64, f64)>>,
     pub(crate) extended_distribution: Arc<Vec<(i64, f64)>>,
     pub(crate) local_support_ids: Arc<Vec<i64>>,
@@ -457,7 +457,7 @@ impl TagRetrievalRuntime {
         original_query_vector: Vec<f32>,
         enhanced_query_vector: Vec<f32>,
         local_vector: Vec<f32>,
-        transfer_vector: Vec<f32>,
+        extended_vector: Vec<f32>,
         local_distribution: Vec<(i64, f64)>,
         extended_distribution: Vec<(i64, f64)>,
         local_support_ids: Vec<i64>,
@@ -482,7 +482,7 @@ impl TagRetrievalRuntime {
             original_query_vector: Arc::new(original_query_vector),
             enhanced_query_vector: Arc::new(enhanced_query_vector),
             local_vector: Arc::new(local_vector),
-            transfer_vector: Arc::new(transfer_vector),
+            extended_vector: Arc::new(extended_vector),
             local_distribution: Arc::new(local_distribution),
             extended_distribution: Arc::new(extended_distribution),
             local_support_ids: Arc::new(local_support_ids),
@@ -2378,7 +2378,7 @@ fn run_native(
         input.query.vector = cached.original_query_vector.as_ref().clone();
         input.denoised_vector = cached.enhanced_query_vector.as_ref().clone();
         input.local_vector = cached.local_vector.as_ref().clone();
-        input.transfer_vector = cached.transfer_vector.as_ref().clone();
+        input.extended_vector = cached.extended_vector.as_ref().clone();
         input.query_state.seed_distribution = cached.observation.seed_distribution.clone();
         input.query_state.local_distribution = cached.local_distribution.as_ref().clone();
         input.query_state.extended_distribution = cached.extended_distribution.as_ref().clone();
@@ -2425,7 +2425,7 @@ fn run_native(
     if input.query.vector.len() != dimension
         || input.denoised_vector.len() != dimension
         || input.local_vector.len() != dimension
-        || input.transfer_vector.len() != dimension
+        || input.extended_vector.len() != dimension
     {
         return Err(format!(
             "PropagationStructure native vector dimension mismatch: expected {}",
@@ -2473,7 +2473,7 @@ fn run_native(
             candidate_record.local_score =
                 cosine(&input.local_vector, &candidate_record.chunk_vector);
             candidate_record.transfer_score =
-                cosine(&input.transfer_vector, &candidate_record.chunk_vector);
+                cosine(&input.extended_vector, &candidate_record.chunk_vector);
         });
     let projected_count = candidate_records.len();
     let candidate_records = select_superset(candidate_records, &input.config);

@@ -57,9 +57,7 @@ export async function run(): Promise<void> {
         postprocess.timeDecay().dedupe().truncate().limit(5),
       )
       .run();
-    console.log(
-      `stage order=${envelope.retrievalTrace?.stageOrder?.join(" -> ") ?? "not returned"}`,
-    );
+    console.log(`strategy=${envelope.retrieval?.strategy ?? "not returned"}`);
     printResults(envelope.results);
   } finally {
     await filesystem.close();

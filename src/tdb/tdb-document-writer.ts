@@ -44,9 +44,9 @@ export default class TdbDocumentWriter {
     settings: TdbSearchOptions = {},
   ): Promise<TdbIngestEnvelope> {
     const content = String(text ?? "");
-    const now = Number.isFinite(Number(settings.now))
+    const indexedAt = Number.isFinite(Number(settings.now))
       ? Math.floor(Number(settings.now))
-      : Math.floor(Date.now() / 1000);
+      : Date.now();
     const relPath = String(settings.path || "");
     const library = safeLibraryName(settings.library || libraryFromRelPath(relPath));
     const checksum = this.checksum(content);
@@ -54,18 +54,25 @@ export default class TdbDocumentWriter {
       settings.size != null
         ? Number(settings.size)
         : Buffer.byteLength(content, "utf-8");
-    const mtime = settings.mtime != null ? Number(settings.mtime) : now * 1000;
+    const sourceUpdatedAt =
+      settings.sourceUpdatedAt != null ? Number(settings.sourceUpdatedAt) : indexedAt;
+    const recordedAt =
+      settings.recordedAt != null ? Number(settings.recordedAt) : sourceUpdatedAt;
     const store = this.options.metadataStore();
     const existing = await store.getFile(library, relPath);
     if (existing && existing.checksum === checksum && Number(existing.size) === size) {
-      if (Number(existing.mtime) !== mtime) {
+      if (
+        Number(existing.source_updated_at) !== sourceUpdatedAt ||
+        Number(existing.recorded_at) !== recordedAt
+      ) {
         await store.upsertFile({
           library,
           path: relPath,
           checksum,
-          mtime,
+          sourceUpdatedAt,
           size,
-          updatedAt: now,
+          recordedAt,
+          indexedAt,
         });
       }
       return { skipped: true, library, path: relPath, fileId: existing.id, checksum };
@@ -107,7 +114,15 @@ export default class TdbDocumentWriter {
     let replacement: TdbDocumentStateReplacementResult;
     try {
       replacement = await store.replaceDocumentState({
-        file: { library, path: relPath, checksum, mtime, size, updatedAt: now },
+        file: {
+          library,
+          path: relPath,
+          checksum,
+          sourceUpdatedAt,
+          recordedAt,
+          indexedAt,
+          size,
+        },
         chunks: chunks.map((chunk, index) => ({
           text: chunk,
           checksum: this.checksum(chunk),
@@ -162,7 +177,8 @@ export default class TdbDocumentWriter {
         path: String(settings.path || resolved.relPath),
         library: safeLibraryName(settings.library || resolved.library),
         title: settings.title || path.basename(absPath),
-        mtime: settings.mtime != null ? settings.mtime : stats.mtimeMs,
+        sourceUpdatedAt:
+          settings.sourceUpdatedAt != null ? settings.sourceUpdatedAt : stats.mtimeMs,
         size: settings.size != null ? settings.size : stats.size,
       });
     } catch (error) {

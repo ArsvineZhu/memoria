@@ -20,58 +20,65 @@ export class TdbDocumentRepository {
     library: string;
     path: string;
     checksum: string;
-    mtime: number;
+    sourceUpdatedAt: number;
     size: number;
     docNodeId?: number | null;
-    updatedAt?: number;
+    recordedAt?: number;
+    indexedAt?: number;
   }): Promise<number | null> {
-    const updatedAt = Number.isFinite(Number(meta.updatedAt))
-      ? Math.floor(Number(meta.updatedAt))
-      : Math.floor(Date.now() / 1000);
+    const indexedAt = Number.isFinite(Number(meta.indexedAt))
+      ? Math.floor(Number(meta.indexedAt))
+      : Date.now();
+    const recordedAt = Number.isFinite(Number(meta.recordedAt))
+      ? Math.floor(Number(meta.recordedAt))
+      : indexedAt;
     const transaction = this.db.transaction(() => {
       const existing = this.db
         .prepare(
-          "SELECT id, checksum, mtime, size, doc_node_id, updated_at FROM files WHERE library = ? AND path = ?",
+          "SELECT id, checksum, source_updated_at, size, doc_node_id, recorded_at, indexed_at FROM files WHERE library = ? AND path = ?",
         )
         .get(meta.library, meta.path) as
         | {
             id: number;
             checksum: string;
-            mtime: number;
+            source_updated_at: number;
             size: number;
             doc_node_id?: number | null;
-            updated_at?: number | null;
+            recorded_at: number;
+            indexed_at: number;
           }
         | undefined;
       const changed =
         !existing ||
         existing.checksum !== meta.checksum ||
-        Number(existing.mtime) !== Number(meta.mtime) ||
+        Number(existing.source_updated_at) !== Number(meta.sourceUpdatedAt) ||
         Number(existing.size) !== Number(meta.size) ||
         (existing.doc_node_id ?? null) !== (meta.docNodeId ?? null) ||
-        Number(existing.updated_at) !== updatedAt;
+        Number(existing.recorded_at) !== recordedAt;
 
       this.db
         .prepare(
           `
-          INSERT INTO files (library, path, checksum, mtime, size, doc_node_id, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO files (library, path, checksum, source_updated_at, size, doc_node_id, recorded_at, indexed_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(library, path) DO UPDATE SET
               checksum = excluded.checksum,
-              mtime = excluded.mtime,
+              source_updated_at = excluded.source_updated_at,
               size = excluded.size,
               doc_node_id = excluded.doc_node_id,
-              updated_at = excluded.updated_at
+              recorded_at = excluded.recorded_at,
+              indexed_at = excluded.indexed_at
         `,
         )
         .run(
           meta.library,
           meta.path,
           meta.checksum,
-          meta.mtime,
+          meta.sourceUpdatedAt,
           meta.size,
           meta.docNodeId ?? null,
-          updatedAt,
+          recordedAt,
+          indexedAt,
         );
       const row = this.db
         .prepare("SELECT id FROM files WHERE library = ? AND path = ?")
@@ -89,6 +96,12 @@ export class TdbDocumentRepository {
     replacement: TdbDocumentStateReplacement,
   ): Promise<TdbDocumentStateReplacementResult> {
     const { file, chunks } = replacement;
+    const recordedAt = Number.isFinite(Number(file.recordedAt))
+      ? Number(file.recordedAt)
+      : Number(file.sourceUpdatedAt);
+    const indexedAt = Number.isFinite(Number(file.indexedAt))
+      ? Number(file.indexedAt)
+      : Date.now();
     const transaction = this.db.transaction(() => {
       const oldRows = this.db
         .prepare(
@@ -99,22 +112,24 @@ export class TdbDocumentRepository {
       this.db
         .prepare(
           `
-          INSERT INTO files (library, path, checksum, mtime, size, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO files (library, path, checksum, source_updated_at, size, recorded_at, indexed_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(library, path) DO UPDATE SET
             checksum = excluded.checksum,
-            mtime = excluded.mtime,
+            source_updated_at = excluded.source_updated_at,
             size = excluded.size,
-            updated_at = excluded.updated_at
+            recorded_at = excluded.recorded_at,
+            indexed_at = excluded.indexed_at
         `,
         )
         .run(
           file.library,
           file.path,
           file.checksum,
-          file.mtime,
+          file.sourceUpdatedAt,
           file.size,
-          file.updatedAt,
+          recordedAt,
+          indexedAt,
         );
 
       const fileRow = this.db

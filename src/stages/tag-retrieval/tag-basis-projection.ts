@@ -1,6 +1,4 @@
-import type {
-  ChunkCandidate,
-} from "../../types/documents.js";
+import type { ChunkCandidate } from "../../types/documents.js";
 import type {
   PipelineContextLike,
   PipelineData,
@@ -19,6 +17,7 @@ import Stage from "../../core/stage.js";
 import { TagBasisProjection } from "../../algorithms/tag-basis-projection.js";
 import { asMemoriaError } from "../../errors.js";
 import { decodeVectorBlob } from "../../utils/vector-codec.js";
+import { mergeTagRetrievalObservation } from "./tag-retrieval-observation.js";
 
 type VectorRow = { vector?: Buffer | Float32Array | null };
 
@@ -69,17 +68,32 @@ class TagBasisProjectionStage extends Stage {
       return { ...info, tagBasisProjectionSkipped: true };
     }
 
+    const nativeObservation = info.tagRetrievalObservation;
+    if (nativeObservation?.source === "native") {
+      return {
+        ...info,
+        ...(nativeObservation.basis
+          ? { tagBasisProjection: nativeObservation.basis }
+          : {}),
+      };
+    }
+
     // 1. Resolve the TagBasisProjection instance or build it from stored tags.
     const tagBasisProjection =
       ctx.tagBasisProjection || (await this._buildTagBasisProjection(config, ctx));
     if (!tagBasisProjection || !tagBasisProjection.initialized) {
+      const emptyProjection: TagBasisProjectionEnvelope = {
+        ready: false,
+        queryAnalysis: this._emptyQueryAnalysis(),
+        candidateAnalyses: [],
+      };
       return {
         ...info,
-        tagBasisProjection: {
-          ready: false,
-          queryAnalysis: this._emptyQueryAnalysis(),
-          candidateAnalyses: [],
-        },
+        tagBasisProjection: emptyProjection,
+        tagRetrievalObservation: mergeTagRetrievalObservation(info, {
+          source: "typescript",
+          basis: emptyProjection,
+        }),
       };
     }
 
@@ -97,13 +111,18 @@ class TagBasisProjectionStage extends Stage {
       );
     }
 
+    const projectionResult = {
+      ready: true,
+      queryAnalysis,
+      candidateAnalyses,
+    } satisfies TagBasisProjectionEnvelope;
     return {
       ...info,
-      tagBasisProjection: {
-        ready: true,
-        queryAnalysis,
-        candidateAnalyses,
-      },
+      tagBasisProjection: projectionResult,
+      tagRetrievalObservation: mergeTagRetrievalObservation(info, {
+        source: "typescript",
+        basis: projectionResult,
+      }),
     };
   }
 

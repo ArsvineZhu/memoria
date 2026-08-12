@@ -111,11 +111,12 @@ await engine.search("这两条记录的来源关系", {
 | `structural.relationExpansion` / `expansion.related` | `relationExpansionEnabled`          |
 | `propagationHistory.enabled`                         | `propagationHistoryEnabled`         |
 
-阶段可以因为空候选、空标签图、scope 或依赖不可用而安全跳过；这会写入对应的
-`*Skipped`/failure 字段。阶段加入 pipeline 不等于该次查询产生了算法信号。
+阶段可以因为空候选、空标签图、scope 或依赖不可用而安全跳过；这些字段只保留在内部
+pipeline。阶段加入 pipeline 不等于该次查询产生了算法信号，公开结果通过
+`retrieval.evidence` 和 `retrieval.fallbacks` 表达。
 
 ## Trace invariant
 
-结果的 `retrievalTrace` 包含 `plan`、`decision`、`strategySource`、`stageOrder` 和
-`fallbacks`。其中 `stageOrder` 只能出现当前 source tree 中的 canonical stage name，
-并且 `propagationHistory` 独立于 `associative` 和 `structural` sections。
+结果的 `retrieval` 包含 `strategy`、`strategySource`、`plan`、`evidence` 和稳定的
+`fallbacks` reason；原始 stage 名称不进入 SearchEnvelope，并且 `propagationHistory`
+独立于 `associative` 和 `structural` sections。

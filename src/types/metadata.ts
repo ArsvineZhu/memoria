@@ -1,5 +1,9 @@
 import type { UnknownRecord } from "./common.js";
 import type { MemoryRelationRecord, RelationStoreContract } from "./relations.js";
+import type {
+  PropagationHistoryObservation,
+  PropagationHistorySnapshot,
+} from "./retrieval.js";
 import type { SearchCorpusChunk } from "./vector.js";
 
 export interface FileRow {
@@ -7,9 +11,10 @@ export interface FileRow {
   path: string;
   space: string;
   checksum: string;
-  mtime: number;
+  source_updated_at: number;
   size: number;
-  updated_at?: number | null;
+  recorded_at?: number | null;
+  indexed_at?: number | null;
   document_id?: string | null;
   revision?: string | null;
   source_json?: string | null;
@@ -59,7 +64,9 @@ export interface FileMetadataInput {
   path: string;
   space: string;
   checksum: string;
-  mtime: number;
+  sourceUpdatedAt: number;
+  recordedAt?: number;
+  indexedAt?: number;
   size: number;
   documentId?: string;
   revision?: string;
@@ -83,7 +90,9 @@ export interface DocumentStateReplacement {
     path: string;
     space: string;
     checksum: string;
-    mtime: number;
+    sourceUpdatedAt: number;
+    recordedAt?: number;
+    indexedAt?: number;
     size: number;
     documentId?: string;
     revision?: string;
@@ -205,6 +214,12 @@ export interface MetadataStoreContract extends RelationStoreContract {
   healthCheck(): Promise<HealthStatus>;
   setKv?(key: string, value: string): Promise<void>;
   getKv?(key: string): Promise<string | UnknownRecord | null>;
+  readPropagationHistory?(
+    nodeIds: readonly number[],
+  ): Promise<PropagationHistorySnapshot>;
+  commitPropagationObservation?(
+    observation: PropagationHistoryObservation,
+  ): Promise<PropagationHistorySnapshot>;
   getTagsByIds?(ids: readonly number[]): Promise<TagRow[]>;
 }
 

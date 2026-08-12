@@ -1,5 +1,7 @@
 "use strict";
 
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -205,7 +207,8 @@ test("MemoryEngine fixes and exposes the normalized default retrieval plan", asy
   assert.equal(engine.defaultRetrievalPlan.strategy, "associative");
   assert.equal(engine.defaultRetrievalPlan.associative?.tagGraphPropagation, true);
   assert.equal(
-    engine.searchPipeline.defaultRetrievalPlan.associative?.tagGraphPropagation,
+    getMemoryEngineTestInternals(engine).searchPipeline.defaultRetrievalPlan.associative
+      ?.tagGraphPropagation,
     true,
   );
   assert.equal(Object.isFrozen(engine.defaultRetrievalPlan), true);
@@ -215,8 +218,15 @@ test("MemoryEngine fixes and exposes the normalized default retrieval plan", asy
   }, TypeError);
 
   await engine.initialize();
-  assert.equal(engine.searchPipeline.defaultRetrievalPlan.strategy, "associative");
-  assert.equal(engine.searchPipeline.defaultRetrievalPlan.postprocess?.timeDecay, true);
+  assert.equal(
+    getMemoryEngineTestInternals(engine).searchPipeline.defaultRetrievalPlan.strategy,
+    "associative",
+  );
+  assert.equal(
+    getMemoryEngineTestInternals(engine).searchPipeline.defaultRetrievalPlan.postprocess
+      ?.timeDecay,
+    true,
+  );
   await engine.close();
 });
 
@@ -310,7 +320,7 @@ test("top-level dbPath overrides the managed default database path", () => {
     config: { dimension: DIM },
     dbPath,
   });
-  assert.strictEqual(engine.config.dbPath, dbPath);
+  assert.strictEqual(getMemoryEngineTestInternals(engine).config.dbPath, dbPath);
 });
 
 // ── Engine factory & wiring ──────────────────────────────────────────
@@ -321,23 +331,28 @@ test("createMemoryEngine defers default wiring until initialize", async () => {
   });
   assert.ok(engine instanceof MemoryEngine);
   assert.strictEqual(engine.name, "memoryEngine");
-  assert.strictEqual(
-    (engine as unknown as { ctx?: unknown }).ctx,
-    undefined,
-    "context is deferred",
-  );
-  assert.ok(engine.ingestPipeline);
-  assert.ok(engine.deletePipeline);
-  assert.ok(engine.searchPipeline);
+  assert.equal("ctx" in engine, false, "context is deferred");
+  assert.ok(getMemoryEngineTestInternals(engine).ingestPipeline);
+  assert.ok(getMemoryEngineTestInternals(engine).deletePipeline);
+  assert.ok(getMemoryEngineTestInternals(engine).searchPipeline);
   assert.strictEqual(engine.initialized, false);
 
   await engine.initialize();
-  assert.ok(engine.ctx, "context built after initialize");
-  assert.ok(engine.ctx.metadataStore);
-  assert.ok(engine.ctx.vectorStore);
-  assert.ok(engine.ctx.embeddingProvider);
-  assert.strictEqual(engine.ctx.config.dimension, DIM);
-  assert.strictEqual(engine.ctx.vectorStore.dimension, DIM);
+  assert.ok(
+    getMemoryEngineTestInternals(engine).context,
+    "context built after initialize",
+  );
+  assert.ok(getMemoryEngineTestInternals(engine).context.metadataStore);
+  assert.ok(getMemoryEngineTestInternals(engine).context.vectorStore);
+  assert.ok(getMemoryEngineTestInternals(engine).context.embeddingProvider);
+  assert.strictEqual(
+    getMemoryEngineTestInternals(engine).context.config.dimension,
+    DIM,
+  );
+  assert.strictEqual(
+    getMemoryEngineTestInternals(engine).context.vectorStore.dimension,
+    DIM,
+  );
   await engine.close();
 });
 
@@ -346,11 +361,14 @@ test("initialize() is idempotent with canonical config supplied at construction"
 
   await engine.initialize();
   assert.strictEqual(engine.initialized, true);
-  assert.strictEqual(engine.config.semanticThreshold, 0.83);
+  assert.strictEqual(
+    getMemoryEngineTestInternals(engine).config.semanticThreshold,
+    0.83,
+  );
 
-  const ctxRef = engine.ctx;
+  const ctxRef = getMemoryEngineTestInternals(engine).context;
   const second = engine.initialize();
-  assert.strictEqual(engine.ctx, ctxRef);
+  assert.strictEqual(getMemoryEngineTestInternals(engine).context, ctxRef);
   assert.strictEqual(await second, undefined);
   await engine.close();
 });
@@ -400,7 +418,7 @@ test("flush() is an alias of flushBatch()", async () => {
   assert.ok(Array.isArray(viaFlush));
   assert.ok(at(viaFlush, 0, "flush results").fileId);
 
-  // Same file again is skipped (checksum/mtime match) but still resolves.
+  // Same file again is skipped (checksum/sourceUpdatedAt match) but still resolves.
   const again = await engine.flush([{ path: abs }]);
   assert.ok(Array.isArray(again));
   assert.strictEqual(at(again, 0, "flush results").skipped, true);
@@ -450,7 +468,10 @@ test("handleDelete({ path }) removes file rows and vectors", async () => {
   assert.strictEqual(stats.files, 0, "file row removed");
   assert.strictEqual(stats.chunks, 0, "chunk rows removed");
 
-  const indexStats = await engine.ctx.vectorStore!.getIndexStats!("spaceA");
+  const indexStats =
+    await getMemoryEngineTestInternals(engine).context.vectorStore!.getIndexStats!(
+      "spaceA",
+    );
   assert.strictEqual(Number(indexStats.size), 0, "vectors removed from space index");
 
   // Idempotent: unknown path resolves to deleted:false
@@ -481,10 +502,16 @@ test("custom dimension propagates to the vector store index", async () => {
   await engine.initialize();
   await engine.flushBatch([{ path: abs }]);
 
-  const stats = await engine.ctx.vectorStore!.getIndexStats!("spaceA");
+  const stats =
+    await getMemoryEngineTestInternals(engine).context.vectorStore!.getIndexStats!(
+      "spaceA",
+    );
   assert.strictEqual(Number(stats.dimension), DIM);
 
-  const tagStats = await engine.ctx.vectorStore!.getIndexStats!("tag_vectors");
+  const tagStats =
+    await getMemoryEngineTestInternals(engine).context.vectorStore!.getIndexStats!(
+      "tag_vectors",
+    );
   assert.strictEqual(Number(tagStats.dimension), DIM);
   engine.close();
 });
@@ -504,10 +531,15 @@ test("injected fake embedding provider is used instead of the network provider",
   });
 
   await engine.initialize();
-  assert.strictEqual(engine.ctx.embeddingProvider, fake);
+  assert.strictEqual(
+    getMemoryEngineTestInternals(engine).context.embeddingProvider,
+    fake,
+  );
   assert.ok(
-    !(engine.ctx.embeddingProvider as EmbeddingProviderContract & { apiUrl?: string })
-      .apiUrl,
+    !(
+      getMemoryEngineTestInternals(engine).context
+        .embeddingProvider as EmbeddingProviderContract & { apiUrl?: string }
+    ).apiUrl,
     "network provider not constructed",
   );
   const results = await engine.flushBatch([{ path: abs }]);
@@ -530,17 +562,31 @@ test("custom metadataStore / vectorStore providers are injected verbatim", async
     vectorStore,
   });
   await engine.initialize();
-  assert.strictEqual(engine.ctx.metadataStore, metadataStore);
-  assert.strictEqual(engine.ctx.vectorStore, vectorStore);
+  assert.strictEqual(
+    getMemoryEngineTestInternals(engine).context.metadataStore,
+    metadataStore,
+  );
+  assert.strictEqual(
+    getMemoryEngineTestInternals(engine).context.vectorStore,
+    vectorStore,
+  );
   await engine.close();
 });
 
 test("close() flushes pending saves and closes the metadata store idempotently", async () => {
   const { engine } = makeEngine();
   await engine.initialize();
-  assert.strictEqual((engine.ctx.metadataStore as SqliteMetadataStore)._closed, false);
+  assert.strictEqual(
+    (getMemoryEngineTestInternals(engine).context.metadataStore as SqliteMetadataStore)
+      ._closed,
+    false,
+  );
 
   await engine.close();
-  assert.strictEqual((engine.ctx.metadataStore as SqliteMetadataStore)._closed, true);
+  assert.strictEqual(
+    (getMemoryEngineTestInternals(engine).context.metadataStore as SqliteMetadataStore)
+      ._closed,
+    true,
+  );
   await engine.close();
 });

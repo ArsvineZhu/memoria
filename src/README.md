@@ -17,7 +17,7 @@
 - `engine.ts` 负责引擎生命周期、逻辑文档摄入、搜索、删除和恢复协调。
 - `pipelines/` 与 `stages/` 负责按顺序组合摄入、检索、后处理、输出和 TDB 阶段。
 - `interfaces/` 定义可替换 Provider/存储的最小行为；`types/` 按 embedding、vector、relations、metadata
-  分域维护公开 contract，`types/contracts.ts` 仅保留兼容 barrel；`types.ts` 汇总公开类型。
+  分域维护公开 contract；`types.ts` 是公开类型聚合入口。
 - `algorithms/` 保持纯计算算法；`tdb/` 负责冷知识库；
   `utils/` 提供文本、MDX、向量和数值工具。
 - `native/` 与 `providers/vexus-vector-store.ts` 连接独立的

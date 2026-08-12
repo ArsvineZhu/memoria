@@ -29,6 +29,17 @@ cargo build --release
 corepack pnpm exec napi build --platform --release
 ```
 
+当前 CI 的 canonical target 是 Windows x64、Linux x64/arm64 的 glibc 与 musl，及
+macOS arm64，共六个平台。跨平台发布由 `.github/workflows/ci.yml` 的
+`native-build`、`native-smoke-matrix` 和 `native-artifacts` jobs 完成；汇总 job 使用
+`napi artifacts` 收集平台产物，并同时检查 generic artifact、loader 和 declaration。
+
+本地只构建当前主机的通用产物时使用：
+
+```powershell
+corepack pnpm exec napi build --release
+```
+
 生成或修改原生导出后，在仓库根目录继续运行：
 
 ```powershell

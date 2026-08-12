@@ -170,7 +170,7 @@ test("TagBasisProjectionStage: builds basis on the fly from metadataStore tags",
     path: "tagBasisProjection-active-tags.md",
     space: "tagBasisProjection",
     checksum: "tagBasisProjection-active-tags",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   const activeTags = await metaStore.getAllTags();
@@ -383,14 +383,14 @@ async function seedExpansionStore() {
     path: "a.md",
     space: "d",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const f2 = (await metaStore.upsertFile({
     path: "b.md",
     space: "d",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [c1] = await metaStore.insertChunks(f1, [
@@ -459,14 +459,14 @@ test("TagExpanderStage filters expanded chunks to the resolved scope", async () 
     path: "in.md",
     space: "in-scope",
     checksum: "in",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const outsideFile = (await metadataStore.upsertFile({
     path: "out.md",
     space: "outside",
     checksum: "out",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [inChunk] = await metadataStore.insertChunks(inScopeFile, [
@@ -623,14 +623,14 @@ async function seedReshapeStore() {
     path: "a.md",
     space: "d",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const f2 = (await metaStore.upsertFile({
     path: "b.md",
     space: "d",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [c1] = await metaStore.insertChunks(f1, [
@@ -728,7 +728,7 @@ async function seedPropagationSupportStore() {
     path: "geo.md",
     space: "geo",
     checksum: "geo",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [c1, c2, c3] = await store.insertChunks(file, [

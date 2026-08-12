@@ -1,4 +1,5 @@
 import type { RetrievalPlan, RetrievalPlanInput } from "../retrieval/retrieval-plan.js";
+import type { MemoryEngine } from "../engine.js";
 import type {
   ExternalReranker,
   QueryRephraser,
@@ -166,7 +167,7 @@ export interface MemoryEngineOptions {
   /** Optional model reranker injected into the external rerank stage. */
   reranker?: ExternalReranker;
   searchOptions?: SearchOptions;
-  onReady?: (engine: MemoryEngineOptions) => void | Promise<void>;
+  onReady?: (engine: MemoryEngine) => void | Promise<void>;
 }
 
 export interface SearchOptions {

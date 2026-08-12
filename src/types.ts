@@ -1,9 +1,4 @@
-/**
- * Compatibility barrel for the public type surface.
- *
- * Domain declarations live below this file so implementation modules can
- * depend on focused contracts without making one type hub own every domain.
- */
+/** Public type aggregation barrel. Domain contracts live in focused modules. */
 export type * from "./types/common.js";
 export type * from "./types/config.js";
 export type * from "./types/documents.js";

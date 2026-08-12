@@ -9,7 +9,10 @@ import Database from "better-sqlite3";
 
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
 import { MemoriaError } from "../../src/errors.js";
-import type { FileMetadataInput } from "../../src/types.js";
+import type {
+  FileMetadataInput,
+  PropagationHistoryObservation,
+} from "../../src/types.js";
 
 type TestStore = Omit<SqliteMetadataStore, "upsertFile"> & {
   upsertFile(fileMeta: FileMetadataInput): Promise<number>;
@@ -53,6 +56,8 @@ test("fresh SQLite databases use the exact canonical schema and version", () => 
     "files",
     "kv_store",
     "memory_relations",
+    "propagation_history_edges",
+    "propagation_history_state",
     "tag_derived_artifacts",
     "tag_graph_artifacts",
     "tag_pair_similarity",
@@ -60,7 +65,7 @@ test("fresh SQLite databases use the exact canonical schema and version", () => 
     "tag_residual_metrics",
     "tags",
   ]);
-  assert.equal(store.db.pragma("user_version", { simple: true }), 1);
+  assert.equal(store.db.pragma("user_version", { simple: true }), 3);
   store.close();
 });
 
@@ -77,9 +82,10 @@ test("canonical SQLite schema exposes exact native artifact columns", () => {
     "path",
     "space",
     "checksum",
-    "mtime",
+    "source_updated_at",
     "size",
-    "updated_at",
+    "recorded_at",
+    "indexed_at",
     "document_id",
     "revision",
     "source_json",
@@ -129,6 +135,17 @@ test("canonical SQLite schema exposes exact native artifact columns", () => {
     "updated_at",
     "published_at",
   ]);
+  assert.deepEqual(columns("propagation_history_state"), [
+    "id",
+    "sequence",
+    "total_mass",
+  ]);
+  assert.deepEqual(columns("propagation_history_edges"), [
+    "source_id",
+    "target_id",
+    "total",
+    "updated_at",
+  ]);
   store.close();
 });
 
@@ -142,10 +159,63 @@ test("canonical SQLite databases reopen without schema changes", async () => {
 
     const reopened = makeStore(dbPath);
     assert.equal(await reopened.getKv("canonical-check"), "ok");
-    assert.equal(reopened.db.pragma("user_version", { simple: true }), 1);
+    assert.equal(reopened.db.pragma("user_version", { simple: true }), 3);
     reopened.close();
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("propagation history commits sequence and edge totals atomically", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-history-"));
+  const dbPath = path.join(root, "history.sqlite");
+  const first = makeStore(dbPath);
+  const second = makeStore(dbPath);
+  try {
+    const [source, target] = await first.upsertTags([
+      { name: "history-source", vector: makeBuf([1, 0, 0, 0]) },
+      { name: "history-target", vector: makeBuf([0, 1, 0, 0]) },
+    ]);
+    const observation: PropagationHistoryObservation = {
+      nodeIds: [source, target],
+      edges: [{ sourceId: source, targetId: target, increment: 0.25 }],
+      propagationTrace: { nodes: [], edges: [], diagnostics: {} },
+    };
+
+    const [firstSnapshot, secondSnapshot] = await Promise.all([
+      first.commitPropagationObservation(observation),
+      second.commitPropagationObservation(observation),
+    ]);
+
+    assert.equal(firstSnapshot.sequence, 1);
+    assert.equal(secondSnapshot.sequence, 2);
+    const final = await first.readPropagationHistory([source, target]);
+    assert.equal(final.sequence, 2);
+    assert.equal(final.totalMass, 0.5);
+    assert.deepEqual(final.edgeTotals, [[`${source}:${target}`, 0.5]]);
+  } finally {
+    first.close();
+    second.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("propagation history commit rolls back on a foreign-key failure", async () => {
+  const store = makeStore();
+  try {
+    await assert.rejects(() =>
+      store.commitPropagationObservation({
+        nodeIds: [999],
+        edges: [{ sourceId: 999, targetId: 1000, increment: 1 }],
+        propagationTrace: { nodes: [], edges: [], diagnostics: {} },
+      }),
+    );
+    const snapshot = await store.readPropagationHistory([999, 1000]);
+    assert.equal(snapshot.sequence, 0);
+    assert.equal(snapshot.totalMass, 0);
+    assert.deepEqual(snapshot.edgeTotals, []);
+  } finally {
+    store.close();
   }
 });
 
@@ -156,7 +226,7 @@ test("historical tags remain in the authority while active-tag and index expecta
       path: "research/sole.mdx",
       space: "research",
       checksum: "sole",
-      mtime: 1,
+      sourceUpdatedAt: 1,
       size: 10,
       documentId: "sole-tag",
     },
@@ -265,6 +335,77 @@ test("unexpected non-empty SQLite schemas fail fast without migration", () => {
   }
 });
 
+function assertCanonicalSchemaRejected(
+  label: string,
+  mutate: (db: Database.Database) => void,
+): void {
+  test(label, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-schema-contract-"));
+    const dbPath = path.join(root, "contract.sqlite");
+    const canonical = makeStore(dbPath);
+    canonical.close();
+    const db = new Database(dbPath);
+    mutate(db);
+    db.pragma("user_version = 3");
+    db.close();
+    try {
+      assert.throws(
+        () => makeStore(dbPath),
+        (error: unknown) =>
+          error instanceof MemoriaError &&
+          error.code === "persistence" &&
+          /Recreate the database/.test(error.message),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+assertCanonicalSchemaRejected(
+  "schema rejects a deleted canonical ordinary index",
+  (db) => {
+    db.exec("DROP INDEX idx_files_document_id");
+  },
+);
+
+assertCanonicalSchemaRejected("schema rejects a changed foreign key", (db) => {
+  db.pragma("foreign_keys = OFF");
+  db.exec(`
+    ALTER TABLE chunks RENAME TO chunks_previous;
+    CREATE TABLE chunks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_id INTEGER NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      vector BLOB
+    );
+    INSERT INTO chunks SELECT * FROM chunks_previous;
+    DROP TABLE chunks_previous;
+    CREATE INDEX idx_chunks_file ON chunks(file_id);
+  `);
+});
+
+assertCanonicalSchemaRejected("schema rejects a removed CHECK constraint", (db) => {
+  db.exec(`
+    ALTER TABLE propagation_history_state RENAME TO propagation_history_state_previous;
+    CREATE TABLE propagation_history_state (
+      id INTEGER PRIMARY KEY,
+      sequence INTEGER NOT NULL DEFAULT 0,
+      total_mass REAL NOT NULL DEFAULT 0
+    );
+    INSERT INTO propagation_history_state SELECT * FROM propagation_history_state_previous;
+    DROP TABLE propagation_history_state_previous;
+  `);
+});
+
+assertCanonicalSchemaRejected("schema rejects a broken partial UNIQUE index", (db) => {
+  db.exec(`
+    DROP INDEX idx_files_document_id;
+    CREATE INDEX idx_files_document_id ON files(document_id);
+  `);
+});
+
 test("close propagates database failures and remains retryable", () => {
   const store = makeStore();
   const originalDb = store.db;
@@ -321,7 +462,7 @@ test("generation state starts dirty and bulk index metadata is available", async
       path: "/space/bulk.md",
       space: "space1",
       checksum: "bulk",
-      mtime: 1,
+      sourceUpdatedAt: 1,
       size: 4,
     },
     chunks: [{ chunkIndex: 0, content: "bulk", vector: makeBuf([1, 0, 0, 0]) }],
@@ -358,7 +499,7 @@ test("deleting an authoritative file increments metadata generation and stays di
       path: "/space/delete.md",
       space: "space1",
       checksum: "delete",
-      mtime: 1,
+      sourceUpdatedAt: 1,
       size: 6,
     },
     chunks: [],
@@ -396,7 +537,7 @@ test("upsertFile inserts a new file and returns its id", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   });
   assert.ok(typeof id === "number");
@@ -410,14 +551,14 @@ test("upsertFile updates an existing file (same path -> same id)", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   };
   const id1 = await store.upsertFile(meta);
   const id2 = await store.upsertFile({
     ...meta,
     checksum: "def456",
-    mtime: 1700000001,
+    sourceUpdatedAt: 1700000001,
     size: 2048,
   });
   assert.strictEqual(id1, id2);
@@ -430,7 +571,7 @@ test("getFileByPath returns the file record", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   });
   const file = await store.getFileByPath("/space/note1.md");
@@ -454,7 +595,7 @@ test("deleteFile removes the file record", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   });
   await store.deleteFile(id);
@@ -471,7 +612,7 @@ test("insertChunks inserts chunks and returns their ids", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   });
   const ids = await store.insertChunks(fileId, [
@@ -489,7 +630,7 @@ test("insertChunks replaces old chunks for the same file", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   });
   await store.insertChunks(fileId, [
@@ -512,7 +653,7 @@ test("insertChunks with an empty replacement clears old chunks", async () => {
     path: "/space/empty.md",
     space: "space1",
     checksum: "old",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 8,
   });
   await store.insertChunks(fileId, [
@@ -533,7 +674,7 @@ test("getChunksByFileId returns chunks ordered by chunk_index", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   });
   await store.insertChunks(fileId, [
@@ -562,7 +703,7 @@ test("getChunkById returns a single chunk", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   });
   const ids = await store.insertChunks(fileId, [
@@ -589,7 +730,7 @@ test("chunk vector roundtrip preserves Float32 data", async () => {
     path: "/space/note1.md",
     space: "space1",
     checksum: "abc123",
-    mtime: 1700000000,
+    sourceUpdatedAt: 1700000000,
     size: 1024,
   });
   const original = [1.5, -2.3, 3.14, 0.0];
@@ -713,7 +854,7 @@ test("setFileTags associates tags with a file", async () => {
     path: "/space/note1.md",
     space: "d1",
     checksum: "c1",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   const tagIds = await store.upsertTags([
@@ -732,7 +873,7 @@ test("setFileTags replaces old associations", async () => {
     path: "/space/note1.md",
     space: "d1",
     checksum: "c1",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   const ids1 = await store.upsertTags([
@@ -754,7 +895,7 @@ test("setFileTags with empty array clears all associations", async () => {
     path: "/space/note1.md",
     space: "d1",
     checksum: "c1",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   const tagIds = await store.upsertTags([{ name: "tag1", vector: null }]);
@@ -771,7 +912,7 @@ test("getFileTags returns tags ordered by position", async () => {
     path: "/space/note1.md",
     space: "d1",
     checksum: "c1",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   const ids = await store.upsertTags([
@@ -813,7 +954,7 @@ test("buildCooccurrenceMatrix builds symmetric matrix from file_tags", async () 
     path: "/f1.md",
     space: "d1",
     checksum: "c1",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   // File 2 has tags A, B, and C (A-B co-occur twice, A-C once, B-C once)
@@ -821,7 +962,7 @@ test("buildCooccurrenceMatrix builds symmetric matrix from file_tags", async () 
     path: "/f2.md",
     space: "d1",
     checksum: "c2",
-    mtime: 2,
+    sourceUpdatedAt: 2,
     size: 2,
   });
 
@@ -855,7 +996,7 @@ test("buildCooccurrenceMatrix does not create self-loops", async () => {
     path: "/f1.md",
     space: "d1",
     checksum: "c1",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   const [aId] = await store.upsertTags([{ name: "A", vector: null }]);
@@ -918,7 +1059,7 @@ test("deleteFile cascades to chunks", async () => {
     path: "/space/note1.md",
     space: "d1",
     checksum: "c1",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   await store.insertChunks(fileId, [
@@ -940,7 +1081,7 @@ test("deleteFile cascades to file_tags", async () => {
     path: "/space/note1.md",
     space: "d1",
     checksum: "c1",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   });
   const tagIds = await store.upsertTags([
@@ -994,7 +1135,7 @@ test("Works with a file-based database", async () => {
       path: "/space/note1.md",
       space: "d1",
       checksum: "c1",
-      mtime: 1,
+      sourceUpdatedAt: 1,
       size: 1,
     }))!;
     assert.ok(id > 0);

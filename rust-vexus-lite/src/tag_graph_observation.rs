@@ -588,3 +588,95 @@ pub(crate) fn observe_with_runtime(
         input_json,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        fir_weights, observe_typed, positive, ActivationPropagationConfig,
+        ActivationPropagationInput, ActivationSeed,
+    };
+    use crate::propagation_structure_reranker::TagGraphArtifact;
+    use std::collections::{HashMap, HashSet};
+
+    fn two_node_artifact() -> TagGraphArtifact {
+        let mut node_index = HashMap::new();
+        node_index.insert(1, 0);
+        node_index.insert(2, 1);
+        TagGraphArtifact {
+            node_ids: vec![1, 2],
+            node_index,
+            row_offsets: vec![0, 1, 1],
+            targets: vec![1],
+            weights: vec![1.0],
+            inbound: HashMap::new(),
+            max_inbound: 1.0,
+            anchor_gain: HashMap::new(),
+            shortcut_edges: HashSet::new(),
+            provenance: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn positive_sanitizes_non_finite_and_negative_mass() {
+        assert_eq!(positive(f64::NAN), 0.0);
+        assert_eq!(positive(f64::NEG_INFINITY), 0.0);
+        assert_eq!(positive(-2.0), 0.0);
+        assert_eq!(positive(2.5), 2.5);
+    }
+
+    #[test]
+    fn fir_weights_are_normalized_and_preserve_hop_order() {
+        let config = ActivationPropagationConfig {
+            propagation_max_hops: 3,
+            fir_gamma: 0.5,
+            ..Default::default()
+        };
+        let weights = fir_weights(&config);
+        assert_eq!(weights.len(), 4);
+        assert!((weights.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        assert!(weights[0] > weights[1]);
+        assert!(weights[1] > weights[2]);
+        assert!(weights[2] > weights[3]);
+    }
+
+    #[test]
+    fn observation_projects_seed_and_reachable_edge_into_one_trace() {
+        let observation = observe_typed(
+            &two_node_artifact(),
+            "artifact-test",
+            ActivationPropagationInput {
+                query_id: Some("query-test".to_string()),
+                seeds: vec![ActivationSeed {
+                    id: 1,
+                    activation: 1.0,
+                    source_type: "tag".to_string(),
+                }],
+                config: ActivationPropagationConfig {
+                    propagation_max_hops: 1,
+                    max_output_nodes: 0,
+                    max_output_edges: 0,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+
+        assert_eq!(observation.artifact_sig, "artifact-test");
+        assert_eq!(observation.query_id.as_deref(), Some("query-test"));
+        assert_eq!(observation.seed_distribution[0].0, 1);
+        assert!(
+            observation
+                .seed_distribution
+                .iter()
+                .map(|(_, mass)| mass)
+                .sum::<f64>()
+                > 0.0
+        );
+        assert!(observation.seed_distribution.iter().any(|(id, _)| *id == 2));
+        assert!(observation.nodes.iter().any(|node| node.id == 1));
+        assert!(observation
+            .edges
+            .iter()
+            .any(|edge| { edge.source_id == 1 && edge.target_id == 2 && edge.flow > 0.0 }));
+    }
+}

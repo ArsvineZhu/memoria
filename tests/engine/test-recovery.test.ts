@@ -1,3 +1,4 @@
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { mkdtempSync } from "node:fs";
@@ -194,13 +195,19 @@ test("reconciliation rebuilds empty derived indices without changing metadata id
     content: "authoritative content",
     revision: "1",
   });
-  const file = await engine.metadataStore.getFileByDocumentId?.("reconcile:one");
+  const file =
+    await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId?.(
+      "reconcile:one",
+    );
   assert.ok(file);
 
   const report = await engine.reconcile();
   assert.equal(report.authoritative, "metadata");
   assert.ok(report.rebuiltIndexes.includes("Logical"));
-  const sameFile = await engine.metadataStore.getFileByDocumentId?.("reconcile:one");
+  const sameFile =
+    await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId?.(
+      "reconcile:one",
+    );
   assert.equal(sameFile?.id, file.id);
   assert.equal(result.documentId, "reconcile:one");
   await engine.close();
@@ -254,7 +261,12 @@ test("clean empty documents do not create phantom content indexes on reopen", as
   });
   await first.initialize();
   await first.ingest({ id: "clean:empty", content: "   \n\t" });
-  assert.deepEqual(await first.metadataStore.getExpectedVectorIndexNames?.(), []);
+  assert.deepEqual(
+    await getMemoryEngineTestInternals(
+      first,
+    ).metadataStore.getExpectedVectorIndexNames?.(),
+    [],
+  );
   await first.close();
 
   const secondVector = countingVectorStore({ validationResult: true });
@@ -287,7 +299,7 @@ test("clean recovery locally rebuilds non-persisted tags without full chunk reco
     content: "persisted vector with a tag",
     metadata: { tags: ["coffee"] },
   });
-  const tag = (await first.metadataStore.getAllTags())[0];
+  const tag = (await getMemoryEngineTestInternals(first).metadataStore.getAllTags())[0];
   assert.ok(tag);
   await first.close();
 
@@ -415,14 +427,8 @@ test("reconciliation application failure remains dirty and rebuilds on reopen", 
     () => engine.reconcile(),
     (error: unknown) => error instanceof MemoriaError && error.code === "integrity",
   );
-  assert.equal(
-    (engine as unknown as { _vectorStateComplete: boolean })._vectorStateComplete,
-    false,
-  );
-  assert.equal(
-    (engine as unknown as { _vectorMutationFailed: boolean })._vectorMutationFailed,
-    true,
-  );
+  assert.equal(getMemoryEngineTestInternals(engine).vectorStateComplete, false);
+  assert.equal(getMemoryEngineTestInternals(engine).vectorMutationFailed, true);
   await engine.close();
 
   const dirty = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
@@ -496,10 +502,7 @@ test("search reconciles authoritative SQLite state after a same-session vector f
     ),
     false,
   );
-  assert.equal(
-    (engine as unknown as { _vectorStateComplete: boolean })._vectorStateComplete,
-    true,
-  );
+  assert.equal(getMemoryEngineTestInternals(engine).vectorStateComplete, true);
   await engine.close();
 });
 
@@ -521,7 +524,9 @@ test("clean close and reopen loads real Vexus indexes before vector search", asy
   });
   await first.initialize();
   await first.ingest({ id: "clean:vexus", content: "persisted vector recall" });
-  const storedChunk = (await first.metadataStore.getAllChunks())[0];
+  const storedChunk = (
+    await getMemoryEngineTestInternals(first).metadataStore.getAllChunks()
+  )[0];
   assert.ok(storedChunk);
   await first.close();
 
@@ -576,12 +581,19 @@ test("full recovery removes stale space index files before same-name recreation"
     path: join(root, "spaceA", "old.md"),
     relPath: "spaceA/old.md",
     content: "ancient space archived content",
-    mtime: 0,
+    sourceUpdatedAt: 0,
     size: Buffer.byteLength("ancient space archived content", "utf8"),
   });
-  const oldFile = await first.metadataStore.getFileByPath("spaceA/old.md");
+  const oldFile =
+    await getMemoryEngineTestInternals(first).metadataStore.getFileByPath(
+      "spaceA/old.md",
+    );
   assert.ok(oldFile);
-  const oldChunk = (await first.metadataStore.getChunksByFileId(oldFile.id))[0];
+  const oldChunk = (
+    await getMemoryEngineTestInternals(first).metadataStore.getChunksByFileId(
+      oldFile.id,
+    )
+  )[0];
   assert.ok(oldChunk);
   const oldIndexPath = firstVector._getIndexPath("spaceA");
   await first.close();
@@ -612,12 +624,19 @@ test("full recovery removes stale space index files before same-name recreation"
     path: join(root, "spaceA", "new.md"),
     relPath: "spaceA/new.md",
     content: "fresh space replacement content",
-    mtime: 0,
+    sourceUpdatedAt: 0,
     size: Buffer.byteLength("fresh space replacement content", "utf8"),
   });
-  const newFile = await second.metadataStore.getFileByPath("spaceA/new.md");
+  const newFile =
+    await getMemoryEngineTestInternals(second).metadataStore.getFileByPath(
+      "spaceA/new.md",
+    );
   assert.ok(newFile);
-  const newChunk = (await second.metadataStore.getChunksByFileId(newFile.id))[0];
+  const newChunk = (
+    await getMemoryEngineTestInternals(second).metadataStore.getChunksByFileId(
+      newFile.id,
+    )
+  )[0];
   assert.ok(newChunk);
   const [queryVector] = await embeddingProvider().embedBatch([
     "fresh space replacement content",
@@ -673,7 +692,7 @@ test("reconciliation uses one bulk indexable-chunk query instead of N+1 file loo
   await engine.initialize();
   await engine.ingest({ id: "bulk:one", content: "bulk query content" });
 
-  const store = engine.metadataStore as unknown as {
+  const store = getMemoryEngineTestInternals(engine).metadataStore as unknown as {
     getIndexableChunks: () => Promise<unknown[]>;
     getFileByChunkId: (chunkId: number) => Promise<unknown>;
   };
@@ -687,7 +706,7 @@ test("reconciliation uses one bulk indexable-chunk query instead of N+1 file loo
   store.getFileByChunkId = async (chunkId: number) => {
     perChunkCalls += 1;
     return SqliteMetadataStore.prototype.getFileByChunkId.call(
-      engine.metadataStore as SqliteMetadataStore,
+      getMemoryEngineTestInternals(engine).metadataStore as SqliteMetadataStore,
       chunkId,
     );
   };

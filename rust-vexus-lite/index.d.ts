@@ -17,6 +17,20 @@ export interface TagRetrievalArtifactBuildResult {
   resident: boolean
   elapsedMs: number
 }
+export interface WatcherConfig {
+  rootPath: string
+  ignoreFolders: Array<string>
+  ignorePrefixes: Array<string>
+  ignoreSuffixes: Array<string>
+  /** 可选扩展名白名单。为空时保持旧行为：仅监听 .md / .txt。 */
+  extensions?: Array<string>
+  /** 路径事件静默窗口。窗口内的新事件会使旧 generation 自动失效。 */
+  debounceMs?: number
+  /** 两次文件元数据采样之间的稳定确认间隔。 */
+  stabilityMs?: number
+  /** 同一 generation 内最多执行的稳定采样次数。 */
+  stabilityRetries?: number
+}
 /**
  * 搜索结果 (返回 ID 而非 Tag 文本)
  * 上层 JS 会拿着 ID 去 SQLite 里查具体的文本内容
@@ -38,7 +52,7 @@ export interface TagBasisProjectionResult {
 }
 export interface DiffusionDistributionResult {
   localVector?: Array<number>
-  transferVector?: Array<number>
+  extendedVector?: Array<number>
   requestedCount: number
   foundCount: number
   missingCount: number
@@ -102,19 +116,12 @@ export interface TagRetrievalRuntimeStats {
   edgeCount: number
   resident: boolean
 }
-export interface WatcherConfig {
-  rootPath: string
-  ignoreFolders: Array<string>
-  ignorePrefixes: Array<string>
-  ignoreSuffixes: Array<string>
-  /** 可选扩展名白名单。为空时保持旧行为：仅监听 .md / .txt。 */
-  extensions?: Array<string>
-  /** 路径事件静默窗口。窗口内的新事件会使旧 generation 自动失效。 */
-  debounceMs?: number
-  /** 两次文件元数据采样之间的稳定确认间隔。 */
-  stabilityMs?: number
-  /** 同一 generation 内最多执行的稳定采样次数。 */
-  stabilityRetries?: number
+export declare class VexusWatcher {
+  constructor()
+  /** 启动高性能原生文件监听 */
+  startWatch(config: WatcherConfig, jsCallback: (err: Error | null, arg: string) => any): void
+  /** 停止监听 */
+  stopWatch(): void
 }
 /** 核心索引结构 (无状态，只存向量) */
 export declare class VexusIndex {
@@ -122,9 +129,9 @@ export declare class VexusIndex {
   constructor(dim: number, capacity: number)
   /**
    * 从磁盘加载索引
-   * 注意：移除了 map_path，因为映射关系现在由 SQLite 管理
+   * 映射关系由 SQLite 管理。
    */
-  static load(indexPath: string, unusedMapPath: string | undefined | null, dim: number, capacity: number): VexusIndex
+  static load(indexPath: string, dim: number, capacity: number): VexusIndex
   /**
    * 保存索引到磁盘。
    *
@@ -237,11 +244,4 @@ export declare class VexusIndex {
    * - `full_rebuild`: 是否清空 sim 表后重算 (默认 false 增量)
    */
   computeTagPairSimilarities(dbPath: string, modelSig: string, minSimilarity?: number | undefined | null, fullRebuild?: boolean | undefined | null): Promise<unknown>
-}
-export declare class VexusWatcher {
-  constructor()
-  /** 启动高性能原生文件监听 */
-  startWatch(config: WatcherConfig, jsCallback: (err: Error | null, arg: string) => any): void
-  /** 停止监听 */
-  stopWatch(): void
 }

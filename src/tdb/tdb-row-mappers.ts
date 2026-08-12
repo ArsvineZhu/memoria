@@ -5,10 +5,11 @@ export interface TdbFileQueryRow {
   library: string;
   path: string;
   checksum: string;
-  mtime: number;
+  source_updated_at: number;
   size: number;
   doc_node_id?: number | null;
-  updated_at?: number | null;
+  recorded_at: number;
+  indexed_at: number;
 }
 
 export interface TdbChunkQueryRow {
@@ -28,10 +29,11 @@ export function mapTdbFileRow(row: TdbFileQueryRow): TdbFileRow {
     library: row.library,
     path: row.path,
     checksum: row.checksum,
-    mtime: row.mtime,
+    source_updated_at: row.source_updated_at,
     size: row.size,
     doc_node_id: row.doc_node_id ?? null,
-    updated_at: row.updated_at ?? null,
+    recorded_at: row.recorded_at,
+    indexed_at: row.indexed_at,
   };
 }
 

@@ -1,6 +1,4 @@
-import type {
-  ChunkCandidate,
-} from "../../types/documents.js";
+import type { ChunkCandidate } from "../../types/documents.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { TruncationStats } from "../../types/retrieval.js";
 

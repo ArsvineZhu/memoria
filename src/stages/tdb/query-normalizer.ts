@@ -57,24 +57,11 @@ class TDBQueryNormalizerStage extends Stage {
 
   override async process(
     input: PipelineData,
-    ctx: PipelineContextLike,
+    _ctx: PipelineContextLike,
   ): Promise<PipelineData> {
     const info = input || {};
     const raw = typeof info.query === "string" ? info.query : "";
     const query = raw.trim();
-    const config = ctx.config || {};
-
-    if (config.tdbForceMode === "question" || config.tdbForceMode === "keyword") {
-      const forced = config.tdbForceMode;
-      return {
-        ...info,
-        query,
-        mode: forced,
-        question: forced === "question",
-        normalized: query,
-      };
-    }
-
     const markers = QUESTION_MARKERS.filter((m) => query.includes(m));
     const question = markers.length > 0;
     return {

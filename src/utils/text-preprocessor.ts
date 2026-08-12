@@ -110,7 +110,7 @@ function extractTags(
   const uniqueTags = [...new Set(tags)];
   const maxTags = Math.max(1, Number(options.maxTags) || 50);
   if (uniqueTags.length > maxTags) {
-    const logPrefix = options.logPrefix || "KnowledgeBase";
+    const logPrefix = options.logPrefix || "Memoria";
     console.warn(
       `[${logPrefix}] ⚠️ File has too many tags (${uniqueTags.length}). ` +
         `Truncating to top ${maxTags}.`,

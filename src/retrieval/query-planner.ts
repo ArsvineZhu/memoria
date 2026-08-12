@@ -40,13 +40,13 @@ export interface GraphReadiness {
   explicitLinks: number;
   activeInferredLinks: number;
   candidatePathCount: number;
-  topologyArtifactReady: boolean;
+  tagGraphArtifactReady: boolean;
   permissionScopeReady: boolean;
 }
 
 export interface StrategyDecision {
   strategy: Exclude<RetrievalStrategy, "auto">;
-  scores: Record<"semantic" | "field" | "topology", number>;
+  scores: Record<"semantic" | "associative" | "structural", number>;
   reasons: string[];
   fallback?: string;
 }
@@ -208,7 +208,7 @@ function defaultReadiness(): GraphReadiness {
     explicitLinks: 0,
     activeInferredLinks: 0,
     candidatePathCount: 0,
-    topologyArtifactReady: true,
+    tagGraphArtifactReady: true,
     permissionScopeReady: true,
   };
 }
@@ -279,37 +279,31 @@ function automaticPlanFor(
   profile: QueryProfile,
   strategy: Exclude<RetrievalStrategy, "auto">,
 ): RetrievalPlan {
-  const topology = strategy === "topology";
-  const field = strategy === "field";
+  const structural = strategy === "structural";
+  const associative = strategy === "associative";
   return normalizeRetrievalPlan({
     strategy,
-    field: {
-      enabled: field,
-      geodesicRerank: field,
+    associative: {
+      enabled: associative || structural,
+      tagBasisProjection: associative || structural,
+      tagResidualDecomposition: associative || structural,
+      tagGraphPropagation: associative || structural,
+      propagationSupport: associative || structural,
+      tagExpansion: profile.signals.topical,
     },
-    tagMemo: {
-      enabled: field,
-      plus: field,
-      version: "v10",
-      geodesicRerank: field,
+    structural: {
+      enabled: structural,
+      propagationStructure: structural,
+      relationExpansion: structural,
     },
-    topology: {
-      enabled: topology,
-      version: "v3",
-      maxHops: topology ? (profile.signals.sequence ? 3 : 2) : 0,
-      relatedExpansion: topology,
-    },
-    riverMemo: {
-      enabled: topology,
-      rerank: topology,
-      version: "v3",
-      maxHops: topology ? (profile.signals.sequence ? 3 : 2) : 0,
+    propagationHistory: {
+      enabled: false,
     },
     expansion: {
-      related: topology || profile.wantsRelatedContext,
-      maxHops: topology ? (profile.signals.sequence ? 2 : 1) : 0,
+      related: structural || profile.wantsRelatedContext,
+      maxHops: structural ? (profile.signals.sequence ? 2 : 1) : 0,
       sameDocument: profile.wantsDirectEvidence,
-      maxAdded: topology ? 100 : 50,
+      maxAdded: structural ? 100 : 50,
     },
     postprocess: {
       timeDecay: profile.timeConstraints !== null || profile.signals.temporal,
@@ -329,8 +323,8 @@ export function chooseStrategy(
       strategy: plan.strategy,
       scores: {
         semantic: 0,
-        field: plan.strategy === "field" ? 1 : 0,
-        topology: plan.strategy === "topology" ? 1 : 0,
+        associative: plan.strategy === "associative" ? 1 : 0,
+        structural: plan.strategy === "structural" ? 1 : 0,
       },
       reasons: [`explicit strategy override: ${plan.strategy}`],
     };
@@ -338,8 +332,8 @@ export function chooseStrategy(
 
   const scores = {
     semantic: 1 + profile.complexity * 0.15,
-    field: profile.signals.topical ? 2 : 0,
-    topology:
+    associative: profile.signals.topical ? 2 : 0,
+    structural:
       profile.wantsRelatedContext || profile.signals.directReference
         ? 2
         : profile.signals.relational || profile.signals.sequence
@@ -347,35 +341,36 @@ export function chooseStrategy(
           : 0,
   };
   const reasons: string[] = [];
-  if (profile.signals.topical) reasons.push("topic/tag concepts raise field score");
+  if (profile.signals.topical)
+    reasons.push("topic/tag concepts raise associative score");
   if (profile.wantsRelatedContext)
-    reasons.push("relation intent raises topology score");
+    reasons.push("relation intent raises structural score");
   if (profile.wantsDirectEvidence)
-    reasons.push("direct-evidence intent preserves topology anchors");
+    reasons.push("direct-evidence intent preserves structural anchors");
   if (graph.explicitLinks > 0 || graph.activeInferredLinks > 0) {
-    scores.topology += Math.min(
+    scores.structural += Math.min(
       1,
       (graph.explicitLinks + graph.activeInferredLinks) / 100,
     );
     reasons.push("durable relation graph is available");
   }
   if (!graph.permissionScopeReady) {
-    scores.topology = 0;
-    reasons.push("permission scope is not ready; topology is gated");
+    scores.structural = 0;
+    reasons.push("permission scope is not ready; structural retrieval is gated");
   }
   const ranked = (
     Object.entries(scores) as Array<[Exclude<RetrievalStrategy, "auto">, number]>
   ).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
   const strategy = ranked[0]?.[0] || "semantic";
-  if (strategy === "topology" && !graph.topologyArtifactReady) {
+  if (strategy === "structural" && !graph.tagGraphArtifactReady) {
     return {
       strategy: "semantic",
       scores,
       reasons: [
         ...reasons,
-        "topology artifact is unavailable; semantic fallback selected",
+        "tag association graph artifact is unavailable; semantic fallback selected",
       ],
-      fallback: "topology artifact unavailable",
+      fallback: "tag association graph artifact unavailable",
     };
   }
   if (reasons.length === 0) reasons.push("semantic is the stable default");
@@ -387,10 +382,12 @@ function mergeAutoPlan(base: RetrievalPlan, overlay: RetrievalPlan): RetrievalPl
     ...base,
     ...overlay,
     strategy: base.strategy,
-    field: { ...base.field, ...(overlay.field || {}) },
-    topology: { ...base.topology, ...(overlay.topology || {}) },
-    tagMemo: { ...base.tagMemo, ...(overlay.tagMemo || {}) },
-    riverMemo: { ...base.riverMemo, ...(overlay.riverMemo || {}) },
+    associative: { ...base.associative, ...(overlay.associative || {}) },
+    structural: { ...base.structural, ...(overlay.structural || {}) },
+    propagationHistory: {
+      ...base.propagationHistory,
+      ...(overlay.propagationHistory || {}),
+    },
     filters: overlay.filters ?? base.filters,
     externalRerank: { ...base.externalRerank, ...(overlay.externalRerank || {}) },
     expansion: { ...base.expansion, ...(overlay.expansion || {}) },
@@ -458,7 +455,7 @@ export async function planRetrievalAsync(
 export async function readGraphReadiness(
   ctx: Pick<
     PipelineContextLike,
-    "metadataStore" | "config" | "vexusIndex" | "vectorStore"
+    "metadataStore" | "config" | "tagRetrievalRuntime" | "vectorStore"
   >,
 ): Promise<GraphReadiness> {
   let explicitLinks = 0;
@@ -481,22 +478,22 @@ export async function readGraphReadiness(
     } catch {
       // Relation readiness is auxiliary to semantic/vector retrieval. A
       // provider-specific graph read failure must not take down ordinary
-      // search; the topology stage will expose its own safe skip if needed.
+      // search; the tag association graph stage will expose its own safe skip if needed.
     }
   }
-  const explicitIndex = ctx.vexusIndex as Record<string, unknown> | undefined;
+  const explicitIndex = ctx.tagRetrievalRuntime as Record<string, unknown> | undefined;
   const vectorIndices = (ctx.vectorStore as { indices?: unknown } | null | undefined)
     ?.indices;
   const ownedIndex =
     explicitIndex ||
     (vectorIndices instanceof Map
-      ? (vectorIndices.get(String(ctx.config.tagIndexName || "global_tags")) as
+      ? (vectorIndices.get(String(ctx.config.tagVectorIndexName || "tag_vectors")) as
           Record<string, unknown> | undefined)
       : undefined);
   const dbPath = typeof ctx.config.dbPath === "string" ? ctx.config.dbPath : "";
-  const topologyArtifactReady =
+  const tagGraphArtifactReady =
     !ownedIndex ||
-    (typeof ownedIndex.rebuildMemoArtifact === "function" &&
+    (typeof ownedIndex.rebuildTagGraphArtifact === "function" &&
       dbPath.length > 0 &&
       dbPath !== ":memory:" &&
       !dbPath.startsWith("file::memory:"));
@@ -504,7 +501,7 @@ export async function readGraphReadiness(
     explicitLinks,
     activeInferredLinks,
     candidatePathCount: explicitLinks + activeInferredLinks > 0 ? 1 : 0,
-    topologyArtifactReady,
+    tagGraphArtifactReady,
     permissionScopeReady: true,
   };
 }

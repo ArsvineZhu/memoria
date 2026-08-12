@@ -6,16 +6,16 @@ import { MemoriaError } from "../../errors.js";
 /**
  * Postprocess stage: optional LLM/external reranking of merged candidates.
  *
- * Mirrors the reranker hooks used by KnowledgeBase search flows (e.g.
- * rerankWithTagMemoAsync / external rerank services): an injected function
+ * Implements the reranker hooks used by MemoryEngine search flows (e.g.
+ * propagation-aware / external rerank services): an injected function
  * receives (query, candidates) and returns scored/re-sorted results.
  *
  * Input: { query, mergedCandidates: [{ chunkId, score, ... }] }
  * Output: { ..., mergedCandidates: reranked, reranked: true | rerankSkipped }
  *
  * Config (ctx.config) / ctx:
- *   - externalRerankEnabled gate (alias useLLMRerank, default false)
- *   - config.reranker OR ctx.reranker
+ *   - externalRerankEnabled gate (default false)
+ *   - ctx.reranker
  *       async (query, candidates) => Array<{ chunkId, score }>
  *   Candidates the reranker does not include in its output keep their
  *   original score and follow the reranked ones (stable tail).
@@ -44,10 +44,9 @@ class ExternalRerankerStage extends Stage {
       ? info.mergedCandidates
       : [];
 
-    const enabled =
-      config.externalRerankEnabled === true || config.useLLMRerank === true;
+    const enabled = config.externalRerankEnabled === true;
 
-    const reranker = config.reranker || ctx.reranker;
+    const reranker = ctx.reranker;
 
     if (!enabled || typeof reranker !== "function") {
       return { ...info, mergedCandidates: candidates, rerankSkipped: true };

@@ -22,7 +22,7 @@ test("relation expansion adds linked chunks with provenance and bounded score", 
       {
         id: 1,
         path: "life/a.mdx",
-        diary_name: "life",
+        space: "life",
         checksum: "a",
         mtime: 1,
         size: 1,
@@ -34,7 +34,7 @@ test("relation expansion adds linked chunks with provenance and bounded score", 
       {
         id: 2,
         path: "life/b.mdx",
-        diary_name: "life",
+        space: "life",
         checksum: "b",
         mtime: 1,
         size: 1,
@@ -66,7 +66,11 @@ test("relation expansion adds linked chunks with provenance and bounded score", 
   );
 
   const ctx: PipelineContextLike = {
-    config: { relationExpansionEnabled: true, topologyMaxHops: 1, relationMaxAdded: 5 },
+    config: {
+      relationExpansionEnabled: true,
+      propagationMaxHops: 1,
+      relationMaxAdded: 5,
+    },
     metadataStore,
   };
   const out = await new RelationExpansionStage().process(
@@ -93,7 +97,7 @@ test("relation expansion applies the resolved hard scope before adding links", a
       {
         id: 1,
         path: "research/a.mdx",
-        diary_name: "research",
+        space: "research",
         checksum: "a",
         mtime: 1,
         size: 1,
@@ -104,7 +108,7 @@ test("relation expansion applies the resolved hard scope before adding links", a
       {
         id: 2,
         path: "private/b.mdx",
-        diary_name: "private",
+        space: "private",
         checksum: "b",
         mtime: 1,
         size: 1,
@@ -166,22 +170,19 @@ test("forbidden intermediate relation nodes cannot propagate into an allowed tar
       {
         id: 1,
         path: "a.mdx",
-        diary_name: "research",
+        space: "research",
         checksum: "a",
         mtime: 1,
         size: 1,
       },
     ],
-    [
-      2,
-      { id: 2, path: "b.mdx", diary_name: "private", checksum: "b", mtime: 1, size: 1 },
-    ],
+    [2, { id: 2, path: "b.mdx", space: "private", checksum: "b", mtime: 1, size: 1 }],
     [
       3,
       {
         id: 3,
         path: "c.mdx",
-        diary_name: "research",
+        space: "research",
         checksum: "c",
         mtime: 1,
         size: 1,

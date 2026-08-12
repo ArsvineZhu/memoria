@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import Database from "better-sqlite3";
 
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
+import { MemoriaError } from "../../src/errors.js";
 import type { FileMetadataInput } from "../../src/types.js";
 
 type TestStore = Omit<SqliteMetadataStore, "upsertFile"> & {
@@ -37,56 +38,115 @@ test("SqliteMetadataStore can be instantiated with :memory:", () => {
   store.close();
 });
 
-test("Schema tables are created on construction", () => {
+test("fresh SQLite databases use the exact canonical schema and version", () => {
   const store = makeStore();
   const tables = (
     store.db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      )
       .all() as Array<{ name: string }>
   ).map((r) => r.name);
-  for (const t of ["files", "chunks", "tags", "file_tags", "kv_store"]) {
-    assert.ok(tables.includes(t), `table ${t} should exist`);
-  }
+  assert.deepEqual(tables, [
+    "chunks",
+    "file_tags",
+    "files",
+    "kv_store",
+    "memory_relations",
+    "tag_derived_artifacts",
+    "tag_graph_artifacts",
+    "tag_pair_similarity",
+    "tag_pair_similarity_status",
+    "tag_residual_metrics",
+    "tags",
+  ]);
+  assert.equal(store.db.pragma("user_version", { simple: true }), 1);
   store.close();
 });
 
-test("Schema includes the native Memo artifact tables", () => {
+test("canonical SQLite schema exposes exact native artifact columns", () => {
   const store = makeStore();
-  const tables = new Set(
+  const columns = (table: string) =>
     (
-      store.db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?, ?, ?)",
-        )
-        .all(
-          "tagmemo_artifacts",
-          "tag_pair_similarity",
-          "tag_intrinsic_residuals",
-          "rivermemo_artifacts",
-        ) as Array<{ name: string }>
-    ).map((row) => row.name),
-  );
-  assert.deepEqual([...tables].sort(), [
-    "rivermemo_artifacts",
-    "tag_intrinsic_residuals",
-    "tag_pair_similarity",
-    "tagmemo_artifacts",
+      store.db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name);
+  assert.deepEqual(columns("files"), [
+    "id",
+    "path",
+    "space",
+    "checksum",
+    "mtime",
+    "size",
+    "updated_at",
+    "document_id",
+    "revision",
+    "source_json",
+    "metadata_json",
   ]);
-  assert.ok(
-    (
-      store.db.prepare("PRAGMA table_info(tag_intrinsic_residuals)").all() as Array<{
-        name: string;
-      }>
-    ).some((column) => column.name === "v9_anchor_gain"),
-  );
-  assert.ok(
-    (
-      store.db.prepare("PRAGMA table_info(rivermemo_artifacts)").all() as Array<{
-        name: string;
-      }>
-    ).some((column) => column.name === "payload_checksum"),
-  );
+  assert.deepEqual(columns("tag_residual_metrics"), [
+    "tag_id",
+    "residual_energy",
+    "neighbor_count",
+    "residual_ratio",
+    "model_sig",
+    "artifact_sig",
+    "algorithm_version",
+    "config_hash",
+    "status",
+    "computed_at",
+  ]);
+  assert.deepEqual(columns("tag_derived_artifacts"), [
+    "artifact_sig",
+    "artifact_type",
+    "model_sig",
+    "graph_generation",
+    "algorithm_version",
+    "config_hash",
+    "effective_config",
+    "status",
+    "created_at",
+    "updated_at",
+  ]);
+  assert.deepEqual(columns("tag_graph_artifacts"), [
+    "artifact_sig",
+    "schema_version",
+    "algorithm_version",
+    "graph_generation",
+    "model_sig",
+    "config_hash",
+    "database_generation",
+    "provenance_generation",
+    "payload_codec",
+    "payload_checksum",
+    "payload",
+    "status",
+    "error_message",
+    "node_count",
+    "edge_count",
+    "created_at",
+    "updated_at",
+    "published_at",
+  ]);
   store.close();
+});
+
+test("canonical SQLite databases reopen without schema changes", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-canonical-schema-"));
+  const dbPath = path.join(root, "canonical.sqlite");
+  try {
+    const first = makeStore(dbPath);
+    await first.setKv("canonical-check", "ok");
+    first.close();
+
+    const reopened = makeStore(dbPath);
+    assert.equal(await reopened.getKv("canonical-check"), "ok");
+    assert.equal(reopened.db.pragma("user_version", { simple: true }), 1);
+    reopened.close();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("historical tags remain in the authority while active-tag and index expectations exclude them", async () => {
@@ -94,7 +154,7 @@ test("historical tags remain in the authority while active-tag and index expecta
   const replacement = await store.replaceDocumentState({
     file: {
       path: "research/sole.mdx",
-      diaryName: "research",
+      space: "research",
       checksum: "sole",
       mtime: 1,
       size: 10,
@@ -105,7 +165,7 @@ test("historical tags remain in the authority while active-tag and index expecta
     orderedTagNames: ["historical"],
   });
   assert.equal((await store.getActiveTags()).length, 1);
-  assert.ok((await store.getExpectedVectorIndexNames()).includes("global_tags"));
+  assert.ok((await store.getExpectedVectorIndexNames()).includes("tag_vectors"));
 
   const removed = await store.deleteDocumentAuthority({
     path: "research/sole.mdx",
@@ -115,7 +175,7 @@ test("historical tags remain in the authority while active-tag and index expecta
   assert.equal((await store.getAllTags()).length, 1);
   assert.deepEqual(await store.getActiveTags(), []);
   assert.equal(
-    (await store.getExpectedVectorIndexNames()).includes("global_tags"),
+    (await store.getExpectedVectorIndexNames()).includes("tag_vectors"),
     false,
   );
   store.close();
@@ -179,39 +239,30 @@ test("SQLite relation authority preserves source revisions and reversible derive
   store.close();
 });
 
-test("Schema migrates the older VCP intrinsic residual table before indexing it", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-legacy-schema-"));
-  const dbPath = path.join(root, "legacy.sqlite");
-  const legacy = new Database(dbPath);
-  legacy.exec(`
-    CREATE TABLE tag_intrinsic_residuals (
-      tag_id INTEGER PRIMARY KEY,
-      residual_energy REAL NOT NULL,
-      neighbor_count INTEGER NOT NULL,
-      computed_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-  legacy.close();
+test("unexpected non-empty SQLite schemas fail fast without migration", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-incompatible-schema-"));
+  const dbPath = path.join(root, "incompatible.sqlite");
+  const incompatible = new Database(dbPath);
+  const nonCanonicalColumn = ["dia", "ry", "name"].join("_");
+  incompatible.exec(
+    `CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT, ${nonCanonicalColumn} TEXT);`,
+  );
+  incompatible.close();
 
-  const store = makeStore(dbPath);
-  const columns = new Set(
-    (
-      store.db.prepare("PRAGMA table_info(tag_intrinsic_residuals)").all() as Array<{
-        name: string;
-      }>
-    ).map((column) => column.name),
-  );
-  assert.ok(columns.has("artifact_sig"));
-  assert.ok(columns.has("model_sig"));
-  assert.ok(
-    store.db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_intrinsic_residual_artifact'",
-      )
-      .get(),
-  );
-  store.close();
-  fs.rmSync(root, { recursive: true, force: true });
+  try {
+    assert.throws(
+      () => makeStore(dbPath),
+      (error: unknown) => {
+        assert.ok(error instanceof MemoriaError);
+        assert.equal(error.code, "persistence");
+        assert.match(error.message, /Recreate the database/);
+        assert.match(error.message, /not migrated/);
+        return true;
+      },
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("close propagates database failures and remains retryable", () => {
@@ -267,8 +318,8 @@ test("generation state starts dirty and bulk index metadata is available", async
 
   const replacement = await generation.replaceDocumentState({
     file: {
-      path: "/diary/bulk.md",
-      diaryName: "diary1",
+      path: "/space/bulk.md",
+      space: "space1",
       checksum: "bulk",
       mtime: 1,
       size: 4,
@@ -282,10 +333,10 @@ test("generation state starts dirty and bulk index metadata is available", async
     {
       chunkId: replacement.chunkIds[0],
       vector: makeBuf([1, 0, 0, 0]),
-      indexName: "diary1",
+      indexName: "space1",
     },
   ]);
-  assert.deepEqual(await generation.getExpectedVectorIndexNames(), ["diary1"]);
+  assert.deepEqual(await generation.getExpectedVectorIndexNames(), ["space1"]);
   assert.strictEqual(await store.countFiles(), 1);
   assert.ok((await store.getLastIndexedAt()) !== null);
   store.close();
@@ -304,8 +355,8 @@ test("deleting an authoritative file increments metadata generation and stays di
   };
   const replacement = await generation.replaceDocumentState({
     file: {
-      path: "/diary/delete.md",
-      diaryName: "diary1",
+      path: "/space/delete.md",
+      space: "space1",
       checksum: "delete",
       mtime: 1,
       size: 6,
@@ -342,8 +393,8 @@ test("foreign_keys pragma is enabled", () => {
 test("upsertFile inserts a new file and returns its id", async () => {
   const store = makeStore();
   const id = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
@@ -356,8 +407,8 @@ test("upsertFile inserts a new file and returns its id", async () => {
 test("upsertFile updates an existing file (same path -> same id)", async () => {
   const store = makeStore();
   const meta = {
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
@@ -376,16 +427,16 @@ test("upsertFile updates an existing file (same path -> same id)", async () => {
 test("getFileByPath returns the file record", async () => {
   const store = makeStore();
   await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
   });
-  const file = await store.getFileByPath("/diary/note1.md");
+  const file = await store.getFileByPath("/space/note1.md");
   assert.ok(file);
-  assert.strictEqual(file.path, "/diary/note1.md");
-  assert.strictEqual(file.diary_name, "diary1");
+  assert.strictEqual(file.path, "/space/note1.md");
+  assert.strictEqual(file.space, "space1");
   assert.strictEqual(file.checksum, "abc123");
   store.close();
 });
@@ -400,14 +451,14 @@ test("getFileByPath returns null for non-existent path", async () => {
 test("deleteFile removes the file record", async () => {
   const store = makeStore();
   const id = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
   });
   await store.deleteFile(id);
-  const file = await store.getFileByPath("/diary/note1.md");
+  const file = await store.getFileByPath("/space/note1.md");
   assert.strictEqual(file, null);
   store.close();
 });
@@ -417,8 +468,8 @@ test("deleteFile removes the file record", async () => {
 test("insertChunks inserts chunks and returns their ids", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
@@ -435,8 +486,8 @@ test("insertChunks inserts chunks and returns their ids", async () => {
 test("insertChunks replaces old chunks for the same file", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
@@ -458,8 +509,8 @@ test("insertChunks replaces old chunks for the same file", async () => {
 test("insertChunks with an empty replacement clears old chunks", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/empty.md",
-    diaryName: "diary1",
+    path: "/space/empty.md",
+    space: "space1",
     checksum: "old",
     mtime: 1700000000,
     size: 8,
@@ -479,8 +530,8 @@ test("insertChunks with an empty replacement clears old chunks", async () => {
 test("getChunksByFileId returns chunks ordered by chunk_index", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
@@ -508,8 +559,8 @@ test("getChunksByFileId returns empty array for file with no chunks", async () =
 test("getChunkById returns a single chunk", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
@@ -535,8 +586,8 @@ test("getChunkById returns null for non-existent id", async () => {
 test("chunk vector roundtrip preserves Float32 data", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "diary1",
+    path: "/space/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000,
     size: 1024,
@@ -659,8 +710,8 @@ test("getAllTags returns empty array when no tags exist", async () => {
 test("setFileTags associates tags with a file", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "d1",
+    path: "/space/note1.md",
+    space: "d1",
     checksum: "c1",
     mtime: 1,
     size: 1,
@@ -678,8 +729,8 @@ test("setFileTags associates tags with a file", async () => {
 test("setFileTags replaces old associations", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "d1",
+    path: "/space/note1.md",
+    space: "d1",
     checksum: "c1",
     mtime: 1,
     size: 1,
@@ -700,8 +751,8 @@ test("setFileTags replaces old associations", async () => {
 test("setFileTags with empty array clears all associations", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "d1",
+    path: "/space/note1.md",
+    space: "d1",
     checksum: "c1",
     mtime: 1,
     size: 1,
@@ -717,8 +768,8 @@ test("setFileTags with empty array clears all associations", async () => {
 test("getFileTags returns tags ordered by position", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "d1",
+    path: "/space/note1.md",
+    space: "d1",
     checksum: "c1",
     mtime: 1,
     size: 1,
@@ -760,7 +811,7 @@ test("buildCooccurrenceMatrix builds symmetric matrix from file_tags", async () 
   // File 1 has tags A and B (A-B co-occur once)
   const f1 = await store.upsertFile({
     path: "/f1.md",
-    diaryName: "d1",
+    space: "d1",
     checksum: "c1",
     mtime: 1,
     size: 1,
@@ -768,7 +819,7 @@ test("buildCooccurrenceMatrix builds symmetric matrix from file_tags", async () 
   // File 2 has tags A, B, and C (A-B co-occur twice, A-C once, B-C once)
   const f2 = await store.upsertFile({
     path: "/f2.md",
-    diaryName: "d1",
+    space: "d1",
     checksum: "c2",
     mtime: 2,
     size: 2,
@@ -802,7 +853,7 @@ test("buildCooccurrenceMatrix does not create self-loops", async () => {
   const store = makeStore();
   const f1 = await store.upsertFile({
     path: "/f1.md",
-    diaryName: "d1",
+    space: "d1",
     checksum: "c1",
     mtime: 1,
     size: 1,
@@ -820,8 +871,8 @@ test("buildCooccurrenceMatrix does not create self-loops", async () => {
 
 test("setKv + getKv roundtrip", async () => {
   const store = makeStore();
-  await store.setKv("epa_cache", '{"v":1}');
-  const val = await store.getKv("epa_cache");
+  await store.setKv("tagBasisProjection_cache", '{"v":1}');
+  const val = await store.getKv("tagBasisProjection_cache");
   assert.strictEqual(val, '{"v":1}');
   store.close();
 });
@@ -864,8 +915,8 @@ test("healthCheck returns healthy on a fresh database", async () => {
 test("deleteFile cascades to chunks", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "d1",
+    path: "/space/note1.md",
+    space: "d1",
     checksum: "c1",
     mtime: 1,
     size: 1,
@@ -886,8 +937,8 @@ test("deleteFile cascades to chunks", async () => {
 test("deleteFile cascades to file_tags", async () => {
   const store = makeStore();
   const fileId = await store.upsertFile({
-    path: "/diary/note1.md",
-    diaryName: "d1",
+    path: "/space/note1.md",
+    space: "d1",
     checksum: "c1",
     mtime: 1,
     size: 1,
@@ -940,8 +991,8 @@ test("Works with a file-based database", async () => {
     });
 
     const id = (await store.upsertFile({
-      path: "/diary/note1.md",
-      diaryName: "d1",
+      path: "/space/note1.md",
+      space: "d1",
       checksum: "c1",
       mtime: 1,
       size: 1,
@@ -960,7 +1011,7 @@ test("Works with a file-based database", async () => {
       dimension: 4,
       busyTimeout: 5000,
     });
-    const file = await store2.getFileByPath("/diary/note1.md");
+    const file = await store2.getFileByPath("/space/note1.md");
     assert.ok(file);
     assert.strictEqual(file.checksum, "c1");
 

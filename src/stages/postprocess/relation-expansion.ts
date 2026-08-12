@@ -81,15 +81,15 @@ class RelationExpansionStage extends Stage {
       0,
       Math.min(
         8,
-        Math.round(Number(config.relationMaxHops ?? config.topologyMaxHops) || 1),
+        Math.round(Number(config.relationMaxHops ?? config.propagationMaxHops) || 1),
       ),
     );
     const maxAdded = Math.max(
       0,
       Math.round(Number(config.relationMaxAdded ?? config.expandCount) || 50),
     );
-    const boost = Number.isFinite(Number(config.relationExpansionBoost))
-      ? Number(config.relationExpansionBoost)
+    const boost = Number.isFinite(Number(config.expansionBoost))
+      ? Number(config.expansionBoost)
       : 0.75;
     const seeds = scopedCandidates.slice(0, seedCount);
     const related = await new RelationGraphStore(ctx.metadataStore).relatedChunks(
@@ -170,7 +170,7 @@ class RelationExpansionStage extends Stage {
       return false;
     }
     const file = await ctx.metadataStore.getFileByChunkId(chunkId);
-    const space = file?.diary_name || file?.diaryName || "Root";
+    const space = file?.space || "Root";
     return !!file && resolvedScope.has(String(space));
   }
 }

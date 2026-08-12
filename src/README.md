@@ -1,22 +1,23 @@
 # 源码范围
 
 `src/` 是 memoria TypeScript 主包的源码边界，包含公开入口、引擎生命周期、
-管线与阶段、Provider 契约和实现、算法、TDB 冷知识库、兼容层及通用工具。
+管线与阶段、Provider 契约和实现、算法、TDB 冷知识库及通用工具。
 
 ## 公开入口
 
 - [`index.ts`](index.ts)：ESM 根入口和公开类型导出。
-- [`index.cts`](index.cts)：保持历史 `require("memoria")` 导出顺序的 CommonJS facade。
+- [`index.cts`](index.cts)：与 ESM 根入口保持 exact runtime export parity 的 CommonJS facade。
 - [`errors.ts`](errors.ts)：`memoria/errors` 子路径的结构化错误契约。
 - [`adapters/filesystem-ingestion-adapter.ts`](adapters/filesystem-ingestion-adapter.ts)：文件系统子路径入口。
-- `providers/` 下的 OpenAI 兼容和 DashScope Provider 通过 `package.json` 子路径发布。
+- `providers/` 下的 OpenAI-compatible embedding 和 reranker Provider 通过 `package.json` 子路径
+  `memoria/providers/openai-compatible` 发布。
 
 ## 稳定边界
 
 - `engine.ts` 负责引擎生命周期、逻辑文档摄入、搜索、删除和恢复协调。
 - `pipelines/` 与 `stages/` 负责按顺序组合摄入、检索、后处理、输出和 TDB 阶段。
 - `interfaces/`、`types.ts` 和 `providers/` 定义 Provider、存储和公开数据结构边界。
-- `algorithms/` 保持纯计算算法；`tdb/` 负责冷知识库；`compat/` 保留旧调用面；
+- `algorithms/` 保持纯计算算法；`tdb/` 负责冷知识库；
   `utils/` 提供文本、MDX、向量和数值工具。
 - `native/` 与 `providers/vexus-vector-store.ts` 连接独立的
   [`rust-vexus-lite/`](../rust-vexus-lite/) 原生包。

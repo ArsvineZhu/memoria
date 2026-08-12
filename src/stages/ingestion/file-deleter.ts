@@ -15,15 +15,15 @@ import {
 
 /**
  * Removes a single file from the knowledge base: file row, chunk rows and
- * the corresponding vectors in the diary index.
+ * the corresponding vectors in the space index.
  *
- * Mirrors KnowledgeBaseManager._handleDeleteBatch:
+ * Handles the MemoryEngine file-delete stage:
  *  - file_tags and chunks are removed with the file row (FK cascade here;
  *    the original deletes them explicitly as a safety net)
- *  - chunk vectors are removed from the index named after the diary
+ *  - chunk vectors are removed from the index named after the space
  *  - removal is idempotent: unknown paths return { deleted: false } and
  *    removing an already-absent vector never throws
- *  - scheduleIndexSave is triggered on the affected diary index
+ *  - scheduleIndexSave is triggered on the affected space index
  *
  * Note: shared tag rows remain untouched; an orphaned tag vector is removed
  * from the derived global tag index when its last file association disappears.
@@ -71,7 +71,7 @@ class FileDeleterStage extends Stage {
     const row = await metadataStore.getFileByPath(relPath);
     if (!row) return { ...info, deleted: false };
 
-    const diaryName = row.diary_name || row.diaryName || "Root";
+    const space = row.space || "Root";
     const oldChunks = await metadataStore.getChunksByFileId(row.id);
     const removedChunkIds = oldChunks.map((c) => c.id);
 
@@ -90,15 +90,15 @@ class FileDeleterStage extends Stage {
 
       if (ctx.vectorStore) {
         for (const id of removed.chunkIds) {
-          await this._safeRemove(ctx.vectorStore, diaryName, id);
+          await this._safeRemove(ctx.vectorStore, space, id);
         }
         for (const id of removed.orphanedTagIds) {
-          await this._safeRemove(ctx.vectorStore, "global_tags", id);
+          await this._safeRemove(ctx.vectorStore, "tag_vectors", id);
         }
         if (typeof ctx.vectorStore.scheduleIndexSave === "function") {
-          if (removed.chunkIds.length > 0) ctx.vectorStore.scheduleIndexSave(diaryName);
+          if (removed.chunkIds.length > 0) ctx.vectorStore.scheduleIndexSave(space);
           if (removed.orphanedTagIds.length > 0)
-            ctx.vectorStore.scheduleIndexSave("global_tags");
+            ctx.vectorStore.scheduleIndexSave("tag_vectors");
         }
       }
       return {
@@ -129,7 +129,7 @@ class FileDeleterStage extends Stage {
     await metadataStore.deleteFile(row.id);
 
     if (ctx.vectorStore && removedChunkIds.length > 0) {
-      const indexName = diaryName;
+      const indexName = space;
       for (const id of removedChunkIds) {
         await this._safeRemove(ctx.vectorStore, indexName, id);
       }

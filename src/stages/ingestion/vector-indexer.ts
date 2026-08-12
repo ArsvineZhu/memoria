@@ -9,18 +9,18 @@ import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
 
-// Global tag vector index name (mirror of KnowledgeBaseManager.tagIndex).
-const TAG_INDEX_NAME = "global_tags";
+// Canonical tag vector index name.
+const TAG_INDEX_NAME = "tag_vectors";
 
 /**
  * Writes chunk and tag vectors into the vector store after the
  * MetadataWriterStage has persisted the metadata rows.
  *
- * Mirrors the KnowledgeBaseManager._flushBatch index write section:
+ * Writes the tag vector index for the MemoryEngine ingestion stage:
  *  - stale chunk vectors (removedChunkIds) are deleted BEFORE new ones are
  *    added so a re-embedded file never leaves orphans in the index
- *  - chunk vectors go to the index named after the diary
- *  - tag vectors go to the shared 'global_tags' index
+ *  - chunk vectors go to the index named after the space
+ *  - tag vectors go to the shared 'tag_vectors' index
  *  - duplicate-key collisions are resolved via remove-then-add upsert
  *  - scheduleIndexSave is triggered for each touched index afterwards
  *
@@ -49,7 +49,7 @@ class VectorIndexerStage extends Stage {
     }
 
     const fallbackIndexName =
-      typeof info.diaryName === "string" && info.diaryName ? info.diaryName : "Root";
+      typeof info.space === "string" && info.space ? info.space : "Root";
     const currentIndexName =
       typeof info.currentIndexName === "string" && info.currentIndexName
         ? info.currentIndexName
@@ -76,7 +76,7 @@ class VectorIndexerStage extends Stage {
       await this._safeRemove(vectorStore, TAG_INDEX_NAME, Number(id));
     }
 
-    // 2. Add chunk vectors to the diary index.
+    // 2. Add chunk vectors to the space index.
     const chunkCount = Math.min(chunkEntries.length, chunkIds.length);
     for (let i = 0; i < chunkCount; i++) {
       const chunkId = at(chunkIds, i, "chunk ids");
@@ -110,7 +110,7 @@ class VectorIndexerStage extends Stage {
       }
       if (
         (tagCount > 0 || orphanedTagIds.length > 0) &&
-        ctx.config?.persistTagIndex !== false
+        ctx.config?.persistTagVectorIndex !== false
       ) {
         vectorStore.scheduleIndexSave(TAG_INDEX_NAME);
       }

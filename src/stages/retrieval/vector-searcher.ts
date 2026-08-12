@@ -13,31 +13,31 @@ import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 
 // Shared global tag vector index name (mirror of VectorIndexerStage).
-const TAG_INDEX_NAME = "global_tags";
+const TAG_INDEX_NAME = "tag_vectors";
 
 /**
- * Searches per-diary vector indices with each query vector and merges the
+ * Searches per-space vector indices with each query vector and merges the
  * hits into a single chunk-id list.
  *
- * Mirrors SearchService._searchSelectedIndices: the diary index (or a set
- * of diary indices, or every stored diary) is searched per query, results
+ * Mirrors SearchService._searchSelectedIndices: the space index (or a set
+ * of space indices, or every stored space) is searched per query, results
  * are deduped by chunk id keeping the best score, and an optional
  * tag-index pass expands matched tags to chunks of the tagged files.
  *
  * Input (from QueryEmbedderStage): { queries: [{ text, vector }] }
  * Index selection precedence:
  *   1. config.indexNames (explicit override)
- *   2. input.diaryNames
- *   3. input.diaryName
- *   4. config.searchAllIndices + metadataStore.getDistinctDiaryNames()
+ *   2. input.spaces
+ *   3. input.space
+ *   4. config.searchAllIndices + metadataStore.getDistinctSpaces()
  *   5. 'Root' (fallback)
  *
  * Config (ctx.config):
  *   - perIndexK:        candidates fetched per index (default: topK)
- *   - searchAllIndices: search every stored diary (needs metadataStore)
+ *   - searchAllIndices: search every stored space (needs metadataStore)
  *   - tagSearchEnabled: also query the tag index and expand tagged files
- *   - tagIndexName:     default 'global_tags'
- *   - tagK:             tag hits fetched per query (default 10)
+ *   - tagVectorIndexName:     default 'tag_vectors'
+ *   - tagVectorTopK:             tag hits fetched per query (default 10)
  *
  * Output: { vectorResults: [{ indexName, chunkId, score }] } sorted desc.
  */
@@ -142,11 +142,11 @@ class VectorSearcherStage extends Stage {
     if (Array.isArray(info.indexNames)) {
       return [...new Set(info.indexNames.map(String).filter(Boolean))];
     }
-    if (Array.isArray(info.diaryNames)) {
-      return [...new Set(info.diaryNames.map(String).filter(Boolean))];
+    if (Array.isArray(info.spaces)) {
+      return [...new Set(info.spaces.map(String).filter(Boolean))];
     }
-    if (typeof info.diaryName === "string") {
-      return info.diaryName ? [info.diaryName] : [];
+    if (typeof info.space === "string") {
+      return info.space ? [info.space] : [];
     }
     if (Array.isArray(info.libraries)) {
       return [...new Set(info.libraries.map(String).filter(Boolean))];
@@ -156,15 +156,15 @@ class VectorSearcherStage extends Stage {
     }
     if (config.searchAllIndices) {
       const metadataStore = ctx.metadataStore;
-      if (metadataStore && typeof metadataStore.getDistinctDiaryNames === "function") {
+      if (metadataStore && typeof metadataStore.getDistinctSpaces === "function") {
         try {
-          const names = await metadataStore.getDistinctDiaryNames();
+          const names = await metadataStore.getDistinctSpaces();
           if (names.length > 0) return names;
         } catch (e) {
           throw asMemoriaError(
             e,
             "persistence",
-            "Metadata store failed while resolving diary indexes.",
+            "Metadata store failed while resolving space indexes.",
             { retryable: true },
           );
         }
@@ -228,7 +228,7 @@ class VectorSearcherStage extends Stage {
     allowedIndexNames?: readonly string[],
   ): Promise<IndexedVectorResult[]> {
     const metadataStore = ctx.metadataStore;
-    const tagIndexName = config.tagIndexName || TAG_INDEX_NAME;
+    const tagVectorIndexName = config.tagVectorIndexName || TAG_INDEX_NAME;
     if (
       !metadataStore ||
       typeof metadataStore.getFileIdsByTagId !== "function" ||
@@ -241,11 +241,15 @@ class VectorSearcherStage extends Stage {
       return [];
     }
 
-    const tagK = Math.max(1, Math.round(Number(config.tagK) || 10));
+    const tagVectorTopK = Math.max(1, Math.round(Number(config.tagVectorTopK) || 10));
     let hits: VectorHit[] = [];
     try {
       if (!ctx.vectorStore) return [];
-      hits = await ctx.vectorStore.search(tagIndexName, queryVector, tagK);
+      hits = await ctx.vectorStore.search(
+        tagVectorIndexName,
+        queryVector,
+        tagVectorTopK,
+      );
     } catch (e) {
       throw asMemoriaError(
         e,
@@ -288,11 +292,11 @@ class VectorSearcherStage extends Stage {
           if (chunk.id == null) continue;
           if (Array.isArray(allowedIndexNames)) {
             const file = await metadataStore.getFileByChunkId(chunk.id);
-            const indexName = file?.diary_name || file?.diaryName || "Root";
+            const indexName = file?.space || "Root";
             if (!allowedIndexNames.includes(indexName)) continue;
           }
           expanded.push({
-            indexName: tagIndexName,
+            indexName: tagVectorIndexName,
             chunkId: Number(chunk.id),
             score,
           });

@@ -65,15 +65,27 @@ import { dirname, join } from 'node:path';
 import { createMemoryEngine, TDBEngine } from 'memoria';
 import FilesystemIngestionAdapter from 'memoria/adapters/filesystem';
 import { MemoriaError } from 'memoria/errors';
-import OpenAIEmbeddingProvider from 'memoria/providers/openai';
-import DashScopeEmbeddingProvider from 'memoria/providers/dashscope';
+import OpenAICompatibleEmbeddingProvider, {
+  createOpenAICompatibleReranker,
+} from 'memoria/providers/openai-compatible';
+
+const isNotExported = (error) =>
+  error instanceof Error && error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED';
 
 const require = createRequire(import.meta.url);
 const cjs = require('memoria');
 const esm = await import('memoria');
 assert.deepEqual(Object.keys(cjs).sort(), Object.keys(esm).sort());
-assert.ok(Object.keys(cjs).length >= 52);
-for (const symbol of ['QueryBuilder', 'mergeRetrievalPlan']) {
+const rootExports = [
+  'createMemoryEngine',
+  'MemoryEngine',
+  'QueryBuilder',
+  'TDBEngine',
+  'TDBStore',
+  'TriviumDBAdapter',
+];
+assert.deepEqual(Object.keys(cjs).sort(), [...rootExports].sort());
+for (const symbol of rootExports) {
   assert.equal(typeof cjs[symbol], 'function');
   assert.equal(typeof esm[symbol], 'function');
 }
@@ -83,8 +95,14 @@ assert.equal(typeof cjs.createMemoryEngine, 'function');
 assert.equal(typeof cjs.TDBEngine, 'function');
 assert.equal(typeof FilesystemIngestionAdapter, 'function');
 assert.equal(typeof MemoriaError, 'function');
-assert.equal(typeof OpenAIEmbeddingProvider, 'function');
-assert.equal(typeof DashScopeEmbeddingProvider, 'function');
+assert.equal(typeof OpenAICompatibleEmbeddingProvider, 'function');
+assert.equal(typeof createOpenAICompatibleReranker, 'function');
+for (const removedProvider of [
+  ['memoria', 'providers', 'openai'].join('/'),
+  ['memoria', 'providers', ['dash', 'scope'].join('')].join('/'),
+]) {
+  await assert.rejects(() => import(removedProvider), isNotExported);
+}
 
 const root = mkdtempSync(join(tmpdir(), 'memoria-consumer-runtime-'));
 const dimension = 8;
@@ -188,21 +206,26 @@ assert.equal(typeof index.stats, 'function');
     join(consumerDirectory, "consumer-types.ts"),
     `
 import type { EmbeddingProvider } from 'memoria';
-import OpenAIEmbeddingProvider from 'memoria/providers/openai';
-import DashScopeEmbeddingProvider from 'memoria/providers/dashscope';
+import OpenAICompatibleEmbeddingProvider, {
+  createOpenAICompatibleReranker,
+  type OpenAICompatibleRerankerOptions,
+} from 'memoria/providers/openai-compatible';
 
-const openai = new OpenAIEmbeddingProvider({
+const compatibleProvider = new OpenAICompatibleEmbeddingProvider({
   apiKey: 'type-only-test',
-  model: 'text-embedding-test',
+  apiUrl: 'https://provider.example',
+  model: 'embedding-model',
   dimension: 8,
 });
-const dashscope = new DashScopeEmbeddingProvider({
+const providers: EmbeddingProvider[] = [compatibleProvider];
+const rerankerOptions: OpenAICompatibleRerankerOptions = {
   apiKey: 'type-only-test',
-  model: 'qwen-test',
-  dimension: 8,
-});
-const providers: EmbeddingProvider[] = [openai, dashscope];
+  apiUrl: 'https://provider.example/v1/chat/completions',
+  model: 'rerank-model',
+};
+const reranker = createOpenAICompatibleReranker(rerankerOptions);
 void providers;
+void reranker;
 `,
   );
   const tscPath = resolve(repositoryRoot, "node_modules/typescript/bin/tsc");

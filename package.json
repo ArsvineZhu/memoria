@@ -1,7 +1,7 @@
 {
   "name": "memoria",
   "version": "0.1.0",
-  "description": "AI memory system with TagMemo wave algorithm, RiverMemo topology, EPA semantic analysis, and residual pyramid",
+  "description": "Canonical AI memory engine with semantic, associative, and structural retrieval backed by SQLite and optional Rust acceleration",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "main": "./dist/index.cjs",
@@ -20,13 +20,9 @@
       "types": "./dist/errors.d.ts",
       "import": "./dist/errors.js"
     },
-    "./providers/openai": {
-      "types": "./dist/providers/openai-embedding-provider.d.ts",
-      "import": "./dist/providers/openai-embedding-provider.js"
-    },
-    "./providers/dashscope": {
-      "types": "./dist/providers/dashscope-embedding-provider.d.ts",
-      "import": "./dist/providers/dashscope-embedding-provider.js"
+    "./providers/openai-compatible": {
+      "types": "./dist/providers/openai-compatible.d.ts",
+      "import": "./dist/providers/openai-compatible.js"
     }
   },
   "files": [
@@ -43,14 +39,22 @@
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "oxlint src tests examples scripts --type-aware --deny-warnings",
+    "lint": "oxlint src tests tutorials scripts --type-aware --deny-warnings",
     "build": "tsc -p tsconfig.build.json",
     "build:test": "tsc -p tsconfig.test.json",
-    "demo:real-embed": "corepack pnpm build:test && node dist-test/examples/real-embed/demo-recall.js",
+    "tutorial:01": "corepack pnpm build:test && node dist-test/tutorials/01-first-memory/main.js",
+    "tutorial:02": "corepack pnpm build:test && node dist-test/tutorials/02-mdx-filesystem/main.js",
+    "tutorial:03": "corepack pnpm build:test && node dist-test/tutorials/03-search-and-scope/main.js",
+    "tutorial:04": "corepack pnpm build:test && node dist-test/tutorials/04-retrieval-plans/main.js",
+    "tutorial:05": "corepack pnpm build:test && node dist-test/tutorials/05-expansion-and-reranking/main.js",
+    "tutorial:06": "corepack pnpm build:test && node dist-test/tutorials/06-persistence-and-maintenance/main.js",
+    "tutorial:07": "corepack pnpm build:test && node dist-test/tutorials/07-tdb/main.js",
+    "tutorial:08": "corepack pnpm build:test && node dist-test/tutorials/08-provider-selection/main.js",
+    "tutorials:run": "corepack pnpm build:test && node scripts/run-tutorials.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "verify:docs": "node scripts/verify-docs.mjs",
+    "verify:docs": "node scripts/verify-docs.mjs && node scripts/verify-tutorials.mjs",
     "typecheck:public": "corepack pnpm build && tsc -p tsconfig.public.json --noEmit",
-    "test": "corepack pnpm build && corepack pnpm build:test && node --test dist-test/tests/algorithms/*.test.js dist-test/tests/algorithms/topology/*.test.js dist-test/tests/adapters/*.test.js dist-test/tests/core/*.test.js dist-test/tests/engine/*.test.js dist-test/tests/integration/*.test.js dist-test/tests/pipelines/*.test.js dist-test/tests/providers/*.test.js dist-test/tests/retrieval/*.test.js dist-test/tests/stages/*.test.js dist-test/tests/tdb/*.test.js dist-test/tests/utils/*.test.js dist-test/tests/consumer/*.test.js",
+    "test": "corepack pnpm build && corepack pnpm build:test && node --test dist-test/tests/algorithms/*.test.js dist-test/tests/algorithms/tag-graph/*.test.js dist-test/tests/adapters/*.test.js dist-test/tests/core/*.test.js dist-test/tests/engine/*.test.js dist-test/tests/integration/*.test.js dist-test/tests/pipelines/*.test.js dist-test/tests/providers/*.test.js dist-test/tests/retrieval/*.test.js dist-test/tests/stages/*.test.js dist-test/tests/tdb/*.test.js dist-test/tests/utils/*.test.js dist-test/tests/consumer/*.test.js",
     "test:native": "corepack pnpm build:test && node --test dist-test/tests/core/test-load-native.test.js dist-test/tests/providers/test-vexus-vector-store.test.js",
     "verify:public": "corepack pnpm typecheck:public && corepack pnpm test:native",
     "verify:pack": "corepack pnpm build && node scripts/verify-packed-consumer.mjs"

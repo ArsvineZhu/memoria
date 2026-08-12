@@ -25,12 +25,12 @@ documentation or changed by this work.
   distributed across several files with repeated commands and paths.
 - `rust-vexus-lite/AGENTS.md` is correctly scoped as a nested instruction file,
   but its main-runtime reference points at the absent historical
-  `KnowledgeBaseManager.js` instead of the current TypeScript integration.
+  a historical JavaScript integration instead of the current TypeScript implementation.
 - There is no project-local `SKILL.md` or `Skills/` directory. The repository
   must not copy system-level skills into the project; AI-only workflow rules
   belong in `AGENTS.md`, while human procedures belong in `docs/`.
 - The current package source of truth is `package.json`, `src/`, tests,
-  examples, `.github/workflows/ci.yml`, and `rust-vexus-lite/` metadata. Docs
+  tutorials, `.github/workflows/ci.yml`, and `rust-vexus-lite/` metadata. Docs
   must not invent commands or treat generated `dist/` output as source.
 
 ## Chosen structure
@@ -80,7 +80,7 @@ paths; `INDEX.md` links to `docs/INDEX.md`, `CONTRIBUTING.md`, and `AGENTS.md`.
    do not redefine repository-wide scope.
 7. Source, tests, package metadata, CI, and example entry points outrank prose
    when a documentation statement conflicts with implementation.
-8. Examples must use repository-root commands and paths that exist in the
+8. Tutorials must use repository-root commands and paths that exist in the
    current tree. Volatile counts, generated filenames, and historical phase
    labels are removed or explicitly labeled as snapshots.
 

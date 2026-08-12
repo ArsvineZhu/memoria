@@ -12,16 +12,16 @@ import VectorSearcherStage from "../stages/retrieval/vector-searcher.js";
 import BM25SearcherStage from "../stages/retrieval/bm25-searcher.js";
 import CandidateMergerStage from "../stages/retrieval/candidate-merger.js";
 
-import EPAProjectorStage from "../stages/memo/epa-projector.js";
-import ResidualPyramidStage from "../stages/memo/residual-pyramid.js";
-import TagExpanderStage from "../stages/memo/tag-expander.js";
-import VectorReshaperStage from "../stages/memo/vector-reshaper.js";
-import GeodesicRerankerStage from "../stages/memo/geodesic-reranker.js";
-import TagMemoV9Stage from "../stages/memo/tagmemo-v9.js";
-import TagMemoV10Stage from "../stages/memo/tagmemo-v10.js";
-import RiverMemoStage from "../stages/memo/rivermemo.js";
-import NativeMemoRuntimeStage from "../stages/memo/native-memo-runtime.js";
-import TopologyV3Stage from "../stages/memo/topology-v3.js";
+import TagBasisProjectionStage from "../stages/tag-retrieval/tag-basis-projection.js";
+import TagResidualDecompositionStage from "../stages/tag-retrieval/tag-residual-decomposition.js";
+import TagExpanderStage from "../stages/tag-retrieval/tag-expander.js";
+import EmbeddingRerankStage from "../stages/tag-retrieval/embedding-reranker.js";
+import PropagationSupportRerankerStage from "../stages/tag-retrieval/propagation-support-reranker.js";
+import ActivationPropagationStage from "../stages/tag-retrieval/activation-propagation.js";
+import GraphDiffusionStage from "../stages/tag-retrieval/graph-diffusion.js";
+import PropagationHistoryStage from "../stages/tag-retrieval/propagation-history.js";
+import PropagationStructureRerankerStage from "../stages/tag-retrieval/propagation-structure-reranker.js";
+import NativeTagRetrievalStage from "../stages/tag-retrieval/native-tag-retrieval.js";
 
 import ResultDeduplicatorStage from "../stages/postprocess/result-deduplicator.js";
 import ExternalRerankerStage from "../stages/postprocess/external-reranker.js";
@@ -61,26 +61,24 @@ export interface SearchPipelineOptions {
 /**
  * Default gate values for the search chain.
  *
- * Phase 4.5 decisions: the memo signal stages that mirror the tag-boosted
- * search path (EPA projection + residual pyramid) are ON by default;
- * every expansion / rerank / tagmemo engine stage is opt-in.
+ * The basis and residual tag-retrieval stages are ON by default; every
+ * expansion, propagation, and rerank stage is opt-in.
  */
 const DEFAULT_SEARCH_GATES = {
-  epaProjectionEnabled: true,
-  residualPyramidEnabled: true,
+  tagBasisProjectionEnabled: true,
+  tagResidualDecompositionEnabled: true,
   dedupeEnabled: true,
-  geodesicRerankEnabled: false,
+  propagationSupportRerankEnabled: false,
   associatorEnabled: false,
 };
 
 /**
  * QueryVectorBridgeStage — internal adapter between the retrieval and
- * memo layers.
+ * tag-retrieval layers.
  *
- * QueryEmbedderStage emits `queries: [{ text, vector }]`; every memo /
- * postprocess stage (EPAProjector, ResidualPyramid, VectorReshaper,
- * TagExpander, ResultDeduplicator) consumes a single `queryVector`.
- * This bridge publishes the primary query vector so the memo chain
+ * QueryEmbedderStage emits `queries: [{ text, vector }]`; every tag-retrieval
+ * or postprocess stage consumes a single `queryVector`.
+ * This bridge publishes the primary query vector so the tag-retrieval chain
  * does not need to recompute it.
  *
  * @private
@@ -117,14 +115,15 @@ function mergeConfig(
   extra: MemoryConfigOverrides = {},
 ): MemoryConfigOverrides {
   const result = { ...base };
+  const target = result as Record<string, unknown>;
   for (const [key, value] of Object.entries(extra)) {
-    if (value !== undefined) result[key] = value;
+    if (value !== undefined) target[key] = value;
   }
   return result;
 }
 
 /**
- * Automatic planning is additive for legacy callers. A pre-existing config
+ * Automatic planning is additive for configured callers. A pre-existing config
  * gate that was deliberately enabled must not be switched off merely because
  * the current natural-language query has no cue for that stage. Explicit
  * retrievalPlan input remains authoritative and can disable every gate.
@@ -135,6 +134,7 @@ function mergeAutomaticPlan(
   requestedPlan?: RetrievalPlanInput | null,
 ): MemoryConfigOverrides {
   const result = mergeConfig(base, planned);
+  const target = result as Record<string, unknown>;
   const autoPlan =
     requestedPlan && requestedPlan.strategy === "auto" ? requestedPlan : null;
   const overrides = new Set<string>();
@@ -159,7 +159,6 @@ function mergeAutomaticPlan(
   if (autoPlan?.externalRerank) {
     if (hasOwn(autoPlan.externalRerank, "enabled")) {
       overrides.add("externalRerankEnabled");
-      overrides.add("useLLMRerank");
     }
     if (hasOwn(autoPlan.externalRerank, "mode")) overrides.add("externalRerankMode");
     if (hasOwn(autoPlan.externalRerank, "alpha")) overrides.add("externalRerankAlpha");
@@ -185,45 +184,45 @@ function mergeAutomaticPlan(
     "maxContentLength",
     "dedupeEnabled",
     "externalRerankEnabled",
-    "useLLMRerank",
     "externalRerankMode",
     "externalRerankAlpha",
     "truncateEnabled",
     "truncateMinScore",
     "tagExpansionEnabled",
-    "vectorReshapeEnabled",
+    "embeddingRerankEnabled",
     "associatorEnabled",
     "retrievalFilters",
     "fullDocumentExpansionEnabled",
   ];
   for (const key of preserveKeys) {
-    if (base[key] !== undefined && !overrides.has(key)) result[key] = base[key];
+    if (base[key as keyof MemoryConfigOverrides] !== undefined && !overrides.has(key)) {
+      target[key] = base[key as keyof MemoryConfigOverrides];
+    }
   }
   for (const key of [
-    "tagMemoV9Enabled",
-    "tagMemoV10Enabled",
-    "riverMemoEnabled",
-    "topologyV3Enabled",
+    "tagBasisProjectionEnabled",
+    "tagResidualDecompositionEnabled",
+    "tagGraphPropagationEnabled",
+    "propagationSupportRerankEnabled",
+    "propagationStructureRerankEnabled",
+    "propagationHistoryEnabled",
+    "nativeTagRetrievalEnabled",
     "expansionEnabled",
     "fullDocumentExpansionEnabled",
     "relationExpansionEnabled",
     "timeDecayEnabled",
-    "geodesicRerankEnabled",
+    "embeddingRerankEnabled",
     "associatorEnabled",
     "truncateEnabled",
   ]) {
-    if (planned[key] === true || base[key] === true) result[key] = true;
+    if (
+      planned[key as keyof MemoryConfigOverrides] === true ||
+      base[key as keyof MemoryConfigOverrides] === true
+    ) {
+      target[key] = true;
+    }
   }
 
-  // A legacy caller that enabled RiverMemo without the new versioned gate
-  // keeps the old JS implementation. Native Topology V3 is selected by the
-  // typed plan or by automatic planning on an otherwise neutral config.
-  if (base.riverMemoEnabled === true && base.topologyV3Enabled !== true) {
-    result.topologyV3Enabled = false;
-  }
-  if (base.tagMemoV9Enabled === true && base.tagMemoV10Enabled !== true) {
-    result.tagMemoV10Enabled = false;
-  }
   return result;
 }
 
@@ -233,20 +232,20 @@ function mergeAutomaticPlan(
  * Stage chain (defaults marked with ● are ON by default):
  *
  *   1. queryEmbedder      embed the raw query (+ optional expansion)
- *   2. queryVectorBridge   derive queryVector for the memo layers
- *   3. searchScopeResolver  resolve one authoritative diary scope
- *   4. nativeMemoRuntime    optional Rust Memo observation          [gate]
- *   5. vectorSearcher       per-diary vector retrieval
+ *   2. queryVectorBridge   derive queryVector for the tag-retrieval layers
+ *   3. searchScopeResolver  resolve one authoritative space scope
+ *   4. tagRetrievalRuntime    optional Rust tag-retrieval observation [gate]
+ *   5. vectorSearcher       per-space vector retrieval
  *   6. bm25Searcher         sparse keyword retrieval
  *   7. candidateMerger      hybrid fusion (vector + BM25)
- *   8. epaProjector         ● semantic depth analysis of the query
- *   9. residualPyramid      ● tag-subspace decomposition of the query
- *  10. tagMemoV9            wave propagation over tagGraph        [gate]
- *  11. tagMemoV10           dual scaled-field diffusion          [gate]
- *  12. topologyV3           Rust RiverMemo Topology V3            [gate]
+ *   8. tagBasisProjection         ● projection concentration analysis of the query
+ *   9. tagResidualDecomposition      ● tag-subspace decomposition of the query
+ *  10. activationPropagation            activation propagation over the tag association graph [gate]
+ *  11. graphDiffusion           graph diffusion                          [gate]
+ *  12. nativeTagRetrieval           Rust tag-retrieval stages             [gate]
  *  13. tagExpander          tag-driven candidate expansion       [gate]
- *  14. vectorReshaper       cosine re-ranking of candidates      [gate]
- *  15. geodesicReranker     tag-energy reranking                 [gate]
+ *  14. embeddingReranker       cosine re-ranking of candidates      [gate]
+ *  15. propagationSupportReranker     activation-support reranking          [gate]
  *  16. relationExpansion    explicit/derived relation expansion  [gate]
  *  17. expander             same-file sibling expansion          [gate]
  *  18. associator           tag/vector related chunks            [gate]
@@ -257,11 +256,11 @@ function mergeAutomaticPlan(
  *  23. candidateFilter      final hard candidate scope            [gate]
  *  24. resultFormatter      hydrated result envelope
  *
- * Gates (config keys): epaProjectionEnabled (default true),
- * residualPyramidEnabled (default true), nativeMemoEnabled,
- * tagMemoV9Enabled, tagMemoV10Enabled, riverMemoEnabled,
- * topologyV3Enabled, tagExpansionEnabled, vectorReshapeEnabled,
- * externalRerankEnabled (alias useLLMRerank), geodesicRerankEnabled,
+ * Gates (config keys): tagBasisProjectionEnabled (default true),
+ * tagResidualDecompositionEnabled (default true), nativeTagRetrievalEnabled,
+ * tagGraphPropagationEnabled, propagationHistoryEnabled, propagationStructureRerankEnabled,
+ * nativeTagRetrievalEnabled, tagExpansionEnabled, embeddingRerankEnabled,
+ * externalRerankEnabled, propagationSupportRerankEnabled,
  * relationExpansionEnabled, timeDecayEnabled, truncateEnabled,
  * expansionEnabled, associatorEnabled.
  * dedupeEnabled is honored inside the stage itself (it lives in the
@@ -270,13 +269,13 @@ function mergeAutomaticPlan(
  * Usage:
  *   const pipeline = new SearchPipeline(config);
  *   const out = await pipeline.run(
- *     { query: '…', options: { diaryNames, topK, … } },
+ *     { query: '…', options: { spaces, topK, … } },
  *     ctx
  *   );
  *
  * Result envelope: { … inputs, queries, vectorResults, bm25Results,
- * mergedCandidates, epa?, pyramid?, tagMemo?, geodesic?, riverMemo?,
- * topologyV3?, associatorStats?, results: [ …hydrated chunks], resultCount }.
+ * mergedCandidates, tagBasisProjection?, tagResidualDecomposition?, tagGraphPropagation?, propagationHistory?, propagationSupport?, propagationStructure?,
+ * nativeTagRetrieval?, associatorStats?, results: [ …hydrated chunks], resultCount }.
  */
 class SearchPipeline extends Pipeline {
   config: MemoryConfigOverrides;
@@ -318,8 +317,8 @@ class SearchPipeline extends Pipeline {
       new SearchScopeResolverStage(),
     ];
 
-    if (config.nativeMemoEnabled === true || config.topologyV3Enabled === true) {
-      stages.push(new NativeMemoRuntimeStage());
+    if (config.nativeTagRetrievalEnabled === true) {
+      stages.push(new NativeTagRetrievalStage());
     }
     stages.push(
       new VectorSearcherStage(),
@@ -338,22 +337,23 @@ class SearchPipeline extends Pipeline {
         (filters as Record<string, unknown>).metadata !== undefined);
     if (hasChunkFilters) stages.splice(3, 0, new RetrievalFilterResolverStage());
 
-    if (config.epaProjectionEnabled !== false) stages.push(new EPAProjectorStage());
-    if (config.residualPyramidEnabled !== false)
-      stages.push(new ResidualPyramidStage());
-    if (config.tagMemoV9Enabled === true) stages.push(new TagMemoV9Stage());
-    if (config.tagMemoV10Enabled === true) stages.push(new TagMemoV10Stage());
-    if (config.topologyV3Enabled === true) {
-      stages.push(new TopologyV3Stage());
-    } else if (config.riverMemoEnabled === true) {
-      // Preserve the legacy JS RiverMemo gate for callers that explicitly
-      // selected it without requesting the native Topology V3 contract.
-      stages.push(new RiverMemoStage());
-    }
+    if (config.tagBasisProjectionEnabled !== false)
+      stages.push(new TagBasisProjectionStage());
+    if (config.tagResidualDecompositionEnabled !== false)
+      stages.push(new TagResidualDecompositionStage());
+    if (config.tagGraphPropagationEnabled === true)
+      stages.push(new ActivationPropagationStage());
+    if (config.tagGraphPropagationEnabled === true)
+      stages.push(new GraphDiffusionStage());
+    if (config.propagationHistoryEnabled === true)
+      stages.push(new PropagationHistoryStage());
+    if (config.propagationStructureRerankEnabled === true)
+      stages.push(new PropagationStructureRerankerStage());
 
     if (config.tagExpansionEnabled === true) stages.push(new TagExpanderStage());
-    if (config.vectorReshapeEnabled === true) stages.push(new VectorReshaperStage());
-    if (config.geodesicRerankEnabled === true) stages.push(new GeodesicRerankerStage());
+    if (config.embeddingRerankEnabled === true) stages.push(new EmbeddingRerankStage());
+    if (config.propagationSupportRerankEnabled === true)
+      stages.push(new PropagationSupportRerankerStage());
 
     // All candidate-producing expansions run before the common postprocess
     // tail. This keeps dedupe, external rerank, decay, truncation and the
@@ -366,8 +366,7 @@ class SearchPipeline extends Pipeline {
 
     stages.push(new ResultDeduplicatorStage());
 
-    if (config.externalRerankEnabled === true || config.useLLMRerank === true)
-      stages.push(new ExternalRerankerStage());
+    if (config.externalRerankEnabled === true) stages.push(new ExternalRerankerStage());
     if (config.timeDecayEnabled === true) stages.push(new TimeDecayStage());
     if (config.truncateEnabled === true) stages.push(new TruncatorStage());
 
@@ -442,7 +441,7 @@ class SearchPipeline extends Pipeline {
    * The pipeline gates are merged underneath the caller-supplied context
    * config, so explicit per-run flags always win while unset keys keep
    * the phase-4.5 defaults. `input.options` is flattened into the payload
-   * (diaryNames, topK, …) so downstream stages pick it up as-is.
+   * (spaces, topK, …) so downstream stages pick it up as-is.
    *
    * @param {{ query: string, options?: object }} input
    * @param {import('../core/context.js').PipelineContext} ctx
@@ -480,22 +479,23 @@ class SearchPipeline extends Pipeline {
               : undefined,
         );
     const strategySource = decision.strategySource;
-    let tagGraph = ctx.tagGraph;
-    let tagGraphLoadError: string | undefined;
+    let tagAssociationGraph = ctx.tagAssociationGraph;
+    let tagAssociationGraphLoadError: string | undefined;
     if (
-      !(tagGraph instanceof Map) &&
-      (runConfig.tagMemoV9Enabled === true || runConfig.tagMemoV10Enabled === true) &&
+      !(tagAssociationGraph instanceof Map) &&
+      runConfig.tagGraphPropagationEnabled === true &&
       typeof ctx.metadataStore?.buildCooccurrenceMatrix === "function"
     ) {
       try {
-        tagGraph = await ctx.metadataStore.buildCooccurrenceMatrix();
+        tagAssociationGraph = await ctx.metadataStore.buildCooccurrenceMatrix();
       } catch (error) {
-        tagGraph = new Map();
-        tagGraphLoadError = error instanceof Error ? error.message : String(error);
+        tagAssociationGraph = new Map();
+        tagAssociationGraphLoadError =
+          error instanceof Error ? error.message : String(error);
       }
     }
-    const riverStateStore =
-      ctx.riverStateStore ||
+    const propagationHistoryStore =
+      ctx.propagationHistoryStore ||
       (typeof ctx.metadataStore?.getKv === "function" &&
       typeof ctx.metadataStore?.setKv === "function"
         ? {
@@ -506,8 +506,8 @@ class SearchPipeline extends Pipeline {
     const runCtx: PipelineContextLike = {
       ...ctx,
       config: runConfig as import("../types.js").MemoryConfig,
-      tagGraph,
-      riverStateStore,
+      tagAssociationGraph,
+      propagationHistoryStore,
     };
 
     const payload = { ...source };
@@ -530,7 +530,9 @@ class SearchPipeline extends Pipeline {
         queryOverrideApplied: decision.queryOverrideApplied,
       },
     });
-    if (tagGraphLoadError) payload.tagMemoGraphLoadError = tagGraphLoadError;
+    if (tagAssociationGraphLoadError) {
+      payload.tagAssociationGraphLoadError = tagAssociationGraphLoadError;
+    }
 
     const activePipeline = this.customStages
       ? this

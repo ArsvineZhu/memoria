@@ -25,11 +25,7 @@ test("published package declares an ESM public boundary and CJS native scope", a
         types?: string;
         import?: string;
       };
-      "./providers/openai"?: {
-        types?: string;
-        import?: string;
-      };
-      "./providers/dashscope"?: {
+      "./providers/openai-compatible"?: {
         types?: string;
         import?: string;
       };
@@ -51,18 +47,28 @@ test("published package declares an ESM public boundary and CJS native scope", a
     types: "./dist/errors.d.ts",
     import: "./dist/errors.js",
   });
-  assert.deepEqual(packageJson.exports?.["./providers/openai"], {
-    types: "./dist/providers/openai-embedding-provider.d.ts",
-    import: "./dist/providers/openai-embedding-provider.js",
+  assert.deepEqual(packageJson.exports?.["./providers/openai-compatible"], {
+    types: "./dist/providers/openai-compatible.d.ts",
+    import: "./dist/providers/openai-compatible.js",
   });
-  assert.deepEqual(packageJson.exports?.["./providers/dashscope"], {
-    types: "./dist/providers/dashscope-embedding-provider.d.ts",
-    import: "./dist/providers/dashscope-embedding-provider.js",
-  });
+  const exports = (packageJson.exports ?? {}) as Record<string, unknown>;
+  assert.equal(exports[[".", "providers", "openai"].join("/")], undefined);
+  assert.equal(
+    exports[[".", "providers", ["dash", "scope"].join("")].join("/")],
+    undefined,
+  );
   assert.equal(Object.keys(packageJson.exports || {}).includes("./*"), false);
   assert.equal(packageJson.main, "./dist/index.cjs");
   assert.equal(packageJson.types, "./dist/index.d.ts");
   assert.ok(packageJson.files?.includes("rust-vexus-lite/package.json"));
+  assert.equal(
+    packageJson.files?.some((entry) => entry.startsWith("tutorials")),
+    false,
+  );
+  assert.equal(
+    packageJson.files?.some((entry) => entry.startsWith("data")),
+    false,
+  );
 
   const nativePackageJson = JSON.parse(
     await readFile(resolve(process.cwd(), "rust-vexus-lite/package.json"), "utf8"),

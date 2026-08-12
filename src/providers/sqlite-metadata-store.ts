@@ -30,6 +30,7 @@ import type {
   UnknownRecord,
 } from "../types.js";
 import { relationDocumentAliases } from "../retrieval/relation-graph.js";
+import { MemoriaError } from "../errors.js";
 
 const requireFromProvider = createRequire(import.meta.url);
 let DatabaseCtor: typeof BetterSqlite3 | null = null;
@@ -168,7 +169,7 @@ interface SqliteConfig {
 interface FileQueryRow {
   id: number;
   path: string;
-  diary_name: string;
+  space: string;
   checksum: string;
   mtime: number;
   size: number;
@@ -231,10 +232,10 @@ interface RelationQueryRow {
 }
 
 const SCHEMA_SQL = `
-    CREATE TABLE IF NOT EXISTS files (
+    CREATE TABLE files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         path TEXT UNIQUE NOT NULL,
-        diary_name TEXT NOT NULL,
+        space TEXT NOT NULL,
         checksum TEXT NOT NULL,
         mtime INTEGER NOT NULL,
         size INTEGER NOT NULL,
@@ -244,7 +245,7 @@ const SCHEMA_SQL = `
         source_json TEXT,
         metadata_json TEXT
     );
-    CREATE TABLE IF NOT EXISTS chunks (
+    CREATE TABLE chunks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         file_id INTEGER NOT NULL,
         chunk_index INTEGER NOT NULL,
@@ -252,12 +253,12 @@ const SCHEMA_SQL = `
         vector BLOB,
         FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
     );
-    CREATE TABLE IF NOT EXISTS tags (
+    CREATE TABLE tags (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
         vector BLOB
     );
-    CREATE TABLE IF NOT EXISTS file_tags (
+    CREATE TABLE file_tags (
         file_id INTEGER NOT NULL,
         tag_id INTEGER NOT NULL,
         position INTEGER NOT NULL DEFAULT 0,
@@ -265,24 +266,22 @@ const SCHEMA_SQL = `
         FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE,
         FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
-    CREATE TABLE IF NOT EXISTS tag_intrinsic_residuals (
+    CREATE TABLE tag_residual_metrics (
         tag_id INTEGER PRIMARY KEY,
         residual_energy REAL NOT NULL,
         neighbor_count INTEGER NOT NULL,
-        computed_at TEXT NOT NULL DEFAULT (datetime('now')),
-        raw_residual_ratio REAL,
-        v8_3_compat_gain REAL,
-        v9_anchor_gain REAL,
-        model_sig TEXT,
-        artifact_sig TEXT,
-        algorithm_version TEXT,
-        config_hash TEXT,
+        residual_ratio REAL NOT NULL DEFAULT 0,
+        model_sig TEXT NOT NULL DEFAULT '',
+        artifact_sig TEXT NOT NULL DEFAULT '',
+        algorithm_version TEXT NOT NULL DEFAULT '',
+        config_hash TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'computed',
+        computed_at INTEGER NOT NULL,
         FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
-    CREATE TABLE IF NOT EXISTS tagmemo_artifacts (
+    CREATE TABLE tag_derived_artifacts (
         artifact_sig TEXT PRIMARY KEY,
-        asset_type TEXT NOT NULL,
+        artifact_type TEXT NOT NULL,
         model_sig TEXT NOT NULL,
         graph_generation TEXT NOT NULL,
         algorithm_version TEXT NOT NULL,
@@ -292,9 +291,7 @@ const SCHEMA_SQL = `
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_tagmemo_artifacts_lookup
-        ON tagmemo_artifacts(asset_type, model_sig, status);
-    CREATE TABLE IF NOT EXISTS tag_pair_similarity (
+    CREATE TABLE tag_pair_similarity (
         tag_a INTEGER NOT NULL,
         tag_b INTEGER NOT NULL,
         similarity REAL NOT NULL,
@@ -304,9 +301,7 @@ const SCHEMA_SQL = `
         FOREIGN KEY(tag_a) REFERENCES tags(id) ON DELETE CASCADE,
         FOREIGN KEY(tag_b) REFERENCES tags(id) ON DELETE CASCADE
     );
-    CREATE INDEX IF NOT EXISTS idx_pair_sim_model
-        ON tag_pair_similarity(model_sig);
-    CREATE TABLE IF NOT EXISTS tag_pair_similarity_status (
+    CREATE TABLE tag_pair_similarity_status (
         tag_a INTEGER NOT NULL,
         tag_b INTEGER NOT NULL,
         model_sig TEXT NOT NULL,
@@ -319,16 +314,11 @@ const SCHEMA_SQL = `
         FOREIGN KEY(tag_a) REFERENCES tags(id) ON DELETE CASCADE,
         FOREIGN KEY(tag_b) REFERENCES tags(id) ON DELETE CASCADE
     );
-    CREATE INDEX IF NOT EXISTS idx_pair_sim_status_artifact
-        ON tag_pair_similarity_status(artifact_sig, status);
-    CREATE INDEX IF NOT EXISTS idx_pair_sim_status_model
-        ON tag_pair_similarity_status(model_sig);
-    CREATE TABLE IF NOT EXISTS rivermemo_artifacts (
+    CREATE TABLE tag_graph_artifacts (
         artifact_sig TEXT PRIMARY KEY,
         schema_version TEXT NOT NULL,
         algorithm_version TEXT NOT NULL,
-        source_v9_artifact_sig TEXT NOT NULL,
-        source_graph_generation TEXT NOT NULL,
+        graph_generation TEXT NOT NULL,
         model_sig TEXT NOT NULL,
         config_hash TEXT NOT NULL,
         database_generation TEXT NOT NULL,
@@ -344,23 +334,12 @@ const SCHEMA_SQL = `
         updated_at INTEGER NOT NULL,
         published_at INTEGER
     );
-    CREATE INDEX IF NOT EXISTS idx_rivermemo_artifacts_compatible
-        ON rivermemo_artifacts(
-            source_v9_artifact_sig,
-            model_sig,
-            config_hash,
-            database_generation,
-            status,
-            updated_at
-        );
-    CREATE INDEX IF NOT EXISTS idx_rivermemo_artifacts_status
-        ON rivermemo_artifacts(status, updated_at);
-    CREATE TABLE IF NOT EXISTS kv_store (
+    CREATE TABLE kv_store (
         key TEXT PRIMARY KEY,
         value TEXT,
         vector BLOB
     );
-    CREATE TABLE IF NOT EXISTS memory_relations (
+    CREATE TABLE memory_relations (
         id TEXT PRIMARY KEY,
         from_key TEXT NOT NULL,
         to_key TEXT NOT NULL,
@@ -381,25 +360,127 @@ const SCHEMA_SQL = `
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_memory_relations_from
-        ON memory_relations(from_key, active, status);
-    CREATE INDEX IF NOT EXISTS idx_memory_relations_to
-        ON memory_relations(to_key, active, status);
-    CREATE INDEX IF NOT EXISTS idx_memory_relations_origin
-        ON memory_relations(origin, status, updated_at);
+    CREATE INDEX idx_files_space ON files(space);
+    CREATE INDEX idx_chunks_file ON chunks(file_id);
+    CREATE INDEX idx_file_tags_tag ON file_tags(tag_id);
+    CREATE INDEX idx_file_tags_composite ON file_tags(tag_id, file_id);
+    CREATE UNIQUE INDEX idx_files_document_id ON files(document_id) WHERE document_id IS NOT NULL;
+    CREATE INDEX idx_tag_derived_artifacts_lookup ON tag_derived_artifacts(artifact_type, model_sig, status);
+    CREATE INDEX idx_tag_pair_similarity_model ON tag_pair_similarity(model_sig);
+    CREATE INDEX idx_tag_pair_similarity_status_artifact ON tag_pair_similarity_status(artifact_sig, status);
+    CREATE INDEX idx_tag_pair_similarity_status_model ON tag_pair_similarity_status(model_sig);
+    CREATE INDEX idx_tag_graph_artifacts_status ON tag_graph_artifacts(status, updated_at);
+    CREATE INDEX idx_memory_relations_from ON memory_relations(from_key, active, status);
+    CREATE INDEX idx_memory_relations_to ON memory_relations(to_key, active, status);
+    CREATE INDEX idx_memory_relations_origin ON memory_relations(origin, status, updated_at);
 `;
 
-const METADATA_GENERATION_KEY = "memoria.metadata_generation";
-const VECTOR_GENERATION_KEY = "memoria.vector_generation";
-const VECTOR_DIRTY_KEY = "memoria.vector_dirty";
-const RELATION_GENERATION_KEY = "memoria.relation_generation";
+const CANONICAL_SCHEMA_VERSION = 1;
+const CANONICAL_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  files: [
+    "id",
+    "path",
+    "space",
+    "checksum",
+    "mtime",
+    "size",
+    "updated_at",
+    "document_id",
+    "revision",
+    "source_json",
+    "metadata_json",
+  ],
+  chunks: ["id", "file_id", "chunk_index", "content", "vector"],
+  tags: ["id", "name", "vector"],
+  file_tags: ["file_id", "tag_id", "position"],
+  tag_residual_metrics: [
+    "tag_id",
+    "residual_energy",
+    "neighbor_count",
+    "residual_ratio",
+    "model_sig",
+    "artifact_sig",
+    "algorithm_version",
+    "config_hash",
+    "status",
+    "computed_at",
+  ],
+  tag_derived_artifacts: [
+    "artifact_sig",
+    "artifact_type",
+    "model_sig",
+    "graph_generation",
+    "algorithm_version",
+    "config_hash",
+    "effective_config",
+    "status",
+    "created_at",
+    "updated_at",
+  ],
+  tag_pair_similarity: ["tag_a", "tag_b", "similarity", "model_sig", "computed_at"],
+  tag_pair_similarity_status: [
+    "tag_a",
+    "tag_b",
+    "model_sig",
+    "artifact_sig",
+    "status",
+    "similarity",
+    "min_similarity",
+    "computed_at",
+  ],
+  tag_graph_artifacts: [
+    "artifact_sig",
+    "schema_version",
+    "algorithm_version",
+    "graph_generation",
+    "model_sig",
+    "config_hash",
+    "database_generation",
+    "provenance_generation",
+    "payload_codec",
+    "payload_checksum",
+    "payload",
+    "status",
+    "error_message",
+    "node_count",
+    "edge_count",
+    "created_at",
+    "updated_at",
+    "published_at",
+  ],
+  kv_store: ["key", "value", "vector"],
+  memory_relations: [
+    "id",
+    "from_key",
+    "to_key",
+    "kind",
+    "origin",
+    "confidence",
+    "weight",
+    "evidence",
+    "provenance_json",
+    "source_revision",
+    "algorithm_version",
+    "source_span_start",
+    "source_span_end",
+    "target_anchor",
+    "status",
+    "active",
+    "created_at",
+    "updated_at",
+  ],
+};
+
+const METADATA_GENERATION_KEY = "metadata_generation";
+const VECTOR_GENERATION_KEY = "vector_generation";
+const VECTOR_DIRTY_KEY = "vector_dirty";
+const RELATION_GENERATION_KEY = "relation_generation";
 
 /**
  * SQLite-backed metadata store using better-sqlite3.
  *
  * Consolidates schema initialization, file/chunk/tag CRUD, co-occurrence
- * matrix building, and health-check logic from modules/knowledgeBase/
- * (schemaManager.js, sqliteHealthManager.js, ingestionPipeline.js).
+ * matrix building, and health-check logic for the canonical metadata schema.
  *
  * All methods are async to satisfy the MetadataStore interface, but the
  * underlying better-sqlite3 calls are synchronous.
@@ -450,62 +531,54 @@ class SqliteMetadataStore extends MetadataStore {
   }
 
   _initializeSchema(): void {
-    this.db.exec(SCHEMA_SQL);
-    const columns = this.db.prepare("PRAGMA table_info(files)").all() as Array<{
-      name: string;
-    }>;
-    const existingColumns = new Set(columns.map((column) => column.name));
-    const migrations: Array<[string, string]> = [
-      ["document_id", "TEXT"],
-      ["revision", "TEXT"],
-      ["source_json", "TEXT"],
-      ["metadata_json", "TEXT"],
-    ];
-    for (const [name, definition] of migrations) {
-      if (!existingColumns.has(name)) {
-        this.db.exec(`ALTER TABLE files ADD COLUMN ${name} ${definition}`);
+    const userTables = (
+      this.db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    const expectedTables = Object.keys(CANONICAL_TABLE_COLUMNS).sort();
+    const userVersion = Number(this.db.pragma("user_version", { simple: true }));
+
+    if (userTables.length === 0 && userVersion === 0) {
+      this.db.exec(SCHEMA_SQL);
+      this.db.pragma(`user_version = ${CANONICAL_SCHEMA_VERSION}`);
+    } else {
+      const tablesMatch =
+        userVersion === CANONICAL_SCHEMA_VERSION &&
+        userTables.length === expectedTables.length &&
+        userTables.every((name, index) => name === expectedTables[index]);
+      const columnsMatch =
+        tablesMatch &&
+        expectedTables.every((table) => {
+          const actual = (
+            this.db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{
+              name: string;
+            }>
+          ).map((column) => column.name);
+          const expected = [...(CANONICAL_TABLE_COLUMNS[table] ?? [])];
+          return (
+            actual.length === expected.length &&
+            actual.every((name, index) => name === expected[index])
+          );
+        });
+      if (!columnsMatch) {
+        this._closed = true;
+        this.db.close();
+        throw new MemoriaError(
+          "persistence",
+          "SQLite schema is not the canonical Memoria schema. Recreate the database; existing databases are not migrated.",
+          {
+            details: {
+              expectedVersion: CANONICAL_SCHEMA_VERSION,
+              actualVersion: userVersion,
+            },
+          },
+        );
       }
     }
-    const additiveMigrations: Array<[string, string, string]> = [
-      ["tag_intrinsic_residuals", "raw_residual_ratio", "REAL"],
-      ["tag_intrinsic_residuals", "v8_3_compat_gain", "REAL"],
-      ["tag_intrinsic_residuals", "v9_anchor_gain", "REAL"],
-      ["tag_intrinsic_residuals", "model_sig", "TEXT"],
-      ["tag_intrinsic_residuals", "artifact_sig", "TEXT"],
-      ["tag_intrinsic_residuals", "algorithm_version", "TEXT"],
-      ["tag_intrinsic_residuals", "config_hash", "TEXT"],
-      ["tag_intrinsic_residuals", "status", "TEXT NOT NULL DEFAULT 'computed'"],
-      ["rivermemo_artifacts", "payload_codec", "TEXT NOT NULL DEFAULT 'gzip-json-v1'"],
-      ["rivermemo_artifacts", "payload_checksum", "TEXT"],
-      ["rivermemo_artifacts", "payload", "BLOB"],
-      ["rivermemo_artifacts", "status", "TEXT NOT NULL DEFAULT 'ready'"],
-      ["rivermemo_artifacts", "error_message", "TEXT"],
-      ["rivermemo_artifacts", "node_count", "INTEGER NOT NULL DEFAULT 0"],
-      ["rivermemo_artifacts", "edge_count", "INTEGER NOT NULL DEFAULT 0"],
-      ["rivermemo_artifacts", "published_at", "INTEGER"],
-    ];
-    for (const [table, name, definition] of additiveMigrations) {
-      const tableColumns = this.db
-        .prepare(`PRAGMA table_info(${table})`)
-        .all() as Array<{
-        name: string;
-      }>;
-      if (!tableColumns.some((column) => column.name === name)) {
-        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
-      }
-    }
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_files_diary ON files(diary_name);
-      CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id);
-      CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);
-      CREATE INDEX IF NOT EXISTS idx_file_tags_composite ON file_tags(tag_id, file_id);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_files_document_id
-        ON files(document_id) WHERE document_id IS NOT NULL;
-      CREATE INDEX IF NOT EXISTS idx_intrinsic_residual_artifact
-        ON tag_intrinsic_residuals(artifact_sig);
-      CREATE INDEX IF NOT EXISTS idx_intrinsic_residual_model
-        ON tag_intrinsic_residuals(model_sig);
-    `);
+
     this.db
       .prepare("INSERT OR IGNORE INTO kv_store (key, value) VALUES (?, ?)")
       .run(METADATA_GENERATION_KEY, "0");
@@ -568,12 +641,12 @@ class SqliteMetadataStore extends MetadataStore {
     const now = Math.floor(Date.now() / 1000);
     const stmt = this.db.prepare(`
         INSERT INTO files (
-            path, diary_name, checksum, mtime, size, updated_at,
+            path, space, checksum, mtime, size, updated_at,
             document_id, revision, source_json, metadata_json
         )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
-                diary_name = excluded.diary_name,
+                space = excluded.space,
                 checksum = excluded.checksum,
                 mtime = excluded.mtime,
                 size = excluded.size,
@@ -585,7 +658,7 @@ class SqliteMetadataStore extends MetadataStore {
         `);
     stmt.run(
       fileMeta.path,
-      fileMeta.diaryName,
+      fileMeta.space,
       fileMeta.checksum,
       fileMeta.mtime,
       fileMeta.size,
@@ -616,7 +689,7 @@ class SqliteMetadataStore extends MetadataStore {
     }
 
     const changed =
-      existing.diary_name !== fileMeta.diaryName ||
+      existing.space !== fileMeta.space ||
       existing.checksum !== fileMeta.checksum ||
       existing.mtime !== fileMeta.mtime ||
       existing.size !== fileMeta.size ||
@@ -630,12 +703,12 @@ class SqliteMetadataStore extends MetadataStore {
     this.db
       .prepare(
         `UPDATE files SET
-          diary_name = ?, checksum = ?, mtime = ?, size = ?, updated_at = ?,
+          space = ?, checksum = ?, mtime = ?, size = ?, updated_at = ?,
           document_id = ?, revision = ?, source_json = ?, metadata_json = ?
          WHERE id = ?`,
       )
       .run(
-        fileMeta.diaryName,
+        fileMeta.space,
         fileMeta.checksum,
         fileMeta.mtime,
         fileMeta.size,
@@ -647,8 +720,7 @@ class SqliteMetadataStore extends MetadataStore {
         existing.id,
       );
     const vectorStateChanged =
-      existing.diary_name !== fileMeta.diaryName ||
-      existing.checksum !== fileMeta.checksum;
+      existing.space !== fileMeta.space || existing.checksum !== fileMeta.checksum;
     this.db.transaction(() => {
       this._incrementMetadataGenerationInTransaction(vectorStateChanged);
     })();
@@ -671,10 +743,10 @@ class SqliteMetadataStore extends MetadataStore {
         existingByDocument ||
         (this.db.prepare("SELECT * FROM files WHERE path = ?").get(file.path) as
           FileQueryRow | undefined);
-      const previousIndexName = existing?.diary_name ?? null;
+      const previousIndexName = existing?.space ?? null;
       const fileValues = [
         file.path,
-        file.diaryName,
+        file.space,
         file.checksum,
         file.mtime,
         file.size,
@@ -690,7 +762,7 @@ class SqliteMetadataStore extends MetadataStore {
         this.db
           .prepare(
             `UPDATE files SET
-              path = ?, diary_name = ?, checksum = ?, mtime = ?, size = ?,
+              path = ?, space = ?, checksum = ?, mtime = ?, size = ?,
               updated_at = ?, document_id = ?, revision = ?, source_json = ?,
               metadata_json = ?
              WHERE id = ?`,
@@ -700,7 +772,7 @@ class SqliteMetadataStore extends MetadataStore {
       } else {
         const insertFile = this.db.prepare(
           `INSERT INTO files (
-            path, diary_name, checksum, mtime, size, updated_at,
+            path, space, checksum, mtime, size, updated_at,
             document_id, revision, source_json, metadata_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
@@ -766,13 +838,13 @@ class SqliteMetadataStore extends MetadataStore {
         tagIds,
         metadataGeneration,
         previousIndexName,
-        currentIndexName: file.diaryName,
+        currentIndexName: file.space,
         orphanedTagIds,
       };
     })();
   }
 
-  async countFiles(): Promise<number> {
+  override async countFiles(): Promise<number> {
     const row = this.db.prepare("SELECT COUNT(*) AS c FROM files").get() as
       { c?: number } | undefined;
     return Number(row?.c) || 0;
@@ -802,13 +874,11 @@ class SqliteMetadataStore extends MetadataStore {
     );
   }
 
-  override async getDistinctDiaryNames(): Promise<string[]> {
+  override async getDistinctSpaces(): Promise<string[]> {
     const rows = this.db
-      .prepare("SELECT DISTINCT diary_name FROM files WHERE diary_name != ?")
+      .prepare("SELECT DISTINCT space FROM files WHERE space != ?")
       .all("");
-    return (rows as FileQueryRow[])
-      .map((r: FileQueryRow) => r.diary_name)
-      .filter(Boolean);
+    return (rows as FileQueryRow[]).map((r: FileQueryRow) => r.space).filter(Boolean);
   }
 
   override async getFileByChunkId(chunkId: number): Promise<FileRow | null> {
@@ -866,7 +936,7 @@ class SqliteMetadataStore extends MetadataStore {
     return ids;
   }
 
-  async replaceDocumentState(
+  override async replaceDocumentState(
     replacement: DocumentStateReplacement,
   ): Promise<DocumentStateReplacementResult> {
     return this._replaceDocumentStateInternal(replacement);
@@ -900,7 +970,7 @@ class SqliteMetadataStore extends MetadataStore {
         existingByDocument ||
         (this.db.prepare("SELECT * FROM files WHERE path = ?").get(file.path) as
           FileQueryRow | undefined);
-      const previousIndexName = existing?.diary_name ?? null;
+      const previousIndexName = existing?.space ?? null;
       const removedChunkIds =
         existing && !preserveChunks
           ? (
@@ -913,7 +983,7 @@ class SqliteMetadataStore extends MetadataStore {
       let fileId: number;
       const fileValues = [
         file.path,
-        file.diaryName,
+        file.space,
         file.checksum,
         file.mtime,
         file.size,
@@ -927,7 +997,7 @@ class SqliteMetadataStore extends MetadataStore {
         this.db
           .prepare(
             `UPDATE files SET
-              path = ?, diary_name = ?, checksum = ?, mtime = ?, size = ?,
+              path = ?, space = ?, checksum = ?, mtime = ?, size = ?,
               updated_at = ?, document_id = ?, revision = ?, source_json = ?,
               metadata_json = ?
             WHERE id = ?`,
@@ -937,7 +1007,7 @@ class SqliteMetadataStore extends MetadataStore {
       } else {
         const insertFile = this.db.prepare(
           `INSERT INTO files (
-            path, diary_name, checksum, mtime, size, updated_at,
+            path, space, checksum, mtime, size, updated_at,
             document_id, revision, source_json, metadata_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
@@ -1081,7 +1151,7 @@ class SqliteMetadataStore extends MetadataStore {
       }
 
       const vectorStateChanged =
-        !preserveChunks || !preserveTags || previousIndexName !== file.diaryName;
+        !preserveChunks || !preserveTags || previousIndexName !== file.space;
       const metadataGeneration =
         this._incrementMetadataGenerationInTransaction(vectorStateChanged);
       const orphanedTagIds = previousTagIds.filter((tagId) => {
@@ -1098,7 +1168,7 @@ class SqliteMetadataStore extends MetadataStore {
         removedChunkIds,
         metadataGeneration,
         previousIndexName,
-        currentIndexName: file.diaryName,
+        currentIndexName: file.space,
         orphanedTagIds,
       };
     })();
@@ -1217,13 +1287,13 @@ class SqliteMetadataStore extends MetadataStore {
   async getSearchCorpus(indexNames?: readonly string[]): Promise<SearchCorpusChunk[]> {
     if (Array.isArray(indexNames) && indexNames.length === 0) return [];
     let sql = `
-      SELECT c.id, c.content, f.diary_name AS index_name
+      SELECT c.id, c.content, f.space AS index_name
       FROM chunks c
       JOIN files f ON f.id = c.file_id`;
     const params: string[] = [];
     if (Array.isArray(indexNames) && indexNames.length > 0) {
       const placeholders = indexNames.map(() => "?").join(", ");
-      sql += ` WHERE f.diary_name IN (${placeholders})`;
+      sql += ` WHERE f.space IN (${placeholders})`;
       params.push(...indexNames.map(String));
     }
     sql += " ORDER BY c.id";
@@ -1254,7 +1324,7 @@ class SqliteMetadataStore extends MetadataStore {
     const params: unknown[] = [];
     const spaces = filters.spaces ?? indexNames;
     if (spaces && spaces.length > 0) {
-      where.push(`f.diary_name IN (${spaces.map(() => "?").join(", ")})`);
+      where.push(`f.space IN (${spaces.map(() => "?").join(", ")})`);
       params.push(...spaces.map(String));
     }
     if (filters.documentIds && filters.documentIds.length === 0) {
@@ -1313,7 +1383,7 @@ class SqliteMetadataStore extends MetadataStore {
     const rows = this.db
       .prepare(
         `
-          SELECT c.id AS chunk_id, c.vector, f.diary_name AS index_name
+          SELECT c.id AS chunk_id, c.vector, f.space AS index_name
           FROM chunks c
           JOIN files f ON c.file_id = f.id
           ORDER BY c.id
@@ -1335,17 +1405,17 @@ class SqliteMetadataStore extends MetadataStore {
     const names = (
       this.db
         .prepare(
-          `SELECT DISTINCT f.diary_name
+          `SELECT DISTINCT f.space
            FROM files f
            JOIN chunks c ON c.file_id = f.id
-           WHERE f.diary_name IS NOT NULL
-             AND f.diary_name != ''
+           WHERE f.space IS NOT NULL
+             AND f.space != ''
              AND c.vector IS NOT NULL
-           ORDER BY f.diary_name`,
+           ORDER BY f.space`,
         )
-        .all() as Array<{ diary_name?: string | null }>
+        .all() as Array<{ space?: string | null }>
     )
-      .map((row) => row.diary_name || "")
+      .map((row) => row.space || "")
       .filter(Boolean);
     const tagRow = this.db
       .prepare(
@@ -1356,7 +1426,7 @@ class SqliteMetadataStore extends MetadataStore {
          LIMIT 1`,
       )
       .get() as { present?: number } | undefined;
-    if (tagRow?.present) names.push("global_tags");
+    if (tagRow?.present) names.push("tag_vectors");
     return [...new Set(names)].sort((left, right) => left.localeCompare(right));
   }
 
@@ -1501,7 +1571,8 @@ class SqliteMetadataStore extends MetadataStore {
    * Replace the active source edges for one immutable source revision while
    * retaining older revisions as stale audit records. This is deliberately a
    * separate generation from vector state: changing a relation invalidates
-   * Memo artifacts, but does not require rebuilding ordinary chunk vectors.
+   * derived tag artifacts, but does not require rebuilding ordinary chunk
+   * vectors.
    */
   async replaceExplicitRelations(
     from: string,

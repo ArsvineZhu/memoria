@@ -1,6 +1,6 @@
 # 快速上手
 
-本文面向第一次使用 `memoria` 的人，按“安装 → 离线运行 → 保存文字 → 读取文件 →
+本文面向第一次使用 `memoria` 的人，按“安装 → 运行第一个教程 → 保存文字 → 读取文件 →
 搜索和删除”的顺序说明。完整配置请看
 [CONFIGURATION.md](CONFIGURATION.md)，公开接口请看 [API.md](API.md)，检索增强能力和
 诊断字段请看 [RETRIEVAL_FEATURES.md](RETRIEVAL_FEATURES.md)。
@@ -16,16 +16,26 @@
 corepack pnpm install --frozen-lockfile
 ```
 
-如果只想确认仓库能运行，先执行离线演示：
+如果只想确认仓库能运行，先执行第一个教程：
 
 ```powershell
 corepack pnpm build:test
-node dist-test/examples/demo/main.js
+node dist-test/tutorials/01-first-memory/main.js
 ```
 
-它不访问网络、不需要密钥，使用固定的 128 维离线嵌入。演示通过固定三文件清单
-读取 `data/content/`，不会摄入同目录下的 `recall-demo/` 语料；演示生成内容在
-`data/memoria/demo/`。
+没有完整 `EMBED_*` 配置时，它使用教程 fake embedding；fake 只保证生命周期、输出形状
+和关闭行为。教程读取 `tutorials/data/content/retrieval/`，运行时内容写入对应教程的
+`tutorials/01-first-memory/data/runtime/`。
+
+想按章节查看完整流程时，再运行：
+
+```powershell
+corepack pnpm tutorials:run
+```
+
+每个 `tutorials/<lesson>/main.ts` 都是可运行的公开 API 示例；完整章节说明、参考手册和
+算法解释位于 `tutorials/<lesson>/README.md`、`tutorials/reference/` 和
+`tutorials/algorithms/`。
 
 ## 2. 保存和搜索一段文字
 
@@ -67,16 +77,20 @@ await engine.close();
 `config.dimension` 相同。维度不同时，向量不能写入原索引；更换维度后需要重新
 摄入全部文档。
 
+默认搜索只做向量/BM25 基础融合。若要启用模型重排，应从
+`memoria/providers/openai-compatible` 创建 reranker，传入 `MemoryEngineOptions.reranker`，
+并同时设置 `externalRerankEnabled: true`；详见 [API.md](API.md)。
+
 ## 3. 从文件摄入
 
 推荐的文件目录如下：
 
 ```text
-data/
-├─ content/                 # 可备份的源文件
+<consumer-data>/
+├─ content/                 # 调用方维护的源文件
 │  ├─ life/coffee.mdx
 │  └─ memory/example.mdx
-├─ memoria/                  # 主引擎生成状态
+├─ memoria/                 # 主引擎生成状态
 │  ├─ memory.sqlite
 │  └─ indexes/
 └─ tdb/                      # TDB 生成状态
@@ -119,7 +133,7 @@ recordedAt: 2026-08-08T09:30:00-06:00
 | 搜索          | `await engine.search(query, options?)` | 返回结果信封和结果数组           |
 | 删除逻辑文档  | `await engine.remove(documentId)`      | 按文档 ID 删除，不依赖原文件路径 |
 | 删除文件      | `await engine.deleteFile(filePath)`    | 删除单个文件及其块向量           |
-| 兼容文件摄入  | `await engine.flushBatch(files)`       | 处理文件快照或路径               |
+| 文件快照摄入  | `await engine.flushBatch(files)`       | 处理文件快照或路径               |
 | 查看统计      | `await engine.getStats()`              | 文件、块、标签、索引和健康状态   |
 | 关闭          | `await engine.close()`                 | 等待写入、保存索引并关闭资源     |
 
@@ -140,33 +154,28 @@ recordedAt: 2026-08-08T09:30:00-06:00
 | 改变分块大小         | `chunkMaxTokens`、`chunkOverlapTokens`    |
 | 改变向量维度         | `dimension`，同时更换 Provider 的输出维度 |
 
-所有字段、默认值、别名和 TDB 参数见
+所有 canonical 字段、默认值和 TDB 参数见
 [CONFIGURATION.md](CONFIGURATION.md)。
 
-## 6. 使用真实嵌入
+## 6. 选择 embedding 与 reranker provider
 
-真实嵌入不是运行离线示例的必要条件。要运行 50 文件真实召回演示：
+教程统一按配置选择 provider，不区分教程是否联网：
 
-1. 在 `examples/real-embed/.env` 写入 `EMBED_API_KEY=...`；
+1. 复制 `tutorials/08-provider-selection/.env.example` 为
+   `tutorials/08-provider-selection/.env`，再写入完整的 `EMBED_*` 配置；
 2. 运行（`--reset` 只清理固定的演示运行时目录）：
 
 ```powershell
-corepack pnpm demo:real-embed -- --reset --limit 50 --top-k 5
+Copy-Item tutorials/08-provider-selection/.env.example tutorials/08-provider-selection/.env
+corepack pnpm tutorial:08
 ```
 
-当前演示使用 DashScope 的 `qwen3.7-text-embedding` 和 1024 维向量，摄入
-`data/content/recall-demo/` 中正好 50 篇标准 MDX，并按 24 条 qrels 比较 baseline、
-local enhanced 和可选 external rerank。没有密钥时会在写入前输出明确提示并退出，
-不会把空结果当作成功。详见 [real-embed 示例](../examples/real-embed/README.md) 和
-[检索能力矩阵](RETRIEVAL_FEATURES.md)。
+完整 `EMBED_*`/`RERANK_*` 配置时使用 OpenAI-compatible provider；缺少完整配置时使用
+fake，只保证流程可运行。兼容 provider 请求开始后失败不会回退。详见
+[08-provider-selection](../tutorials/08-provider-selection/README.md) 和
+[算法手册](../tutorials/algorithms/README.md)。
 
-## 7. 兼容旧调用
-
-已有应用可以使用 `KnowledgeBaseAdapter`。它提供
-`initialize`、`flushBatch`、`getStats`、`search`、`removeDocument` 和 `shutdown`
-等兼容方法；新的应用优先使用 `MemoryEngine` 的逻辑文档接口。
-
-## 8. 下一步
+## 7. 下一步
 
 - 看 [CONFIGURATION.md](CONFIGURATION.md) 调整参数；
 - 看 [PERSISTENCE.md](PERSISTENCE.md) 了解备份、恢复和索引重建；

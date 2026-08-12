@@ -20,7 +20,7 @@ interface PipelineOptions {
 /**
  * IngestPipeline — one-file ingestion chain.
  *
- * Mirrors the KnowledgeBaseManager._flushBatch flow for a single file:
+ * Handles the MemoryEngine ingestion flow for a single file:
  * read → tag extraction → chunking → embedding (chunks + tags) →
  * metadata persistence → vector indexing → optional co-occurrence update.
  *

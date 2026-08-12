@@ -16,12 +16,14 @@ function normalizeNames(value: unknown): string[] {
   return names;
 }
 
-function normalizeContentNames(value: unknown, tagIndexName: unknown): string[] {
+function normalizeContentNames(value: unknown, tagVectorIndexName: unknown): string[] {
   const names = normalizeNames(value);
   const tagName =
-    (typeof tagIndexName === "string" ? tagIndexName : "global_tags").trim() ||
-    "global_tags";
-  return names.filter((name) => name !== tagName && name !== "global_tags");
+    (typeof tagVectorIndexName === "string"
+      ? tagVectorIndexName
+      : "tag_vectors"
+    ).trim() || "tag_vectors";
+  return names.filter((name) => name !== tagName && name !== "tag_vectors");
 }
 
 /** Resolve the authoritative content scope once for all retrieval stages. */
@@ -41,8 +43,8 @@ class SearchScopeResolverStage extends Stage {
     const config = ctx.config || {};
     const callExplicit = this._firstExplicit(
       info.indexNames,
-      info.diaryNames,
-      info.diaryName,
+      info.spaces,
+      info.space,
       info.libraries,
     );
     if (callExplicit !== null) {
@@ -72,7 +74,7 @@ class SearchScopeResolverStage extends Stage {
         const names = await metadataStore.getExpectedVectorIndexNames();
         return {
           ...info,
-          resolvedIndexNames: normalizeContentNames(names, config.tagIndexName),
+          resolvedIndexNames: normalizeContentNames(names, config.tagVectorIndexName),
           scopeSource: "authority",
           scopeWasExplicit: false,
         };
@@ -86,9 +88,9 @@ class SearchScopeResolverStage extends Stage {
       }
     }
 
-    if (metadataStore && typeof metadataStore.getDistinctDiaryNames === "function") {
+    if (metadataStore && typeof metadataStore.getDistinctSpaces === "function") {
       try {
-        const names = await metadataStore.getDistinctDiaryNames();
+        const names = await metadataStore.getDistinctSpaces();
         return {
           ...info,
           resolvedIndexNames: normalizeNames(names),
@@ -115,13 +117,13 @@ class SearchScopeResolverStage extends Stage {
 
   private _firstExplicit(
     inputIndexNames: unknown,
-    diaryNames: unknown,
-    diaryName: unknown,
+    spaces: unknown,
+    space: unknown,
     libraries: unknown,
   ): string[] | null {
     if (Array.isArray(inputIndexNames)) return normalizeNames(inputIndexNames);
-    if (Array.isArray(diaryNames)) return normalizeNames(diaryNames);
-    if (typeof diaryName === "string") return normalizeNames([diaryName]);
+    if (Array.isArray(spaces)) return normalizeNames(spaces);
+    if (typeof space === "string") return normalizeNames([space]);
     if (Array.isArray(libraries)) return normalizeNames(libraries);
     return null;
   }

@@ -28,7 +28,7 @@ test("prepareTextForEmbedding returns EMPTY_CONTENT for empty string", () => {
 });
 
 test("extractTags extracts tags from last line", () => {
-  const content = "Some diary content.\n\nTag: MEMORIA, 记忆系统, 文档";
+  const content = "Some space content.\n\nTag: MEMORIA, 记忆系统, 文档";
   const tags = extractTags(content);
   assert.ok(tags.includes("MEMORIA"));
   assert.ok(tags.includes("记忆系统"));

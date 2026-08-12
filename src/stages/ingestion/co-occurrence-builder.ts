@@ -5,9 +5,9 @@ import Stage from "../../core/stage.js";
 /**
  * Tag co-occurrence bridge stage.
  *
- * The original KnowledgeBaseManager does NOT write co-occurrence counts
+ * The current ingestion pipeline does not write co-occurrence counts
  * during ingestion: the matrix is derived from the file_tags table on
- * demand (SQL self-join in buildCooccurrenceMatrix / Rust TagMemo engine).
+ * demand (SQL self-join in buildCooccurrenceMatrix / Rust tag association propagation engine).
  *
  * Accordingly this stage is a no-op by default. When the pipeline opts in
  * via config.cooccurrenceRebuild (e.g. a periodic cache refresh), it

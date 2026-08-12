@@ -15,8 +15,15 @@ interface PlannedOutput extends PipelineData {
   queryProfile?: QueryProfile;
   captured?: {
     strategy?: string;
-    riverMemoEnabled?: boolean;
-    expansionEnabled?: boolean;
+    tagBasisProjectionEnabled?: boolean;
+    tagResidualDecompositionEnabled?: boolean;
+    tagGraphPropagationEnabled?: boolean;
+    propagationSupportRerankEnabled?: boolean;
+    propagationStructureRerankEnabled?: boolean;
+    propagationHistoryEnabled?: boolean;
+    tagExpansionEnabled?: boolean;
+    embeddingRerankEnabled?: boolean;
+    nativeTagRetrievalEnabled?: boolean;
     relationExpansionEnabled?: boolean;
     associatorEnabled?: boolean;
     truncateEnabled?: boolean;
@@ -50,10 +57,15 @@ class CaptureRetrievalPlanStage extends Stage {
       ...input,
       captured: {
         strategy: retrievalPlan?.strategy,
-        tagMemoV9Enabled: ctx.config.tagMemoV9Enabled,
-        tagMemoV10Enabled: ctx.config.tagMemoV10Enabled,
-        riverMemoEnabled: ctx.config.riverMemoEnabled,
-        expansionEnabled: ctx.config.expansionEnabled,
+        tagBasisProjectionEnabled: ctx.config.tagBasisProjectionEnabled,
+        tagResidualDecompositionEnabled: ctx.config.tagResidualDecompositionEnabled,
+        tagGraphPropagationEnabled: ctx.config.tagGraphPropagationEnabled,
+        propagationSupportRerankEnabled: ctx.config.propagationSupportRerankEnabled,
+        propagationStructureRerankEnabled: ctx.config.propagationStructureRerankEnabled,
+        propagationHistoryEnabled: ctx.config.propagationHistoryEnabled,
+        tagExpansionEnabled: ctx.config.tagExpansionEnabled,
+        embeddingRerankEnabled: ctx.config.embeddingRerankEnabled,
+        nativeTagRetrievalEnabled: ctx.config.nativeTagRetrievalEnabled,
         relationExpansionEnabled: ctx.config.relationExpansionEnabled,
         associatorEnabled: ctx.config.associatorEnabled,
         truncateEnabled: ctx.config.truncateEnabled,
@@ -74,13 +86,13 @@ class TraceStage extends Stage {
   override async process(input: PipelineData): Promise<PipelineData> {
     return {
       ...input,
-      nativeMemoSkipped: true,
-      nativeMemoSkipReason: "test fallback",
+      tagRetrievalSkipped: true,
+      tagRetrievalSkipReason: "test fallback",
     };
   }
 }
 
-test("SearchPipeline applies automatic topology plan before stages", async () => {
+test("SearchPipeline applies automatic structural plan before stages", async () => {
   const pipeline = new SearchPipeline(
     {},
     { stages: [new CaptureRetrievalPlanStage()] },
@@ -91,14 +103,14 @@ test("SearchPipeline applies automatic topology plan before stages", async () =>
   );
 
   const planned = out as PlannedOutput;
-  assert.equal(planned.retrievalPlan?.strategy, "topology");
+  assert.equal(planned.retrievalPlan?.strategy, "structural");
   assert.equal(planned.queryProfile?.signals?.relational, true);
-  assert.equal(planned.captured?.strategy, "topology");
-  assert.equal(planned.captured?.riverMemoEnabled, true);
-  assert.equal(planned.captured?.expansionEnabled, true);
+  assert.equal(planned.captured?.strategy, "structural");
+  assert.equal(planned.captured?.propagationStructureRerankEnabled, true);
+  assert.equal(planned.captured?.relationExpansionEnabled, true);
 });
 
-test("SearchPipeline honors an explicit plan and preserves empty scope", async () => {
+test("SearchPipeline honors an explicit semantic plan and preserves empty scope", async () => {
   const pipeline = new SearchPipeline(
     {},
     { stages: [new CaptureRetrievalPlanStage()] },
@@ -121,7 +133,7 @@ test("SearchPipeline honors an explicit plan and preserves empty scope", async (
   assert.equal(planned.retrievalPlan?.strategy, "semantic");
   assert.deepEqual(planned.retrievalPlan?.filters?.spaces, []);
   assert.equal(planned.captured?.strategy, "semantic");
-  assert.equal(planned.captured?.riverMemoEnabled, false);
+  assert.equal(planned.captured?.propagationStructureRerankEnabled, false);
   assert.equal(planned.captured?.timeDecayEnabled, true);
   assert.deepEqual(planned.captured?.indexNames, []);
 });
@@ -136,7 +148,7 @@ test("relation expansion is independent from the selected retrieval strategy", a
       query: "只按主题找这份记忆",
       options: {
         retrievalPlan: {
-          strategy: "field",
+          strategy: "associative",
           expansion: { related: true, maxHops: 2, maxAdded: 12 },
         },
       },
@@ -145,8 +157,7 @@ test("relation expansion is independent from the selected retrieval strategy", a
   );
 
   const planned = out as PlannedOutput;
-  assert.equal(planned.retrievalPlan?.strategy, "field");
-  assert.equal(planned.captured?.expansionEnabled, false);
+  assert.equal(planned.retrievalPlan?.strategy, "associative");
   assert.equal(planned.captured?.relationExpansionEnabled, true);
 });
 
@@ -167,26 +178,22 @@ test("automatic strategy keeps typed outer expansion and truncation controls", a
       },
     },
     {
-      config: {
-        associatorEnabled: false,
-        truncateEnabled: false,
-        truncateMinScore: 0,
-      },
+      config: { associatorEnabled: false, truncateEnabled: false, truncateMinScore: 0 },
     },
   );
 
   const planned = out as PlannedOutput;
-  assert.equal(planned.captured?.strategy, "field");
+  assert.equal(planned.captured?.strategy, "associative");
   assert.equal(planned.captured?.associatorEnabled, true);
   assert.equal(planned.captured?.truncateEnabled, true);
   assert.equal(planned.captured?.truncateMinScore, 0.4);
 });
 
-test("Topology V3 uses one native Memo runtime stage per search", () => {
+test("native tag retrieval uses one runtime stage per search", () => {
   const stages = SearchPipeline.defaultStages(
-    applyRetrievalPlan({ strategy: "topology" }),
+    applyRetrievalPlan({ strategy: "structural" }),
   );
-  assert.equal(stages.filter((stage) => stage.name === "nativeMemoRuntime").length, 1);
+  assert.equal(stages.filter((stage) => stage.name === "nativeTagRetrieval").length, 1);
 });
 
 test("SearchPipeline exposes the selected strategy, stage order and fallbacks", async () => {
@@ -198,12 +205,12 @@ test("SearchPipeline exposes the selected strategy, stage order and fallbacks", 
 
   assert.equal(out.retrievalTrace?.decision.strategy, "semantic");
   assert.deepEqual(out.retrievalTrace?.stageOrder, ["traceStage"]);
-  assert.deepEqual(out.retrievalTrace?.fallbacks, ["nativeMemo: test fallback"]);
+  assert.deepEqual(out.retrievalTrace?.fallbacks, ["tagRetrieval: test fallback"]);
 });
 
-test("SearchPipeline preserves legacy gates when no typed default plan is configured", async () => {
+test("SearchPipeline preserves explicit config gates when no typed default plan is configured", async () => {
   const pipeline = new SearchPipeline(
-    { riverMemoEnabled: true },
+    { propagationStructureRerankEnabled: true },
     { stages: [new CaptureRetrievalPlanStage()] },
   );
   const out = (await pipeline.run(
@@ -213,7 +220,7 @@ test("SearchPipeline preserves legacy gates when no typed default plan is config
 
   assert.equal(out.retrievalTrace?.plan.strategy, "semantic");
   assert.equal(out.retrievalTrace?.strategySource, "auto");
-  assert.equal(out.captured?.riverMemoEnabled, true);
+  assert.equal(out.captured?.propagationStructureRerankEnabled, true);
 });
 
 test("SearchPipeline applies a fixed default plan and traces its source", async () => {
@@ -222,8 +229,8 @@ test("SearchPipeline applies a fixed default plan and traces its source", async 
     {
       stages: [new CaptureRetrievalPlanStage()],
       defaultRetrievalPlan: {
-        strategy: "field",
-        tagMemo: { plus: true, version: "v10" },
+        strategy: "associative",
+        associative: { enabled: true, propagationSupport: true },
         postprocess: { timeDecay: true },
       },
     },
@@ -233,9 +240,9 @@ test("SearchPipeline applies a fixed default plan and traces its source", async 
     { config: {} },
   )) as PlannedOutput;
 
-  assert.equal(out.retrievalPlan?.strategy, "field");
-  assert.equal(out.retrievalPlan?.tagMemo?.plus, true);
-  assert.equal(out.captured?.strategy, "field");
+  assert.equal(out.retrievalPlan?.strategy, "associative");
+  assert.equal(out.retrievalPlan?.associative?.propagationSupport, true);
+  assert.equal(out.captured?.strategy, "associative");
   assert.equal(out.captured?.timeDecayEnabled, true);
   assert.equal(out.retrievalTrace?.strategySource, "engine-default");
   assert.equal(out.retrievalTrace?.defaultsInherited, true);
@@ -248,8 +255,8 @@ test("SearchPipeline lets one query replace the core default and inherit outer d
     {
       stages: [new CaptureRetrievalPlanStage()],
       defaultRetrievalPlan: {
-        strategy: "field",
-        tagMemo: { plus: true },
+        strategy: "associative",
+        associative: { enabled: true },
         expansion: { related: true },
         postprocess: { timeDecay: true, dedupe: true },
       },
@@ -260,8 +267,8 @@ test("SearchPipeline lets one query replace the core default and inherit outer d
       query: "这份记录的来源",
       options: {
         retrievalPlan: {
-          strategy: "topology",
-          riverMemo: { enabled: true, rerank: true, version: "v3" },
+          strategy: "structural",
+          structural: { enabled: true, propagationStructure: true },
           postprocess: { timeDecay: false },
         },
       },
@@ -269,11 +276,11 @@ test("SearchPipeline lets one query replace the core default and inherit outer d
     { config: {} },
   )) as PlannedOutput;
 
-  assert.equal(out.retrievalPlan?.strategy, "topology");
-  assert.equal(out.retrievalPlan?.tagMemo?.enabled, false);
+  assert.equal(out.retrievalPlan?.strategy, "structural");
+  assert.equal(out.retrievalPlan?.associative?.enabled, true);
   assert.equal(out.retrievalPlan?.expansion?.related, true);
   assert.equal(out.retrievalPlan?.postprocess?.timeDecay, false);
-  assert.equal(out.captured?.strategy, "topology");
+  assert.equal(out.captured?.strategy, "structural");
   assert.equal(out.captured?.relationExpansionEnabled, true);
   assert.equal(out.captured?.timeDecayEnabled, false);
   assert.equal(out.retrievalTrace?.strategySource, "query-override");
@@ -287,8 +294,8 @@ test("SearchPipeline can isolate a query from the default plan", async () => {
     {
       stages: [new CaptureRetrievalPlanStage()],
       defaultRetrievalPlan: {
-        strategy: "field",
-        tagMemo: { plus: true },
+        strategy: "associative",
+        associative: { enabled: true },
         postprocess: { timeDecay: true },
       },
     },
@@ -305,7 +312,7 @@ test("SearchPipeline can isolate a query from the default plan", async () => {
   )) as PlannedOutput;
 
   assert.equal(out.retrievalPlan?.strategy, "semantic");
-  assert.equal(out.retrievalPlan?.tagMemo?.enabled, false);
+  assert.equal(out.retrievalPlan?.associative?.enabled, false);
   assert.equal(out.retrievalPlan?.postprocess?.timeDecay, false);
   assert.equal(out.retrievalTrace?.defaultsInherited, false);
   assert.equal(out.retrievalTrace?.strategySource, "query-override");
@@ -316,14 +323,11 @@ test("isolated queries report auto when no replacement strategy is supplied", as
     {},
     {
       stages: [new CaptureRetrievalPlanStage()],
-      defaultRetrievalPlan: { strategy: "field", tagMemo: { plus: true } },
+      defaultRetrievalPlan: { strategy: "associative", associative: { enabled: true } },
     },
   );
   const out = (await pipeline.run(
-    {
-      query: "普通查询",
-      options: { inheritRetrievalDefaults: false },
-    },
+    { query: "普通查询", options: { inheritRetrievalDefaults: false } },
     { config: {} },
   )) as PlannedOutput;
 

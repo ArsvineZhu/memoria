@@ -70,9 +70,9 @@ test("FileReaderStage reads a temp file and computes checksum", async (t) => {
   const tmpRoot = makeTmpDir("memoria-reader-");
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
-  const diaryDir = path.join(tmpRoot, "diary1");
-  fs.mkdirSync(diaryDir, { recursive: true });
-  const filePath = path.join(diaryDir, "note1.md");
+  const spaceDir = path.join(tmpRoot, "space1");
+  fs.mkdirSync(spaceDir, { recursive: true });
+  const filePath = path.join(spaceDir, "note1.md");
   const content = "Hello memory.\n\nTag: test, 记忆";
   fs.writeFileSync(filePath, content, "utf-8");
 
@@ -81,8 +81,8 @@ test("FileReaderStage reads a temp file and computes checksum", async (t) => {
   const out = await stage.process({ path: filePath }, ctx);
 
   assert.strictEqual(out.path, filePath);
-  assert.strictEqual(out.relPath, "diary1/note1.md");
-  assert.strictEqual(out.diaryName, "diary1");
+  assert.strictEqual(out.relPath, "space1/note1.md");
+  assert.strictEqual(out.space, "space1");
   assert.strictEqual(out.content, content);
   assert.strictEqual(out.checksum, md5(content));
   assert.strictEqual(typeof out.mtime, "number");
@@ -111,7 +111,7 @@ test("FileReaderStage needsEmbedding=false when checksum/size/mtime match stored
   const relPath = path.basename(filePath);
   await metadataStore.upsertFile({
     path: relPath,
-    diaryName: first.diaryName,
+    space: first.space,
     checksum: first.checksum,
     mtime: first.mtime,
     size: first.size,
@@ -137,7 +137,7 @@ test("FileReaderStage detects content change via checksum mismatch", async (t) =
 
   await metadataStore.upsertFile({
     path: path.basename(filePath),
-    diaryName: first.diaryName,
+    space: first.space,
     checksum: first.checksum,
     mtime: first.mtime,
     size: first.size,
@@ -155,7 +155,7 @@ test("FileReaderStage supports fallbackRead (content provided by caller)", async
   const ctx = makeCtx({ rootPath: "C:\\virtual" });
   const out = await stage.process(
     {
-      path: "C:\\virtual\\diary\\ghost.md",
+      path: "C:\\virtual\\space\\archived.md",
       content: "fallback content",
       mtime: 123456,
       size: 15,
@@ -167,8 +167,8 @@ test("FileReaderStage supports fallbackRead (content provided by caller)", async
   assert.strictEqual(out.mtime, 123456);
   assert.strictEqual(out.size, 15);
   assert.strictEqual(out.checksum, md5("fallback content"));
-  assert.strictEqual(out.relPath, "diary/ghost.md");
-  assert.strictEqual(out.diaryName, "diary");
+  assert.strictEqual(out.relPath, "space/archived.md");
+  assert.strictEqual(out.space, "space");
 });
 
 test("FileReaderStage falls back to basename/root when rootPath is missing", async (t) => {
@@ -181,7 +181,7 @@ test("FileReaderStage falls back to basename/root when rootPath is missing", asy
   const ctx = makeCtx({ rootPath: undefined });
   const out = await new FileReaderStage().process({ path: filePath }, ctx);
   assert.strictEqual(out.relPath, path.basename(filePath));
-  assert.strictEqual(out.diaryName, "Root");
+  assert.strictEqual(out.space, "Root");
 });
 
 test("FileReaderStage parses MDX front matter and keeps JSX/import literal", async () => {
@@ -276,7 +276,7 @@ test("FileDeleterStage stales source relations but preserves their audit history
   const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const fileId = await metadataStore.upsertFile({
     path: "journal/source.mdx",
-    diaryName: "journal",
+    space: "journal",
     checksum: "checksum",
     mtime: 100,
     size: 20,
@@ -328,7 +328,7 @@ test("FileReaderStage treats front-matter-only changes as metadata/tag updates",
   );
   await metadataStore.upsertFile({
     path: first.relPath,
-    diaryName: first.diaryName,
+    space: first.space,
     checksum: first.checksum,
     mtime: first.mtime,
     size: first.size,
@@ -373,7 +373,7 @@ test("FileReaderStage reuses embeddings when caller-provided metadata changes", 
   );
   await metadataStore.upsertFile({
     path: first.relPath,
-    diaryName: first.diaryName,
+    space: first.space,
     checksum: first.checksum,
     mtime: first.mtime,
     size: first.size,
@@ -525,11 +525,11 @@ test("ChunkerStage splits content into multiple chunks for small maxChunkTokens"
 test("ChunkerStage keeps original file info fields", async () => {
   const stage = new ChunkerStage();
   const ctx = makeCtx({});
-  const fileInfo = { relPath: "a/b.md", diaryName: "a", checksum: "x" };
+  const fileInfo = { relPath: "a/b.md", space: "a", checksum: "x" };
   const out = await stage.process({ ...fileInfo, content: "One sentence." }, ctx);
 
   assert.strictEqual(out.relPath, "a/b.md");
-  assert.strictEqual(out.diaryName, "a");
+  assert.strictEqual(out.space, "a");
   assert.strictEqual(out.checksum, "x");
   assert.strictEqual(out.chunks.length, 1);
 });
@@ -544,7 +544,7 @@ test("ChunkerStage drops empty normalized chunks", async () => {
 
 // ── ChunkEmbedderStage ─────────────────────────────────────────
 
-test("ChunkEmbedderStage honors needsChunkEmbedding over the compatibility alias", async (t) => {
+test("ChunkEmbedderStage honors the explicit chunk embedding gate", async (t) => {
   const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   t.after(() => metadataStore.close());
   let called = false;
@@ -626,7 +626,7 @@ test("FileReaderStage separates metadata changes from embedding changes", async 
   const content = "same logical content";
   await metadataStore.upsertFile({
     path: "logical/doc",
-    diaryName: "Logical",
+    space: "Logical",
     checksum: md5(content),
     mtime: 100,
     size: content.length,

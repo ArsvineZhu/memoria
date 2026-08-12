@@ -14,14 +14,14 @@ import { at } from "../../utils/numerical.js";
  * Postprocess stage: expands final results with related same-file chunks or
  * the materialised body of the parent document.
  *
- * The original KnowledgeBase search() does not attach an association /
+ * The original Memoria search() does not attach an association /
  * expansion layer to its result assembly, so this stage is config-gated off
- * by default. When enabled it mirrors the "related memory" pattern used by
+ * by default. When enabled it follows the "related memory" pattern used by
  * the associate/expand flows elsewhere in the project (e.g. DailyNote
  * association): for the top `expandCount` candidates, sibling chunks of the
  * same file are appended with their base score scaled by `expansionBoost`.
  * `fullDocumentExpansionEnabled` keeps the seed row and replaces its body
- * with the ordered parent-document body, matching VCP's old `Expand` output
+ * with the ordered parent-document body, matching the parent-document expansion contract
  * without introducing synthetic chunk IDs.
  *
  * Input: { mergedCandidates: [{ chunkId, score, ... }] }
@@ -229,7 +229,7 @@ class ExpanderStage extends Stage {
       return false;
     }
     const file = await ctx.metadataStore.getFileByChunkId(chunkId);
-    const space = file?.diary_name || file?.diaryName || "Root";
+    const space = file?.space || "Root";
     return !!file && resolvedScope.has(String(space));
   }
 }

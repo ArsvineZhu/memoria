@@ -4,7 +4,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import * as path from "node:path";
 
 import { mergeConfig } from "./config/default-config.js";
-import { loadRagParams } from "./config/rag-params-loader.js";
 import PipelineContext from "./core/context.js";
 import ActiveOperationRegistry from "./core/active-operation-registry.js";
 import DerivedStateCoordinator from "./core/derived-state-coordinator.js";
@@ -37,7 +36,7 @@ import {
   buildTagVectorIndexEntries,
   buildVectorReconciliationPlan,
 } from "./reconciliation.js";
-import { clearNativeMemoArtifactCache } from "./stages/memo/native-memo-runtime.js";
+import { clearTagRetrievalRuntime } from "./native/tag-graph-artifact-runtime.js";
 import QueryBuilder from "./retrieval/query-builder.js";
 import {
   assertValidRetrievalPlanInput,
@@ -61,7 +60,7 @@ export interface EngineStats {
   files: number;
   chunks: number;
   tags: number;
-  diaries: string[];
+  spaces: string[];
   lastIndexed: number | null;
   vectorStats: { totalVectors: number; indices: number; dimension: number };
   healthy: { healthy: boolean; issues: string[] };
@@ -110,7 +109,7 @@ function normalizeFiles(files: unknown): FileInput[] {
       documentMetadata: isRecord(entry.documentMetadata)
         ? entry.documentMetadata
         : undefined,
-      diaryName: typeof entry.diaryName === "string" ? entry.diaryName : undefined,
+      space: typeof entry.space === "string" ? entry.space : undefined,
     };
   });
 }
@@ -120,17 +119,15 @@ function normalizeMutationPath(filePath: string): string {
 }
 
 /**
- * MemoryEngine — the standalone knowledge-base engine.
+ * MemoryEngine — the standalone persistent-memory engine.
  *
- * Wires the pipelines, providers and PipelineContext together and exposes
- * the lifecycle/ingest/search/delete/statistics surface used by
- * KnowledgeBaseManager consumers (server.js, plugins, admin routes).
+ * Wires the pipelines, providers and PipelineContext together and exposes the
+ * lifecycle, ingestion, retrieval, deletion and statistics surface.
  *
  * Usage:
  *   const engine = createMemoryEngine({
  *     config: { dimension: 3072, rootPath: ..., apiUrl, apiKey, model },
  *     dbPath: 'knowledge_base.sqlite',
- *     ragParamsPath: 'rag_params.json'
  *   });
  *   await engine.initialize();
  *   await engine.flushBatch([{ path: '/abs/note.md' }]);
@@ -140,15 +137,20 @@ function normalizeMutationPath(filePath: string): string {
  */
 class MemoryEngine {
   name: string;
+  /** @internal */
   options: MemoryEngineOptions;
   config: MemoryConfig;
   readonly defaultRetrievalPlan: RetrievalPlan;
   metadataStore!: RuntimeMetadataStore;
   vectorStore!: RuntimeVectorStore;
   embeddingProvider!: EmbeddingProviderContract;
+  /** @internal */
   ctx!: PipelineContext;
+  /** @internal */
   ingestPipeline: IngestPipeline;
+  /** @internal */
   deletePipeline: DeletePipeline;
+  /** @internal */
   searchPipeline: SearchPipeline;
   state: EngineState;
   private _initPromise: Promise<void> | null;
@@ -165,23 +167,17 @@ class MemoryEngine {
     this.lastReconciliation = await this._reconcileUnsafe();
   });
   _closed: boolean;
-  ragParams: UnknownRecord;
   _lastIndexedAt: number | null;
   lastReconciliation: ReconciliationReport | null;
   /**
    * @param {object} [options={}]
    * @param {object} [options.config]          - merged over DEFAULT_CONFIG
    * @param {string} [options.dbPath]          - SQLite path (default ':memory:')
-   * @param {string} [options.ragParamsPath]   - rag_params.json (optional)
-   * @param {object} [options.ragParams]       - rag params overrides (optional)
    * @param {import('./interfaces/embedding-provider.js')} [options.embeddingProvider]
+   * @param {import('./types.js').ExternalReranker} [options.reranker]
    * @param {import('./interfaces/vector-store.js')} [options.vectorStore]
    * @param {import('./interfaces/metadata-store.js')} [options.metadataStore]
-   * @param {object} [options.ctx]             - extra PipelineContext fields
-   *                                             (vexusIndex, epa, tagGraph, ...)
-   * @param {object} [options.ingestOptions]   - forwarded to IngestPipeline (stages...)
-   * @param {object} [options.deleteOptions]   - forwarded to DeletePipeline
-   * @param {object} [options.searchOptions]   - forwarded to SearchPipeline
+   * @param {object} [options.searchOptions]   - typed retrieval defaults
    */
   constructor(options: MemoryEngineOptions = {}) {
     this.name = "memoryEngine";
@@ -200,44 +196,38 @@ class MemoryEngine {
     // Providers and the shared context are deliberately deferred until
     // initialize(). Injected instances are safe to retain here because they
     // have already been created by the caller; default backends are not.
-    const injectedMetadataStore = options.metadataStore || options.ctx?.metadataStore;
+    const injectedMetadataStore = options.metadataStore;
     if (injectedMetadataStore) {
       this.metadataStore = injectedMetadataStore as RuntimeMetadataStore;
     }
-    const injectedVectorStore = options.vectorStore || options.ctx?.vectorStore;
+    const injectedVectorStore = options.vectorStore;
     if (injectedVectorStore) {
       this.vectorStore = injectedVectorStore as RuntimeVectorStore;
     }
-    const injectedEmbeddingProvider =
-      options.embeddingProvider || options.ctx?.embeddingProvider;
+    const injectedEmbeddingProvider = options.embeddingProvider;
     if (injectedEmbeddingProvider) {
       this.embeddingProvider = injectedEmbeddingProvider;
     }
 
     // Pipelines are pure stage graphs and do not open native resources.
-    this.ingestPipeline = new IngestPipeline(this.config, options.ingestOptions || {});
-    this.deletePipeline = new DeletePipeline(this.config, options.deleteOptions || {});
-    const initialSearchOptions = { ...(options.searchOptions || {}) };
-    if (options.defaultRetrievalPlan !== undefined) {
-      initialSearchOptions.defaultRetrievalPlan = this.defaultRetrievalPlan;
-    } else {
-      delete initialSearchOptions.defaultRetrievalPlan;
-    }
-    this.searchPipeline = new SearchPipeline(this.config, initialSearchOptions);
+    this.ingestPipeline = new IngestPipeline(this.config, {});
+    this.deletePipeline = new DeletePipeline(this.config, {});
+    this.searchPipeline = new SearchPipeline(this.config, {
+      defaultRetrievalPlan: this.defaultRetrievalPlan,
+    });
 
     // Lifecycle + session statistics.
     this.state = "created";
     this._initPromise = null;
     this._closePromise = null;
     this._closed = false;
-    this.ragParams = {};
     this._lastIndexedAt = null;
     this.lastReconciliation = null;
   }
 
   /**
-   * Open the engine: load rag params, apply hot knobs to the config and
-   * mark the engine ready. Idempotent (concurrent calls share one run).
+   * Open the engine, validate persistence and restore derived state, then mark
+   * the engine ready. Idempotent (concurrent calls share one run).
    * @returns {Promise<void>}
    */
   get initialized(): boolean {
@@ -276,30 +266,13 @@ class MemoryEngine {
     const initialization = (async () => {
       await this._ensureProviders();
       this.ctx = new PipelineContext({
-        ...(this.options.ctx || {}),
         config: this.config,
         embeddingProvider: this.embeddingProvider,
         vectorStore: this.vectorStore,
         metadataStore: this.metadataStore,
+        reranker: this.options.reranker,
       });
 
-      const { ragParamsPath, ragParams: ragOverrides } = this.options;
-      this.ragParams = await loadRagParams({
-        path: ragParamsPath,
-        overrides: ragOverrides,
-      });
-
-      this._applyRagParamsToConfig(this.ragParams);
-      const searchOptions = this.options.searchOptions || {};
-      if (!Array.isArray(searchOptions.stages)) {
-        const rebuiltSearchOptions = { ...searchOptions };
-        if (this.options.defaultRetrievalPlan !== undefined) {
-          rebuiltSearchOptions.defaultRetrievalPlan = this.defaultRetrievalPlan;
-        } else {
-          delete rebuiltSearchOptions.defaultRetrievalPlan;
-        }
-        this.searchPipeline = new SearchPipeline(this.config, rebuiltSearchOptions);
-      }
       this.lastReconciliation = await this._recoverIndexes();
       if (this.options.onReady && typeof this.options.onReady === "function") {
         await this._lifecycleContext.run({ phase: "onReady" }, () =>
@@ -369,11 +342,10 @@ class MemoryEngine {
         this.vectorStore = new VexusVectorStore({
           dimension: this.config.dimension,
           storePath: this.config.storePath,
-          tagIndexCapacity: this.config.tagIndexCapacity,
+          tagVectorIndexCapacity: this.config.tagVectorIndexCapacity,
           indexSaveDelay: this.config.indexSaveDelay,
-          tagIndexSaveDelay: this.config.tagIndexSaveDelay,
-          persistTagIndex: this.config.persistTagIndex,
-          indexLoadEnabled: this.config.indexLoadEnabled,
+          tagVectorIndexSaveDelay: this.config.tagVectorIndexSaveDelay,
+          persistTagVectorIndex: this.config.persistTagVectorIndex,
         }) as RuntimeVectorStore;
         this._ownsVectorStore = true;
       } catch (error) {
@@ -387,9 +359,9 @@ class MemoryEngine {
     }
     if (!this.embeddingProvider) {
       try {
-        const { default: OpenAIEmbeddingProvider } =
-          await import("./providers/openai-embedding-provider.js");
-        this.embeddingProvider = new OpenAIEmbeddingProvider({
+        const { default: OpenAICompatibleEmbeddingProvider } =
+          await import("./providers/openai-compatible-embedding-provider.js");
+        this.embeddingProvider = new OpenAICompatibleEmbeddingProvider({
           apiUrl: this.config.apiUrl,
           apiKey: this.config.apiKey,
           model: this.config.model,
@@ -456,9 +428,10 @@ class MemoryEngine {
           ? await this.metadataStore.getExpectedVectorIndexNames()
           : [...(this.vectorStore.indices?.keys() ?? [])];
       const hasNonPersistedTagIndex =
-        !this.config.persistTagIndex && expectedIndexNames.includes("global_tags");
+        !this.config.persistTagVectorIndex &&
+        expectedIndexNames.includes(this.config.tagVectorIndexName);
       const persistedIndexNames = hasNonPersistedTagIndex
-        ? expectedIndexNames.filter((name) => name !== "global_tags")
+        ? expectedIndexNames.filter((name) => name !== this.config.tagVectorIndexName)
         : expectedIndexNames;
       let valid = false;
       try {
@@ -471,7 +444,10 @@ class MemoryEngine {
               this.metadataStore,
               this.config.dimension,
             );
-            await this.vectorStore.replaceIndex("global_tags", tagEntries);
+            await this.vectorStore.replaceIndex(
+              this.config.tagVectorIndexName,
+              tagEntries,
+            );
           }
         }
       } catch {
@@ -534,10 +510,10 @@ class MemoryEngine {
       typeof this.metadataStore.getKv === "function" &&
       typeof this.metadataStore.setKv === "function"
     ) {
-      const value = await this.metadataStore.getKv("memoria.metadata_generation");
+      const value = await this.metadataStore.getKv("metadata_generation");
       const generation = typeof value === "string" ? value : "0";
-      await this.metadataStore.setKv("memoria.vector_generation", generation);
-      await this.metadataStore.setKv("memoria.vector_dirty", "0");
+      await this.metadataStore.setKv("vector_generation", generation);
+      await this.metadataStore.setKv("vector_dirty", "0");
     }
   }
 
@@ -552,7 +528,7 @@ class MemoryEngine {
     if (vectorOwned && vectorStore?.indices instanceof Map) {
       for (const index of vectorStore.indices.values()) {
         if (index && typeof index === "object") {
-          clearNativeMemoArtifactCache(index);
+          clearTagRetrievalRuntime(index);
         }
       }
     }
@@ -587,7 +563,7 @@ class MemoryEngine {
     if (embeddingOwned) {
       this.embeddingProvider = undefined as unknown as EmbeddingProviderContract;
     }
-    // Keep the parameter as part of the private compatibility surface; owned
+    // Keep the parameter part of the private cleanup signature; owned
     // resources are now cleared immediately after each successful cleanup.
     void resetReferences;
     if (firstError) throw firstError;
@@ -770,51 +746,7 @@ class MemoryEngine {
   }
 
   /**
-   * Map hot-tunable rag phi into the pipeline config so the dedupe stage
-   * reflects rag_params.json without a rebuild.
-   * @private
-   */
-  _applyRagParamsToConfig(ragParams: UnknownRecord): void {
-    const section = isRecord(ragParams.KnowledgeBaseManager)
-      ? ragParams.KnowledgeBaseManager
-      : null;
-    if (!section) return;
-
-    const dedupe = isRecord(section.resultDeduplication)
-      ? section.resultDeduplication
-      : null;
-    if (dedupe) {
-      if (dedupe.semanticThreshold != null) {
-        this.config.semanticThreshold = Number(dedupe.semanticThreshold);
-      }
-      if (dedupe.maxResults != null) {
-        this.config.dedupeMaxResults = Number(dedupe.maxResults);
-        this.config.maxResults = Number(dedupe.maxResults);
-      }
-      if (dedupe.minSemanticCandidates != null) {
-        this.config.minSemanticCandidates = Number(dedupe.minSemanticCandidates);
-      }
-      if (dedupe.finalSemanticThreshold != null) {
-        this.config.finalSemanticThreshold = Number(dedupe.finalSemanticThreshold);
-      }
-      if (isRecord(dedupe.sourcePriority)) {
-        const sourcePriority = { ...this.config.sourcePriority };
-        for (const [source, value] of Object.entries(dedupe.sourcePriority)) {
-          const score = Number(value);
-          if (Number.isFinite(score)) sourcePriority[source] = score;
-        }
-        this.config.sourcePriority = sourcePriority;
-      }
-    }
-
-    const riverMemo = isRecord(section.riverMemo) ? section.riverMemo : null;
-    if (riverMemo && riverMemo.enabled === true) {
-      this.config.riverMemoEnabled = true;
-    }
-  }
-
-  /**
-   * Ingest a batch of files into the knowledge base.
+   * Ingest a batch of file snapshots into persistent memory.
    * @param {Array<{path:string, relPath?:string, content?:string, mtime?:number, size?:number}>|
    *              {path:string, ...}|undefined} files
    * @returns {Promise<Array<object>>} per-file ingest envelopes
@@ -846,7 +778,7 @@ class MemoryEngine {
               revision: entry.revision,
               documentSource: entry.documentSource,
               documentMetadata: entry.documentMetadata,
-              diaryName: entry.diaryName,
+              space: entry.space,
             },
             this.ctx,
           );
@@ -906,7 +838,7 @@ class MemoryEngine {
               sourceContent: document.sourceContent ?? document.content,
               mtime,
               size,
-              diaryName: "Logical",
+              space: "Logical",
               documentId,
               revision,
               documentSource: document.source,
@@ -980,7 +912,7 @@ class MemoryEngine {
               path: row?.path || storagePath,
               relPath: row?.path || storagePath,
               documentId: normalizedId,
-              diaryName: row?.diary_name || row?.diaryName || "Logical",
+              space: row?.space || "Logical",
             },
             this.ctx,
           )) as DeleteEnvelope;
@@ -995,7 +927,7 @@ class MemoryEngine {
   }
 
   /**
-   * Alias of {@link flushBatch} (knowledgeBase.flush call shape).
+   * Alias of {@link flushBatch} for file-adapter ingestion.
    * @param {Array|object|undefined} files
    * @returns {Promise<Array<object>>}
    */
@@ -1009,9 +941,10 @@ class MemoryEngine {
    *
    * @param {string|object} query - raw query string, or an envelope
    *                                ({ query, options }) for fine control
-   * @param {object} [options]    - per-call options (topK, diaryNames, ...)
+   * @param {object} [options]    - per-call options (topK, spaces, ...)
    * @returns {Promise<object>}   - { ..., results, resultCount }
    */
+  search(query: string, options?: SearchOptions): Promise<SearchEnvelope>;
   search(
     query: string | PipelineData,
     options: SearchOptions = {},
@@ -1080,7 +1013,7 @@ class MemoryEngine {
             path: source.path,
             relPath: source.relPath,
             documentId: source.documentId,
-            diaryName: source.diaryName,
+            space: source.space,
           },
           this.ctx,
         )) as DeleteEnvelope;
@@ -1103,12 +1036,7 @@ class MemoryEngine {
     );
   }
 
-  /**
-   * Knowledge base statistics.
-   * @returns {Promise<{files:number, chunks:number, tags:number,
-   *   diaries:string[], lastIndexed:number|null, vectorStats:object,
-   *   healthy:boolean, initialized:boolean}>}
-   */
+  /** Return authoritative counts and vector health for the current spaces. */
   getStats(): Promise<EngineStats> {
     return this._runReadyOperation("getStats", () => this._getStatsInternal());
   }
@@ -1131,14 +1059,14 @@ class MemoryEngine {
     const store = this.metadataStore;
     let chunks: Awaited<ReturnType<MetadataStoreContract["getAllChunks"]>>;
     let tags: Awaited<ReturnType<MetadataStoreContract["getAllTags"]>>;
-    let diaries: string[];
+    let spaces: string[];
     let files: number;
     let lastIndexed: number | null;
     let healthy: EngineStats["healthy"] = { healthy: true, issues: [] };
     try {
       chunks = (await store.getAllChunks()) || [];
       tags = (await store.getAllTags()) || [];
-      diaries = await store.getDistinctDiaryNames();
+      spaces = await store.getDistinctSpaces();
       files = await this._countFiles();
       lastIndexed = await this._resolveLastIndexed();
       if (typeof store.healthCheck === "function") {
@@ -1187,7 +1115,7 @@ class MemoryEngine {
       files,
       chunks: chunks.length,
       tags: tags.length,
-      diaries: Array.isArray(diaries) ? diaries : [],
+      spaces: Array.isArray(spaces) ? spaces : [],
       lastIndexed: lastIndexed,
       vectorStats,
       healthy,
@@ -1200,14 +1128,7 @@ class MemoryEngine {
    * @private
    */
   async _countFiles(): Promise<number> {
-    const store = this.metadataStore;
-    if (typeof store.countFiles === "function") {
-      return store.countFiles();
-    }
-    const chunks = await store.getAllChunks();
-    return new Set(
-      chunks.map((c) => Number(c.fileId ?? c.file_id)).filter(Number.isFinite),
-    ).size;
+    return this.metadataStore.countFiles();
   }
 
   /**

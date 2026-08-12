@@ -7,15 +7,21 @@ import type {
   MemoryDocumentSource,
   MemoryEngineOptions,
   MetadataStoreContract,
-  PipelineContextOptions,
-  PipelineContext,
   QueryBuilder,
+  RetrievalPlan,
   RetrievalPlanInput,
+  RetrievalStrategy,
   SearchOptions,
-  SearchEnvelope,
-  Stage,
   VectorStore,
 } from "../../dist/index.js";
+
+// The root package intentionally exposes the product API only.
+// @ts-expect-error Internal pipeline framework is not a root public type.
+import type { Pipeline } from "../../dist/index.js";
+// @ts-expect-error Native implementation types are not root public types.
+import type { VexusIndex } from "../../dist/index.js";
+
+type RemovedInternalTypes = [Pipeline, VexusIndex];
 
 const reranker: ExternalReranker = async (_query, candidates) => candidates;
 
@@ -23,6 +29,20 @@ const config: MemoryConfigOverrides = {
   dimension: 128,
   rootPath: "notes",
   storePath: "indices",
+};
+
+const canonicalConfig: MemoryConfigOverrides = {
+  ...config,
+  tagBasisProjectionEnabled: true,
+  tagResidualDecompositionEnabled: true,
+  tagGraphPropagationEnabled: true,
+  propagationSupportRerankEnabled: true,
+  propagationStructureRerankEnabled: true,
+  propagationHistoryEnabled: false,
+  embeddingRerankEnabled: true,
+  nativeTagRetrievalEnabled: false,
+  tagExpansionEnabled: true,
+  relationExpansionEnabled: true,
 };
 
 const provider: EmbeddingProvider = {
@@ -34,15 +54,32 @@ const provider: EmbeddingProvider = {
 const options: MemoryEngineOptions = {
   config,
   embeddingProvider: provider,
+  reranker,
   defaultRetrievalPlan: {
-    strategy: "field",
-    tagMemo: { plus: true },
+    strategy: "associative",
+    associative: {
+      tagBasisProjection: true,
+      tagResidualDecomposition: true,
+      tagGraphPropagation: true,
+      propagationSupport: true,
+    },
   } satisfies RetrievalPlanInput,
 };
 
 const searchOptions: SearchOptions = {
-  retrievalPlan: { strategy: "topology" },
+  retrievalPlan: { strategy: "structural" },
   inheritRetrievalDefaults: true,
+};
+
+const retrievalStrategy: RetrievalStrategy = "auto";
+const retrievalPlan: RetrievalPlan = {
+  strategy: retrievalStrategy,
+  associative: {},
+  structural: {},
+  propagationHistory: {},
+  filters: {},
+  expansion: {},
+  postprocess: {},
 };
 
 const builder: QueryBuilder | null = null;
@@ -56,15 +93,6 @@ const document: MemoryDocumentInput = {
 };
 const documentFormat: MemoryDocumentFormat = document.format!;
 
-const stage: Stage<{ query: string }, SearchEnvelope> = {
-  name: "typed-stage",
-  process: async (input: { query: string }, _ctx: PipelineContext) => ({
-    query: input.query,
-    results: [],
-    resultCount: 0,
-  }),
-};
-
 const vectorStore: VectorStore = {
   add: async () => undefined,
   addBatch: async () => undefined,
@@ -74,8 +102,18 @@ const vectorStore: VectorStore = {
 
 const minimalMetadataStore: MetadataStoreContract = {
   upsertFile: async () => 1,
+  countFiles: async () => 0,
+  replaceDocumentState: async () => ({
+    fileId: 1,
+    chunkIds: [],
+    tagIds: [],
+    removedChunkIds: [],
+    metadataGeneration: 1,
+    previousIndexName: null,
+    currentIndexName: "Root",
+  }),
   getFileByPath: async () => null,
-  getDistinctDiaryNames: async () => [],
+  getDistinctSpaces: async () => [],
   getFileByChunkId: async () => null,
   deleteFile: async () => undefined,
   insertChunks: async () => [],
@@ -95,10 +133,8 @@ const minimalMetadataStore: MetadataStoreContract = {
 
 const optionalMetadataCapabilities: Pick<
   MetadataStoreContract,
-  | "countFiles"
   | "getLastIndexedAt"
   | "getFileByDocumentId"
-  | "replaceDocumentState"
   | "getSearchCorpus"
   | "getIndexableChunks"
   | "getExpectedVectorIndexNames"
@@ -125,26 +161,9 @@ type DomainMetadataMethods = Pick<
   | "getIndexableChunks"
 >;
 const domainMetadataMethods = null as unknown as DomainMetadataMethods;
-type LegacyMetadataStore = Omit<
-  MetadataStoreContract,
-  | "countFiles"
-  | "getLastIndexedAt"
-  | "getExpectedVectorIndexNames"
-  | "getIndexableChunks"
->;
-const legacyMetadataStore = null as unknown as LegacyMetadataStore;
-const compatibleMetadataStore: MetadataStoreContract = legacyMetadataStore;
-const compatibilityContext: PipelineContextOptions = {
-  config: {},
-  vexusIndex: { nativeCompatibilityEscape: true },
-  reranker,
-};
-const compatibilityConfig: MemoryConfigOverrides = {
-  vexusIndex: { nativeCompatibilityEscape: true },
-};
-
+const removedInternalTypes = null as unknown as RemovedInternalTypes;
 void options;
-void stage;
+void canonicalConfig;
 void vectorStore;
 void minimalMetadataStore;
 void optionalMetadataCapabilities;
@@ -152,9 +171,8 @@ void optionalVectorCapabilities;
 void document;
 void documentFormat;
 void domainMetadataMethods;
-void compatibleMetadataStore;
-void compatibilityContext;
-void compatibilityConfig;
+void removedInternalTypes;
 void reranker;
 void searchOptions;
 void builder;
+void retrievalPlan;

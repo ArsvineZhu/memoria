@@ -12,7 +12,7 @@ import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 import { decodeVectorBlob } from "../../utils/vector-codec.js";
 
-const TAG_INDEX_NAME = "global_tags";
+const TAG_INDEX_NAME = "tag_vectors";
 const DEFAULT_ASSOCIATE_COUNT = 10;
 const DEFAULT_SEED_COUNT = 3;
 const DEFAULT_TAG_BOOST = 0.45;
@@ -547,11 +547,11 @@ class AssociatorStage extends Stage {
         { retryable: true },
       );
     }
-    return !!file && scope.has(this._diaryName(file));
+    return !!file && scope.has(this._space(file));
   }
 
-  private _diaryName(file: FileRow): string {
-    return String(file.diary_name ?? file.diaryName ?? "");
+  private _space(file: FileRow): string {
+    return String(file.space ?? "");
   }
 
   private _mergeProposal(

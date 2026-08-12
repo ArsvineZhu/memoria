@@ -3,7 +3,7 @@ import { at, assertFiniteVector, assertVectorDimension } from "../utils/numerica
 
 /**
  * Gram-Schmidt orthogonalization primitives.
- * Extracted from ResidualPyramid.js and EPAModule.js.
+ * Shared numerical helper for tag basis and residual decomposition.
  * Pure math, zero I/O dependencies.
  */
 

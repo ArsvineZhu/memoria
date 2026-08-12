@@ -248,8 +248,8 @@ test("getStats vector-stat failures cross the boundary as vector_backend errors"
   }
 });
 
-test("search getDistinctDiaryNames failures cross the boundary as persistence errors", async () => {
-  const cause = new Error("diary names persistence secret=do-not-copy");
+test("search getDistinctSpaces failures cross the boundary as persistence errors", async () => {
+  const cause = new Error("space names persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
   engine.config.searchAllIndices = true;
   try {
@@ -257,7 +257,7 @@ test("search getDistinctDiaryNames failures cross the boundary as persistence er
     (
       metadataStore as unknown as { getExpectedVectorIndexNames?: unknown }
     ).getExpectedVectorIndexNames = undefined;
-    metadataStore.getDistinctDiaryNames = async () => {
+    metadataStore.getDistinctSpaces = async () => {
       throw cause;
     };
     await assert.rejects(
@@ -336,7 +336,7 @@ test("search tag file lookup failures cross the boundary as persistence errors",
   try {
     await engine.initialize();
     engine.vectorStore.search = async (indexName) =>
-      indexName === "global_tags" ? [{ id: 9, score: 1 }] : [];
+      indexName === "tag_vectors" ? [{ id: 9, score: 1 }] : [];
     await assert.rejects(
       () => engine.search("private content"),
       (error: unknown) => {
@@ -362,7 +362,7 @@ test("search tag chunk lookup failures cross the boundary as persistence errors"
   try {
     await engine.initialize();
     engine.vectorStore.search = async (indexName) =>
-      indexName === "global_tags" ? [{ id: 9, score: 1 }] : [];
+      indexName === "tag_vectors" ? [{ id: 9, score: 1 }] : [];
     await assert.rejects(
       () => engine.search("private content"),
       (error: unknown) => {
@@ -391,7 +391,7 @@ test("search getFileTags failures cross the boundary as persistence errors", asy
     metadataStore.getFileByChunkId = async () => ({
       id: 1,
       path: "candidate.md",
-      diary_name: "Root",
+      space: "Root",
       checksum: "candidate",
       mtime: 0,
       size: 9,
@@ -483,9 +483,9 @@ test("SQLite metadata close failure remains retryable through the engine", async
     },
   );
   assert.equal(engine.state, "closing");
-  assert.equal(metadataStore._closed, false);
+  assert.equal((metadataStore as SqliteMetadataStore)._closed, false);
 
   await engine.close();
   assert.equal(engine.state, "closed");
-  assert.equal(metadataStore._closed, true);
+  assert.equal((metadataStore as SqliteMetadataStore)._closed, true);
 });

@@ -11,18 +11,18 @@ import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 import { at } from "../../utils/numerical.js";
 
-// Default BM25 constants (mirror of LightMemo.BM25Ranker).
+// Default BM25 constants for the Memoria text retriever.
 const DEFAULT_K1 = 1.5;
 const DEFAULT_B = 0.75;
 
 // Tokens must contain at least one Han / alnum character (mirror of
-// LightMemo._isBM25TokenLikeWord).
+// BM25 token classification.
 const TOKEN_LIKE = /[\p{Script=Han}a-z0-9_]/u;
 
 /**
  * Sparse keyword retrieval over the whole chunk corpus using BM25.
  *
- * Mirrors the LightMemo BM25 pre-filter: query text is tokenized (a
+ * The BM25 pre-filter tokenizes query text (a
  * config.tokenizer hook may replace the default whitespace + CJK-bigram
  * splitter), IDF is computed over the corpus, and every chunk whose BM25
  * score is positive is returned, sorted desc, capped by bm25PoolK.
@@ -109,7 +109,7 @@ class BM25SearcherStage extends Stage {
           const scopedChunks: Array<ChunkRow | SearchCorpusChunk> = [];
           for (const chunk of chunks) {
             const file = await metadataStore.getFileByChunkId(Number(chunk.id));
-            const indexName = file?.diary_name || file?.diaryName || "Root";
+            const indexName = file?.space || "Root";
             if (file && allowed.has(indexName)) scopedChunks.push(chunk);
           }
           chunks = scopedChunks;

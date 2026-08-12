@@ -14,7 +14,7 @@ interface DecodeOptions {
  * @param {number} dimension
  * @param {string} [label='vector']
  * @param {object} [options]
- * @param {string} [options.logPrefix='KnowledgeBase']
+ * @param {string} [options.logPrefix='Memoria']
  * @returns {Float32Array|null}
  */
 function decodeVectorBlob(
@@ -37,7 +37,7 @@ function decodeVectorBlob(
 
   const expectedBytes = dim * Float32Array.BYTES_PER_ELEMENT;
   if (blob.length !== expectedBytes) {
-    const logPrefix = options.logPrefix || "KnowledgeBase";
+    const logPrefix = options.logPrefix || "Memoria";
     console.warn(
       `[${logPrefix}] ⚠️ Invalid ${label} blob length: expected ${expectedBytes}, got ${blob.length}`,
     );

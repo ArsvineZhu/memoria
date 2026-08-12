@@ -90,9 +90,9 @@ async function setGenerationState(
   values: { metadata: string; vector: string; dirty: string },
 ): Promise<void> {
   const store = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
-  await store.setKv?.("memoria.metadata_generation", values.metadata);
-  await store.setKv?.("memoria.vector_generation", values.vector);
-  await store.setKv?.("memoria.vector_dirty", values.dirty);
+  await store.setKv?.("metadata_generation", values.metadata);
+  await store.setKv?.("vector_generation", values.vector);
+  await store.setKv?.("vector_dirty", values.dirty);
   store.close();
 }
 
@@ -221,10 +221,10 @@ test("clean close and reopen restores persisted indexes without rebuilding", asy
   await first.close();
 
   const stateStore = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
-  assert.equal(await stateStore.getKv?.("memoria.vector_dirty"), "0");
+  assert.equal(await stateStore.getKv?.("vector_dirty"), "0");
   assert.equal(
-    await stateStore.getKv?.("memoria.metadata_generation"),
-    await stateStore.getKv?.("memoria.vector_generation"),
+    await stateStore.getKv?.("metadata_generation"),
+    await stateStore.getKv?.("vector_generation"),
   );
   stateStore.close();
 
@@ -277,7 +277,7 @@ test("clean recovery locally rebuilds non-persisted tags without full chunk reco
   const firstVector = countingVectorStore();
   const first = createMemoryEngine({
     dbPath,
-    config: { dimension: DIMENSION, storePath: root, persistTagIndex: false },
+    config: { dimension: DIMENSION, storePath: root, persistTagVectorIndex: false },
     embeddingProvider: embeddingProvider(),
     vectorStore: firstVector,
   });
@@ -294,17 +294,17 @@ test("clean recovery locally rebuilds non-persisted tags without full chunk reco
   const secondVector = countingVectorStore({ validationResult: true });
   const second = createMemoryEngine({
     dbPath,
-    config: { dimension: DIMENSION, storePath: root, persistTagIndex: false },
+    config: { dimension: DIMENSION, storePath: root, persistTagVectorIndex: false },
     embeddingProvider: embeddingProvider(),
     vectorStore: secondVector,
   });
   await second.initialize();
 
   assert.equal(secondVector.restoreCalls, 1);
-  assert.equal(secondVector.restoreNames[0]?.includes("global_tags"), false);
-  assert.deepEqual(secondVector.replaceNames, ["global_tags"]);
+  assert.equal(secondVector.restoreNames[0]?.includes("tag_vectors"), false);
+  assert.deepEqual(secondVector.replaceNames, ["tag_vectors"]);
   assert.deepEqual(
-    [...(secondVector.indices.get("global_tags") as Set<number>)],
+    [...(secondVector.indices.get("tag_vectors") as Set<number>)],
     [tag.id],
   );
   assert.deepEqual(second.lastReconciliation?.rebuiltIndexes, []);
@@ -316,7 +316,7 @@ test("clean tag recovery falls back to the vector store reconciliation capabilit
   const dbPath = join(root, "memory.sqlite");
   const first = createMemoryEngine({
     dbPath,
-    config: { dimension: DIMENSION, storePath: root, persistTagIndex: false },
+    config: { dimension: DIMENSION, storePath: root, persistTagVectorIndex: false },
     embeddingProvider: embeddingProvider(),
     vectorStore: countingVectorStore(),
   });
@@ -342,7 +342,7 @@ test("clean tag recovery falls back to the vector store reconciliation capabilit
   };
   const second = createMemoryEngine({
     dbPath,
-    config: { dimension: DIMENSION, storePath: root, persistTagIndex: false },
+    config: { dimension: DIMENSION, storePath: root, persistTagVectorIndex: false },
     embeddingProvider: embeddingProvider(),
     vectorStore: fallback,
   });
@@ -363,7 +363,7 @@ test("reconciliation planning failure leaves the live vector index usable", asyn
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const engine = createMemoryEngine({
     config: { dimension: DIMENSION, storePath },
@@ -397,7 +397,7 @@ test("reconciliation application failure remains dirty and rebuilds on reopen", 
     dimension: DIMENSION,
     storePath: join(root, "indices"),
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const engine = createMemoryEngine({
     dbPath,
@@ -426,14 +426,14 @@ test("reconciliation application failure remains dirty and rebuilds on reopen", 
   await engine.close();
 
   const dirty = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
-  assert.equal(await dirty.getKv?.("memoria.vector_dirty"), "1");
+  assert.equal(await dirty.getKv?.("vector_dirty"), "1");
   dirty.close();
 
   const recoveredVector = new VexusVectorStore({
     dimension: DIMENSION,
     storePath: join(root, "indices"),
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   let rebuildCalls = 0;
   const replaceIndex = recoveredVector.replaceIndex.bind(recoveredVector);
@@ -450,7 +450,7 @@ test("reconciliation application failure remains dirty and rebuilds on reopen", 
   await recovered.initialize();
   assert.ok(rebuildCalls >= 1);
   const clean = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
-  assert.equal(await clean.getKv?.("memoria.vector_dirty"), "0");
+  assert.equal(await clean.getKv?.("vector_dirty"), "0");
   clean.close();
   await recovered.close();
 });
@@ -462,7 +462,7 @@ test("search reconciles authoritative SQLite state after a same-session vector f
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const engine = createMemoryEngine({
     dbPath: ":memory:",
@@ -511,7 +511,7 @@ test("clean close and reopen loads real Vexus indexes before vector search", asy
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const first = createMemoryEngine({
     dbPath,
@@ -529,7 +529,7 @@ test("clean close and reopen loads real Vexus indexes before vector search", asy
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   let replaceCalls = 0;
   const originalReplaceIndex = secondVector.replaceIndex.bind(secondVector);
@@ -555,7 +555,7 @@ test("clean close and reopen loads real Vexus indexes before vector search", asy
   await second.close();
 });
 
-test("full recovery removes stale diary index files before same-name recreation", async () => {
+test("full recovery removes stale space index files before same-name recreation", async () => {
   const root = mkdtempSync(join(tmpdir(), "memoria-recovery-vexus-stale-"));
   const dbPath = join(root, "memory.sqlite");
   const storePath = join(root, "indices");
@@ -563,7 +563,7 @@ test("full recovery removes stale diary index files before same-name recreation"
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const first = createMemoryEngine({
     dbPath,
@@ -573,17 +573,17 @@ test("full recovery removes stale diary index files before same-name recreation"
   });
   await first.initialize();
   await first.flushBatch({
-    path: join(root, "diaryA", "old.md"),
-    relPath: "diaryA/old.md",
-    content: "ancient diary ghost content",
+    path: join(root, "spaceA", "old.md"),
+    relPath: "spaceA/old.md",
+    content: "ancient space archived content",
     mtime: 0,
-    size: Buffer.byteLength("ancient diary ghost content", "utf8"),
+    size: Buffer.byteLength("ancient space archived content", "utf8"),
   });
-  const oldFile = await first.metadataStore.getFileByPath("diaryA/old.md");
+  const oldFile = await first.metadataStore.getFileByPath("spaceA/old.md");
   assert.ok(oldFile);
   const oldChunk = (await first.metadataStore.getChunksByFileId(oldFile.id))[0];
   assert.ok(oldChunk);
-  const oldIndexPath = firstVector._getIndexPath("diaryA");
+  const oldIndexPath = firstVector._getIndexPath("spaceA");
   await first.close();
   assert.ok(fs.existsSync(oldIndexPath));
 
@@ -595,7 +595,7 @@ test("full recovery removes stale diary index files before same-name recreation"
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const second = createMemoryEngine({
     dbPath,
@@ -606,23 +606,23 @@ test("full recovery removes stale diary index files before same-name recreation"
   await second.initialize();
   assert.equal(fs.existsSync(oldIndexPath), false);
   assert.equal(fs.existsSync(`${oldIndexPath}.meta.json`), false);
-  assert.equal(secondVector.indices.has("diaryA"), false);
+  assert.equal(secondVector.indices.has("spaceA"), false);
 
   await second.flushBatch({
-    path: join(root, "diaryA", "new.md"),
-    relPath: "diaryA/new.md",
-    content: "fresh diary replacement content",
+    path: join(root, "spaceA", "new.md"),
+    relPath: "spaceA/new.md",
+    content: "fresh space replacement content",
     mtime: 0,
-    size: Buffer.byteLength("fresh diary replacement content", "utf8"),
+    size: Buffer.byteLength("fresh space replacement content", "utf8"),
   });
-  const newFile = await second.metadataStore.getFileByPath("diaryA/new.md");
+  const newFile = await second.metadataStore.getFileByPath("spaceA/new.md");
   assert.ok(newFile);
   const newChunk = (await second.metadataStore.getChunksByFileId(newFile.id))[0];
   assert.ok(newChunk);
   const [queryVector] = await embeddingProvider().embedBatch([
-    "fresh diary replacement content",
+    "fresh space replacement content",
   ]);
-  const ids = (await secondVector.search("diaryA", queryVector!, 10)).map((hit) =>
+  const ids = (await secondVector.search("spaceA", queryVector!, 10)).map((hit) =>
     Number(hit.id),
   );
   assert.ok(ids.includes(newChunk.id));
@@ -656,9 +656,9 @@ test("dirty and generation-mismatched reopen rebuilds and marks vector state cle
   assert.ok(rebuildingVector.replaceCalls >= 1);
 
   const verify = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
-  assert.equal(await verify.getKv?.("memoria.metadata_generation"), "2");
-  assert.equal(await verify.getKv?.("memoria.vector_generation"), "2");
-  assert.equal(await verify.getKv?.("memoria.vector_dirty"), "0");
+  assert.equal(await verify.getKv?.("metadata_generation"), "2");
+  assert.equal(await verify.getKv?.("vector_generation"), "2");
+  assert.equal(await verify.getKv?.("vector_dirty"), "0");
   verify.close();
   await rebuilding.close();
 });
@@ -720,7 +720,7 @@ test("failed vector writes leave vector_dirty set after close", async () => {
   await engine.close();
 
   const verify = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
-  assert.equal(await verify.getKv?.("memoria.vector_dirty"), "1");
+  assert.equal(await verify.getKv?.("vector_dirty"), "1");
   verify.close();
 });
 
@@ -747,12 +747,12 @@ test("failed vector persistence does not clear dirty and remains retryable", asy
       assertWrappedFailure(error, "lifecycle", "simulated persistence failure"),
   );
   assert.equal(engine.state, "closing");
-  assert.equal(await metadataStore.getKv?.("memoria.vector_dirty"), "1");
+  assert.equal(await metadataStore.getKv?.("vector_dirty"), "1");
 
   vectorStore.flushError = undefined;
   await engine.close();
   assert.equal(engine.state, "closed");
-  assert.equal(await metadataStore.getKv?.("memoria.vector_dirty"), "0");
+  assert.equal(await metadataStore.getKv?.("vector_dirty"), "0");
   metadataStore.close();
 });
 
@@ -775,6 +775,6 @@ test("a skipped ingest preserves complete vector state for clean close", async (
 
   await engine.close();
   const verify = new SqliteMetadataStore({ dbPath, dimension: DIMENSION });
-  assert.equal(await verify.getKv?.("memoria.vector_dirty"), "0");
+  assert.equal(await verify.getKv?.("vector_dirty"), "0");
   verify.close();
 });

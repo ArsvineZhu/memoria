@@ -11,8 +11,9 @@ remain authoritative for shared commands and test policy.
   layer; do not weaken an existing assertion to make stale documentation pass.
 - Keep `tests/fixtures/` as test input only. Do not treat fixtures as production
   data or documentation sources, and do not copy `eval/` material into them.
-- Preserve the live DashScope skip behavior when `EMBED_API_KEY` is absent; a
-  skipped live test is not evidence of a verified network integration.
+- Preserve the live OpenAI-compatible embedding skip behavior when required
+  `EMBED_*` settings are absent; a skipped live test is not evidence of a
+  verified network integration.
 - Compile with `corepack pnpm build:test` before executing individual compiled
   tests. Do not commit `dist-test/`.
 

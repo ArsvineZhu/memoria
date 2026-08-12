@@ -59,10 +59,9 @@ function mergePlanInputs(
   return {
     ...left,
     ...right,
-    field: mergeSection(left.field, right.field),
-    topology: mergeSection(left.topology, right.topology),
-    tagMemo: mergeSection(left.tagMemo, right.tagMemo),
-    riverMemo: mergeSection(left.riverMemo, right.riverMemo),
+    associative: mergeSection(left.associative, right.associative),
+    structural: mergeSection(left.structural, right.structural),
+    propagationHistory: mergeSection(left.propagationHistory, right.propagationHistory),
     filters: mergeFilters(left.filters, right.filters),
     externalRerank: mergeSection(left.externalRerank, right.externalRerank),
     expansion: mergeSection(left.expansion, right.expansion),
@@ -309,59 +308,115 @@ export class QueryBuilder {
     return this.using("semantic");
   }
 
-  field(): QueryBuilder {
-    return this.using("field");
+  associative(): QueryBuilder {
+    return this.using("associative");
   }
 
-  topology(): QueryBuilder {
-    return this.using("topology");
+  structural(): QueryBuilder {
+    return this.using("structural");
   }
 
-  tagMemo(options: NonNullable<RetrievalPlanInput["tagMemo"]> = {}): QueryBuilder {
+  tagBasisProjection(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "field", tagMemo: { ...options, enabled: options.enabled ?? true } },
-      { core: "field" },
+      {
+        strategy: "associative",
+        associative: { enabled: true, tagBasisProjection: enabled },
+      },
+      { core: "associative" },
     );
   }
 
-  tagMemoPlus(options: NonNullable<RetrievalPlanInput["tagMemo"]> = {}): QueryBuilder {
-    return this.tagMemo({
-      ...options,
-      enabled: true,
-      plus: true,
-      geodesicRerank: true,
-    });
-  }
-
-  riverMemo(options: NonNullable<RetrievalPlanInput["riverMemo"]> = {}): QueryBuilder {
+  tagResidualDecomposition(enabled = true): QueryBuilder {
     return this.next(
       {
-        strategy: "topology",
-        riverMemo: { ...options, enabled: options.enabled ?? true },
+        strategy: "associative",
+        associative: { enabled: true, tagResidualDecomposition: enabled },
       },
-      { core: "topology" },
+      { core: "associative" },
     );
   }
 
-  riverMemoRerankPlus(
-    options: { alpha?: number; version?: "v3"; maxHops?: number } = {},
-  ): QueryBuilder {
+  activationPropagation(enabled = true): QueryBuilder {
     return this.next(
       {
-        strategy: "topology",
-        riverMemo: {
-          enabled: true,
-          rerank: true,
-          version: options.version ?? "v3",
-          maxHops: options.maxHops,
-        },
-        externalRerank: {
-          enabled: true,
-          mode: "rrf",
-          alpha: options.alpha ?? 0.5,
-        },
+        strategy: "associative",
+        associative: { enabled: true, tagGraphPropagation: enabled },
       },
-      { core: "topology" },
+      { core: "associative" },
+    );
+  }
+
+  graphDiffusion(enabled = true): QueryBuilder {
+    return this.next(
+      {
+        strategy: "associative",
+        associative: { enabled: true, tagGraphPropagation: enabled },
+      },
+      { core: "associative" },
+    );
+  }
+
+  propagationSupport(enabled = true): QueryBuilder {
+    return this.next(
+      {
+        strategy: "associative",
+        associative: { enabled: true, propagationSupport: enabled },
+      },
+      { core: "associative" },
+    );
+  }
+
+  propagationStructure(enabled = true): QueryBuilder {
+    return this.next(
+      {
+        strategy: "structural",
+        structural: { enabled: true, propagationStructure: enabled },
+      },
+      { core: "structural" },
+    );
+  }
+
+  propagationHistory(enabled = true): QueryBuilder {
+    return this.next({ propagationHistory: { enabled } });
+  }
+
+  embeddingRerank(enabled = true): QueryBuilder {
+    return this.next(
+      {
+        strategy: "associative",
+        associative: { enabled: true, embeddingRerank: enabled },
+      },
+      { core: "associative" },
+    );
+  }
+
+  tagExpansion(enabled = true): QueryBuilder {
+    return this.next(
+      {
+        strategy: "associative",
+        associative: { enabled: true, tagExpansion: enabled },
+      },
+      { core: "associative" },
+    );
+  }
+
+  nativeTagRetrieval(enabled = true): QueryBuilder {
+    return this.next(
+      {
+        strategy: "associative",
+        associative: { enabled: true, nativeTagRetrieval: enabled },
+      },
+      { core: "associative" },
+    );
+  }
+
+  structuralRelations(enabled = true): QueryBuilder {
+    return this.next(
+      {
+        strategy: "structural",
+        structural: { enabled: true, relationExpansion: enabled },
+      },
+      { core: "structural" },
     );
   }
 

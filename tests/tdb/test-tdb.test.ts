@@ -49,9 +49,9 @@ function newVectorStore(storePath?: string): VexusVectorStore {
   return new VexusVectorStore({
     dimension: DIM,
     storePath: storePath || fs.mkdtempSync(path.join(os.tmpdir(), "memoria-vec-")),
-    tagIndexCapacity: 100,
+    tagVectorIndexCapacity: 100,
     indexSaveDelay: 60000,
-    tagIndexSaveDelay: 60000,
+    tagVectorIndexSaveDelay: 60000,
   });
 }
 
@@ -167,7 +167,7 @@ test("TDBStore getFileByChunkId / getChunkById resolve file context", async () =
   assert.strictEqual(file!.id, fileId);
   assert.strictEqual(file!.library, "faq");
   assert.deepStrictEqual(await store.listLibraries(), ["faq"]);
-  assert.deepStrictEqual(await store.getDistinctDiaryNames(), ["faq"]);
+  assert.deepStrictEqual(await store.getDistinctSpaces(), ["faq"]);
   store.close();
 });
 

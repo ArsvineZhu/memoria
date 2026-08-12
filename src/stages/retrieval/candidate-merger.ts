@@ -11,8 +11,8 @@ import Stage from "../../core/stage.js";
 /**
  * Fuses vector and BM25 candidate lists into a single ranked result set.
  *
- * Mirrors the LightMemo hybrid fusion (normalized BM25 + vector similarity
- * with configurable weights, cf. hybridAlpha in TDBKnowledge.searchLibrary):
+ * Implements hybrid fusion (normalized BM25 + vector similarity
+ * with configurable vector and BM25 weights):
  * raw scores of each source are normalized to [0,1] by their source max,
  * combined as a weighted sum, deduped by chunk id, minScore-filtered,
  * then cut to topK. Recency is owned exclusively by TimeDecayStage.
@@ -23,8 +23,6 @@ import Stage from "../../core/stage.js";
  * Config (ctx.config):
  *   - vectorWeight     hybrid weight of the vector source (default 0.6)
  *   - bm25Weight       hybrid weight of the BM25 source (default 1 - vector)
- *   - hybridAlpha      alias for the vector weight (TDBKnowledge naming)
- *   - hybridBeta       alias for the BM25 weight
  *   - minScore         absolute merged-score threshold (default 0)
  *   - topK             max candidates returned (default 5)
  *
@@ -127,11 +125,6 @@ class CandidateMergerStage extends Stage {
     let vectorWeight;
     if (config.vectorWeight != null && Number.isFinite(Number(config.vectorWeight))) {
       vectorWeight = Number(config.vectorWeight);
-    } else if (
-      config.hybridAlpha != null &&
-      Number.isFinite(Number(config.hybridAlpha))
-    ) {
-      vectorWeight = Number(config.hybridAlpha);
     } else {
       vectorWeight = 0.6;
     }
@@ -139,11 +132,6 @@ class CandidateMergerStage extends Stage {
     let bm25Weight;
     if (config.bm25Weight != null && Number.isFinite(Number(config.bm25Weight))) {
       bm25Weight = Number(config.bm25Weight);
-    } else if (
-      config.hybridBeta != null &&
-      Number.isFinite(Number(config.hybridBeta))
-    ) {
-      bm25Weight = Number(config.hybridBeta);
     } else {
       bm25Weight = 1 - vectorWeight;
     }

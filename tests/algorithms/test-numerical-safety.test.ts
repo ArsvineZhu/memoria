@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { EPA } from "../../src/algorithms/epa.js";
+import { TagBasisProjection } from "../../src/algorithms/tag-basis-projection.js";
 import { dotProduct, orthogonalProjection } from "../../src/algorithms/gram-schmidt.js";
-import { ResidualPyramid } from "../../src/algorithms/residual-pyramid.js";
+import { TagResidualDecomposition } from "../../src/algorithms/tag-residual-decomposition.js";
 import {
   clusterTags,
   computeWeightedPCA,
@@ -73,20 +73,23 @@ test("SVD matrix and native-vector boundaries reject malformed data", () => {
   );
 });
 
-test("EPA and residual pyramid reject invalid query vectors at their public boundaries", async () => {
-  const epa = new EPA(
+test("TagBasisProjection and residual tagResidualDecomposition reject invalid query vectors at their public boundaries", async () => {
+  const tagBasisProjection = new TagBasisProjection(
     {
       orthoBasis: [new Float32Array([1, 0])],
       basisMean: new Float32Array([0, 0]),
     },
     { dimension: 2 },
   );
-  assert.throws(() => epa.project(new Float32Array([Number.NaN, 0])), RangeError);
+  assert.throws(
+    () => tagBasisProjection.project(new Float32Array([Number.NaN, 0])),
+    RangeError,
+  );
 
-  const pyramid = new ResidualPyramid({ dimension: 2 });
+  const tagResidualDecomposition = new TagResidualDecomposition({ dimension: 2 });
   await assert.rejects(
     () =>
-      pyramid.analyze(new Float32Array([1, 0, 0]), {
+      tagResidualDecomposition.analyze(new Float32Array([1, 0, 0]), {
         searchFn: async () => [],
         lookupFn: async () => [],
       }),

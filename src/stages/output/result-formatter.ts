@@ -19,13 +19,12 @@ type OutputCandidate = ChunkCandidate & {
   fullPath?: string;
   sourceFile?: string;
   fileId?: number | null;
-  diaryName?: string;
+  space?: string;
   matchedTags?: string[];
   updatedAt?: number | null;
   updated_at?: number | null;
   mtime?: number | null;
   similarity?: number;
-  memoScore?: number;
   tagMatchScore?: number;
   rerankScore?: number;
   associationChannel?: "tag" | "vector";
@@ -48,23 +47,23 @@ function parseRecord(value: string | null | undefined): UnknownRecord | undefine
  * Output stage: assembles the final search result array.
  *
  * Mirrors the hydrated result shape returned by
- * modules/knowledgeBase/searchService.js (chunk text, path, per-chunk tags,
- * score) while normalizing field names:
+ * the metadata/search contract (chunk text, path, per-chunk tags, score) while
+ * normalizing field names:
  *
  *   {
- *     id, chunkId, content, path, sourceFile, fileId, diaryName,
+ *     id, chunkId, content, path, sourceFile, fileId, space,
  *     score, similarity, updatedAt, mtime, tags, matchedTags,
- *     memoScore, source, decay, rerankScore, original_score(s)
+ *     tagMatchScore, source, decay, rerankScore, original_score(s)
  *   }
  *
  * Missing fields are hydrated from ctx.metadataStore via getChunkById /
  * getFileByChunkId / getFileTags. Candidates that already carry complete
- * field values pass through unharmed. TagMemo / EPA / pyramid traces in the
+ * field values pass through unharmed. TagGraphPropagation / TagBasisProjection / tagResidualDecomposition traces in the
  * input are preserved on the output envelope. When truncation is enabled,
  * final hydrated content is capped here as well, so vector-only candidates
  * cannot bypass maxContentLength.
  *
- * Input: { query, mergedCandidates, tagMemo?, pyramid?, epa? }
+ * Input: { query, mergedCandidates, tagGraphPropagation?, tagResidualDecomposition?, tagBasisProjection? }
  * Output: { ..., results: [...], resultCount }
  */
 class ResultFormatterStage extends Stage {
@@ -184,7 +183,7 @@ class ResultFormatterStage extends Stage {
         ? path.basename(fullPath)
         : outputCandidate?.sourceFile || "",
       fileId: file?.id ?? outputCandidate?.fileId ?? null,
-      diaryName: file?.diary_name ?? outputCandidate?.diaryName ?? "",
+      space: file?.space ?? outputCandidate?.space ?? "",
       score,
       similarity: Number.isFinite(Number(outputCandidate?.similarity))
         ? Number(outputCandidate.similarity)
@@ -205,11 +204,9 @@ class ResultFormatterStage extends Stage {
       associationOf: Number.isFinite(Number(outputCandidate?.associationOf))
         ? Number(outputCandidate.associationOf)
         : undefined,
-      memoScore: Number.isFinite(Number(outputCandidate?.memoScore))
-        ? Number(outputCandidate.memoScore)
-        : Number.isFinite(Number(outputCandidate?.tagMatchScore))
-          ? Number(outputCandidate.tagMatchScore)
-          : undefined,
+      tagMatchScore: Number.isFinite(Number(outputCandidate?.tagMatchScore))
+        ? Number(outputCandidate.tagMatchScore)
+        : undefined,
       source: outputCandidate?.source ?? null,
       decay: Number.isFinite(Number(outputCandidate?.decay))
         ? Number(outputCandidate.decay)

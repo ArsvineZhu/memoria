@@ -8,10 +8,10 @@
 
 - `engine/`、`core/`、`pipelines/`、`stages/`：引擎生命周期和管线行为；
 - `providers/`、`native/`：Provider、SQLite 和 Rust 原生边界；
-- `integration/`：文件布局、真实 Provider 和跨模块行为；
+- `integration/`：文件布局、provider 集成和跨模块行为；
 - `consumer/`、`types/`：公开导出和消费者类型契约；
 - `fixtures/`：测试输入资料，不是生产数据，也不属于文档入口。
 
-缺少真实密钥时，DashScope 实时用例会明确跳过；这与其他测试失败不同。修改公开
+缺少完整配置时，OpenAI-compatible live 用例会明确跳过；这与其他测试失败不同。修改公开
 接口、配置、持久化或示例后，先定位对应测试，再按 [贡献指南](../CONTRIBUTING.md)
 执行根目录验证。

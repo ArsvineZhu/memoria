@@ -15,7 +15,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *
  * Each candidate's owning file `updated_at` (or `mtime`) age in days is
  * converted to a decay multiplier 0.5 ^ (ageDays / halfLifeDays), following
- * the LightMemo/TDB recency formula. Scores are multiplied by the decay;
+ * the Memoria/TDB recency formula. Scores are multiplied by the decay;
  * candidates without resolvable recency keep decay = 1.
  *
  * Input: { mergedCandidates: [{ chunkId, score, ... }] }

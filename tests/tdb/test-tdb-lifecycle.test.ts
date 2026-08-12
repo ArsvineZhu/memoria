@@ -39,7 +39,7 @@ function injectedEngine(root: string) {
     dimension: DIMENSION,
     storePath: path.join(root, "injected-vectors"),
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const engine = new TDBEngine({
     config: config(root),

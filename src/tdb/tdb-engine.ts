@@ -107,6 +107,7 @@ interface TdbReconciliationPlan {
  */
 class TDBEngine {
   name: string;
+  /** @internal */
   options: TdbEngineOptions;
   config: MemoryConfig;
   enabled: boolean;
@@ -114,7 +115,9 @@ class TDBEngine {
   vectorStore!: RuntimeVectorStore;
   embeddingProvider!: EmbeddingProviderContract;
   trivium: TriviumDBContract | null;
+  /** @internal */
   ctx!: PipelineContext;
+  /** @internal */
   searchPipeline: TDBSearchPipeline;
   state: TdbEngineState;
   _closed: boolean;
@@ -279,11 +282,10 @@ class TDBEngine {
         this.vectorStore = new Store({
           dimension: Number(this.config.tdbDimension) || this.config.dimension,
           storePath: this.config.tdbStorePath,
-          tagIndexCapacity: this.config.tagIndexCapacity,
+          tagVectorIndexCapacity: this.config.tagVectorIndexCapacity,
           indexSaveDelay: this.config.indexSaveDelay,
-          tagIndexSaveDelay: this.config.tagIndexSaveDelay,
-          persistTagIndex: this.config.persistTagIndex,
-          indexLoadEnabled: this.config.indexLoadEnabled,
+          tagVectorIndexSaveDelay: this.config.tagVectorIndexSaveDelay,
+          persistTagVectorIndex: this.config.persistTagVectorIndex,
         });
         this._ownsVectorStore = true;
       } catch (error) {
@@ -300,7 +302,7 @@ class TDBEngine {
     if (!this.embeddingProvider) {
       try {
         const { default: Provider } =
-          await import("../providers/openai-embedding-provider.js");
+          await import("../providers/openai-compatible-embedding-provider.js");
         this.embeddingProvider = new Provider({
           apiUrl: this.config.apiUrl,
           apiKey: this.config.apiKey,
@@ -1079,15 +1081,19 @@ class TDBEngine {
       this.state = "closing";
       await this._activeOperations.drain();
       let firstError: unknown = null;
-      if (
-        this._vectorStateComplete &&
-        !this._vectorMutationFailed &&
-        this.vectorStore &&
-        this.metadataStore
-      ) {
+      if (this.vectorStore) {
         try {
+          // Flush also clears provider-owned save timers when the vector state
+          // is dirty. Do not mark the SQLite authority clean unless the full
+          // vector state was already known to be complete.
           await this.vectorStore.flushPendingSaves?.();
-          await this.metadataStore.markTdbVectorStateClean();
+          if (
+            this._vectorStateComplete &&
+            !this._vectorMutationFailed &&
+            this.metadataStore
+          ) {
+            await this.metadataStore.markTdbVectorStateClean();
+          }
         } catch (error) {
           firstError = error;
         }

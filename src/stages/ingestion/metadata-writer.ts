@@ -11,14 +11,14 @@ import { relationDocumentAliases } from "../../retrieval/relation-graph.js";
 import { encodeVectorBlob } from "../../utils/vector-codec.js";
 import { serializeDocumentJson } from "../../utils/logical-document.js";
 
-// kv_store checkpoint keys (mirror of the legacy KnowledgeBaseManager
+// kv_store checkpoint keys used by the MemoryEngine
 // naming convention; only written when the pipeline opts in via config).
 const CHECKPOINT_KEYS = {
   memoryCheckpoint: "memory_checkpoint",
   lastFileIndexed: "last_file_indexed",
   chunkCount: "chunk_count",
   tagCount: "tag_count",
-  diaryCount: "diary_count",
+  spaceCount: "space_count",
 };
 
 /**
@@ -29,7 +29,7 @@ const CHECKPOINT_KEYS = {
  *  - inserts chunk rows (provider replaces the old ones)
  *  - upserts tag rows and rebuilds the file_tags association
  *
- * Mirrors KnowledgeBaseManager._flushBatch write section:
+ * Writes the MemoryEngine metadata checkpoint section:
  * tags already stored with a vector are re-associated even when this file
  * provided no fresh embedding for them; tags without an embedding and
  * without a previously stored vector are skipped entirely.
@@ -39,7 +39,7 @@ const CHECKPOINT_KEYS = {
  *   - checkpointInterval: bare interval (implies enabled)
  *   - when enabled, every `interval`-th file refreshes the kv_store
  *     checkpoint keys (memory_checkpoint, last_file_indexed, chunk_count,
- *     tag_count, diary_count).
+ *     tag_count, space_count).
  */
 class MetadataWriterStage extends Stage {
   constructor() {
@@ -65,13 +65,13 @@ class MetadataWriterStage extends Stage {
     const metadataStore = ctx.metadataStore;
     if (!metadataStore) throw new Error("MetadataWriterStage requires metadataStore");
     const relPath = fileInfo.relPath;
-    const diaryName = fileInfo.diaryName;
+    const space = fileInfo.space;
     const checksum = fileInfo.checksum;
     const mtime = fileInfo.mtime;
     const size = fileInfo.size;
     if (
       typeof relPath !== "string" ||
-      typeof diaryName !== "string" ||
+      typeof space !== "string" ||
       typeof checksum !== "string" ||
       typeof mtime !== "number" ||
       typeof size !== "number"
@@ -122,7 +122,7 @@ class MetadataWriterStage extends Stage {
       return metadataStore.replaceDocumentAuthority({
         file: {
           path: relPath,
-          diaryName,
+          space,
           checksum,
           mtime,
           size,
@@ -186,7 +186,7 @@ class MetadataWriterStage extends Stage {
         const replacement = await metadataStore.replaceDocumentAuthority({
           file: {
             path: relPath,
-            diaryName,
+            space,
             checksum,
             mtime,
             size,
@@ -238,7 +238,7 @@ class MetadataWriterStage extends Stage {
       const replacement = await metadataStore.replaceDocumentTags({
         file: {
           path: relPath,
-          diaryName,
+          space,
           checksum,
           mtime,
           size,
@@ -308,13 +308,12 @@ class MetadataWriterStage extends Stage {
         };
       }
       const existing = await metadataStore.getFileByPath(relPath);
-      const previousIndexName =
-        existing?.diary_name || existing?.diaryName || diaryName;
+      const previousIndexName = existing?.space || space;
       let fileId: number | null = existing?.id ?? null;
       if (typeof metadataStore.updateDocumentMetadata === "function") {
         const updated = await metadataStore.updateDocumentMetadata({
           path: relPath,
-          diaryName,
+          space,
           checksum,
           mtime,
           size,
@@ -327,7 +326,7 @@ class MetadataWriterStage extends Stage {
       } else {
         fileId = await metadataStore.upsertFile({
           path: relPath,
-          diaryName,
+          space,
           checksum,
           mtime,
           size,
@@ -349,7 +348,7 @@ class MetadataWriterStage extends Stage {
         skipped: false,
         metadataOnly: true,
         previousIndexName,
-        currentIndexName: diaryName,
+        currentIndexName: space,
       };
     }
 
@@ -361,7 +360,7 @@ class MetadataWriterStage extends Stage {
       : [];
     const tagNames: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
 
-    // Prepare serialized rows once for either the atomic or compatibility path.
+    // Prepare serialized rows once for the atomic metadata replacement.
     const chunkRows = chunkEntries.map((entry) => ({
       chunkIndex: entry.chunkIndex,
       content: entry.content,
@@ -395,98 +394,44 @@ class MetadataWriterStage extends Stage {
         currentIndexName: replacement.currentIndexName,
       };
     }
-    if (typeof metadataStore.replaceDocumentState === "function") {
-      const replacement = await metadataStore.replaceDocumentState({
-        file: {
-          path: relPath,
-          diaryName,
-          checksum,
-          mtime,
-          size,
-          documentId: fileInfo.documentId,
-          revision: fileInfo.revision,
-          sourceJson,
-          metadataJson,
-        },
-        chunks: chunkRows,
-        tags: tagRows,
-        orderedTagNames: tagNames,
-      });
-
-      await this._maybeWriteCheckpoint(
-        fileInfo,
-        { chunkIds: replacement.chunkIds, tagIds: replacement.tagIds },
-        ctx,
+    if (typeof metadataStore.replaceDocumentState !== "function") {
+      throw new MemoriaError(
+        "configuration",
+        "Metadata ingestion requires replaceDocumentState for an atomic document commit.",
       );
-
-      return {
-        ...fileInfo,
-        fileId: replacement.fileId,
-        chunkIds: replacement.chunkIds,
-        tagIds: replacement.tagIds,
-        removedChunkIds: replacement.removedChunkIds,
-        orphanedTagIds: replacement.orphanedTagIds,
-        previousIndexName: replacement.previousIndexName,
-        currentIndexName: replacement.currentIndexName,
-      };
     }
-
-    // Compatibility path: collect old ids and use the legacy CRUD sequence
-    // only when an injected store does not expose replaceDocumentState.
-    let removedChunkIds: number[] = [];
-    const existing = await metadataStore.getFileByPath(relPath);
-    if (existing) {
-      const oldChunks = await metadataStore.getChunksByFileId(existing.id);
-      removedChunkIds = oldChunks.map((c) => c.id);
-    }
-
-    const fileId = await metadataStore.upsertFile({
-      path: relPath,
-      diaryName,
-      checksum,
-      mtime,
-      size,
-      documentId: fileInfo.documentId,
-      revision: fileInfo.revision,
-      sourceJson,
-      metadataJson,
-    });
-    if (fileId === null)
-      throw new Error(`Unable to persist file metadata for ${relPath}`);
-
-    const chunkIds = await metadataStore.insertChunks(fileId, chunkRows);
-
-    // 4. Upsert tag rows; ids are aligned with tagEntries.
-    const newTagIds = await metadataStore.upsertTags(tagRows);
-    const tagIdByName = new Map<string, number>();
-    tagEntries.forEach((entry: TagEntry, i: number) => {
-      if (newTagIds[i] != null) tagIdByName.set(entry.name, newTagIds[i]);
+    const replacement = await metadataStore.replaceDocumentState({
+      file: {
+        path: relPath,
+        space,
+        checksum,
+        mtime,
+        size,
+        documentId: fileInfo.documentId,
+        revision: fileInfo.revision,
+        sourceJson,
+        metadataJson,
+      },
+      chunks: chunkRows,
+      tags: tagRows,
+      orderedTagNames: tagNames,
     });
 
-    // 5. Rebuild the file_tags association preserving input tag order.
-    //    Previously stored tags with vectors are re-associated without a
-    //    fresh embedding; tags with neither are skipped (mirror original).
-    const fileTagIds: number[] = [];
-    for (const tagName of tagNames) {
-      let tagId = tagIdByName.get(tagName);
-      if (tagId == null) {
-        const stored = await metadataStore.getTagByName(tagName);
-        if (stored && stored.vector) tagId = stored.id;
-      }
-      if (tagId != null) fileTagIds.push(tagId);
-    }
-    await metadataStore.setFileTags(fileId, fileTagIds);
-
-    await this._maybeWriteCheckpoint(fileInfo, { chunkIds, tagIds: fileTagIds }, ctx);
+    await this._maybeWriteCheckpoint(
+      fileInfo,
+      { chunkIds: replacement.chunkIds, tagIds: replacement.tagIds },
+      ctx,
+    );
 
     return {
       ...fileInfo,
-      fileId,
-      chunkIds,
-      tagIds: newTagIds,
-      removedChunkIds,
-      previousIndexName: existing?.diary_name || existing?.diaryName || null,
-      currentIndexName: diaryName,
+      fileId: replacement.fileId,
+      chunkIds: replacement.chunkIds,
+      tagIds: replacement.tagIds,
+      removedChunkIds: replacement.removedChunkIds,
+      orphanedTagIds: replacement.orphanedTagIds,
+      previousIndexName: replacement.previousIndexName,
+      currentIndexName: replacement.currentIndexName,
     };
   }
 
@@ -507,10 +452,10 @@ class MetadataWriterStage extends Stage {
         ? cp.interval
         : config.checkpointInterval || 1;
 
-    ctx.checkpointState = ctx.checkpointState || { fileCount: 0, diaries: new Set() };
+    ctx.checkpointState = ctx.checkpointState || { fileCount: 0, spaces: new Set() };
     const state = ctx.checkpointState;
     state.fileCount += 1;
-    if (fileInfo.diaryName) state.diaries.add(fileInfo.diaryName);
+    if (fileInfo.space) state.spaces.add(fileInfo.space);
     if (state.fileCount % interval !== 0) return;
 
     const kv = ctx.metadataStore;
@@ -519,7 +464,7 @@ class MetadataWriterStage extends Stage {
     await kv.setKv(CHECKPOINT_KEYS.lastFileIndexed, fileInfo.relPath || "");
     await kv.setKv(CHECKPOINT_KEYS.chunkCount, String(counts.chunkIds.length));
     await kv.setKv(CHECKPOINT_KEYS.tagCount, String(counts.tagIds.length));
-    await kv.setKv(CHECKPOINT_KEYS.diaryCount, String(state.diaries.size));
+    await kv.setKv(CHECKPOINT_KEYS.spaceCount, String(state.spaces.size));
   }
 }
 

@@ -25,11 +25,11 @@ interface PcaOptions {
 
 /**
  * Weighted PCA / SVD algorithms.
- * Extracted from EPAModule.js (_computeWeightedPCA, _clusterTags, _powerIteration, _selectBasisDimension).
+ * Extracted from TagBasisProjectionModule.js (_computeWeightedPCA, _clusterTags, _powerIteration, _selectBasisDimension).
  * Pure math, zero I/O dependencies.
  *
  * NOTE: Math primitives (dot products, magnitudes) are inlined for performance
- * with typed arrays, matching the original EPAModule.js style, rather than
+ * with typed arrays, matching the original TagBasisProjectionModule.js style, rather than
  * delegating to ./gram-schmidt helpers.
  */
 

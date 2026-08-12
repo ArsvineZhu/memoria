@@ -239,7 +239,7 @@ test("logical metadata-only update avoids re-embedding and vector mutation", asy
     dimension: DIMENSION,
     storePath: root,
     indexSaveDelay: 60000,
-    tagIndexSaveDelay: 60000,
+    tagVectorIndexSaveDelay: 60000,
   });
   const engine = createMemoryEngine({
     dbPath: ":memory:",

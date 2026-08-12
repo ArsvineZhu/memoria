@@ -6,20 +6,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import {
-  createMemoryEngine,
-  MemoryEngine,
-  DEFAULT_CONFIG,
-  mergeConfig,
-  loadRagParams,
-  loadRagParamsSync,
-} from "../../src/index.js";
+import { createMemoryEngine, MemoryEngine } from "../../src/index.js";
+import { DEFAULT_CONFIG, mergeConfig } from "../../src/config/default-config.js";
 import SqliteMetadataStore from "../../src/providers/sqlite-metadata-store.js";
 import VexusVectorStore from "../../src/providers/vexus-vector-store.js";
 import type {
   EmbeddingProviderContract,
   MemoryEngineOptions,
-  UnknownRecord,
 } from "../../src/types.js";
 import { at } from "../../src/utils/numerical.js";
 
@@ -102,10 +95,10 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
     "maxBatchItems",
     "maxToken",
     "concurrency",
-    "tagIndexCapacity",
+    "tagVectorIndexCapacity",
     "indexSaveDelay",
-    "tagIndexSaveDelay",
-    "persistTagIndex",
+    "tagVectorIndexSaveDelay",
+    "persistTagVectorIndex",
     "busyTimeout",
     "busyRetryDelay",
     "chunkMaxTokens",
@@ -118,15 +111,13 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
     "indexNames",
     "searchAllIndices",
     "tagSearchEnabled",
-    "tagIndexName",
-    "tagK",
+    "tagVectorIndexName",
+    "tagVectorTopK",
     "queryExpansion",
     "queryEpsilon",
     "stopWords",
     "minScore",
     "vectorWeight",
-    "hybridAlpha",
-    "hybridBeta",
     "dedupeEnabled",
     "dedupeSemantic",
     "semanticThreshold",
@@ -134,16 +125,15 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
     "minSemanticCandidates",
     "maxResults",
     "sourcePriority",
-    "epaProjectionEnabled",
-    "residualPyramidEnabled",
-    "tagMemoV9Enabled",
-    "tagMemoV10Enabled",
-    "riverMemoEnabled",
+    "tagBasisProjectionEnabled",
+    "tagResidualDecompositionEnabled",
+    "tagGraphPropagationEnabled",
+    "propagationStructureRerankEnabled",
     "tagExpansionEnabled",
-    "vectorReshapeEnabled",
-    "geodesicRerankEnabled",
-    "geodesicAlpha",
-    "geodesicMinGeoSamples",
+    "embeddingRerankEnabled",
+    "propagationSupportRerankEnabled",
+    "supportRerankAlpha",
+    "supportRerankMinSamples",
     "associatorEnabled",
     "associateCount",
     "associatorSeeds",
@@ -186,10 +176,10 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
     path.join(DEFAULT_CONFIG.dataPath, "tdb", "knowledge.sqlite"),
   );
   assert.strictEqual(DEFAULT_CONFIG.maxTagsPerFile, 50);
-  assert.strictEqual(DEFAULT_CONFIG.tagIndexCapacity, 50000);
-  assert.strictEqual(DEFAULT_CONFIG.geodesicRerankEnabled, false);
-  assert.strictEqual(DEFAULT_CONFIG.geodesicAlpha, 0.3);
-  assert.strictEqual(DEFAULT_CONFIG.geodesicMinGeoSamples, 4);
+  assert.strictEqual(DEFAULT_CONFIG.tagVectorIndexCapacity, 50000);
+  assert.strictEqual(DEFAULT_CONFIG.propagationSupportRerankEnabled, false);
+  assert.strictEqual(DEFAULT_CONFIG.supportRerankAlpha, 0.3);
+  assert.strictEqual(DEFAULT_CONFIG.supportRerankMinSamples, 4);
   assert.strictEqual(DEFAULT_CONFIG.associatorEnabled, false);
   assert.strictEqual(DEFAULT_CONFIG.associateCount, 10);
   assert.strictEqual(DEFAULT_CONFIG.associatorSeeds, 3);
@@ -199,30 +189,33 @@ test("DEFAULT_CONFIG covers every stage config key with sane defaults", () => {
   assert.strictEqual(DEFAULT_CONFIG.associatorUseVector, true);
   assert.strictEqual(DEFAULT_CONFIG.sourcePriority.associate, 10);
   assert.ok(
-    DEFAULT_CONFIG.sourcePriority.rag! > DEFAULT_CONFIG.sourcePriority.unknown!,
+    DEFAULT_CONFIG.sourcePriority.semantic! > DEFAULT_CONFIG.sourcePriority.unknown!,
   );
 });
 
 test("MemoryEngine fixes and exposes the normalized default retrieval plan", async () => {
   const defaultRetrievalPlan = {
-    strategy: "field" as const,
-    tagMemo: { plus: true, version: "v10" as const },
+    strategy: "associative" as const,
+    associative: { enabled: true, tagGraphPropagation: true },
     postprocess: { timeDecay: true },
   };
   const { engine } = makeEngine({ defaultRetrievalPlan });
 
-  defaultRetrievalPlan.tagMemo.plus = false;
-  assert.equal(engine.defaultRetrievalPlan.strategy, "field");
-  assert.equal(engine.defaultRetrievalPlan.tagMemo?.plus, true);
-  assert.equal(engine.searchPipeline.defaultRetrievalPlan.tagMemo?.plus, true);
+  defaultRetrievalPlan.associative.tagGraphPropagation = false;
+  assert.equal(engine.defaultRetrievalPlan.strategy, "associative");
+  assert.equal(engine.defaultRetrievalPlan.associative?.tagGraphPropagation, true);
+  assert.equal(
+    engine.searchPipeline.defaultRetrievalPlan.associative?.tagGraphPropagation,
+    true,
+  );
   assert.equal(Object.isFrozen(engine.defaultRetrievalPlan), true);
-  assert.equal(Object.isFrozen(engine.defaultRetrievalPlan.tagMemo), true);
+  assert.equal(Object.isFrozen(engine.defaultRetrievalPlan.associative), true);
   assert.throws(() => {
-    engine.defaultRetrievalPlan.tagMemo!.plus = false;
+    engine.defaultRetrievalPlan.associative!.tagGraphPropagation = false;
   }, TypeError);
 
   await engine.initialize();
-  assert.equal(engine.searchPipeline.defaultRetrievalPlan.strategy, "field");
+  assert.equal(engine.searchPipeline.defaultRetrievalPlan.strategy, "associative");
   assert.equal(engine.searchPipeline.defaultRetrievalPlan.postprocess?.timeDecay, true);
   await engine.close();
 });
@@ -232,7 +225,7 @@ test("MemoryEngine rejects an invalid default retrieval parameter at constructio
     () =>
       makeEngine({
         defaultRetrievalPlan: {
-          strategy: "topology",
+          strategy: "structural",
           externalRerank: { mode: "rrf", alpha: 2 },
         },
       }),
@@ -243,21 +236,21 @@ test("MemoryEngine rejects an invalid default retrieval parameter at constructio
 test("MemoryEngine.explain shares default/override planning without running retrieval", async () => {
   const { engine } = makeEngine({
     defaultRetrievalPlan: {
-      strategy: "field",
-      tagMemo: { plus: true },
+      strategy: "associative",
+      associative: { enabled: true, tagGraphPropagation: true },
     },
   });
   await engine.initialize();
 
   const fromDefault = await engine.explain("普通主题查询");
-  assert.equal(fromDefault.plan.strategy, "field");
+  assert.equal(fromDefault.plan.strategy, "associative");
   assert.equal(fromDefault.strategySource, "engine-default");
   assert.equal(fromDefault.queryOverrideApplied, false);
 
   const fromQuery = await engine.explain("这份记录的来源", {
-    retrievalPlan: { strategy: "topology" },
+    retrievalPlan: { strategy: "structural" },
   });
-  assert.equal(fromQuery.plan.strategy, "topology");
+  assert.equal(fromQuery.plan.strategy, "structural");
   assert.equal(fromQuery.strategySource, "query-override");
   assert.equal(fromQuery.queryOverrideApplied, true);
 
@@ -265,9 +258,9 @@ test("MemoryEngine.explain shares default/override planning without running retr
 });
 
 test("mergeConfig deep-merges over DEFAULT_CONFIG and tolerates null/undefined", () => {
-  const merged = mergeConfig({ dimension: 64, sourcePriority: { rag: 99 } });
+  const merged = mergeConfig({ dimension: 64, sourcePriority: { semantic: 99 } });
   assert.strictEqual(merged.dimension, 64);
-  assert.strictEqual(merged.sourcePriority.rag, 99);
+  assert.strictEqual(merged.sourcePriority.semantic, 99);
   assert.strictEqual(
     merged.sourcePriority.unknown,
     DEFAULT_CONFIG.sourcePriority.unknown,
@@ -320,68 +313,6 @@ test("top-level dbPath overrides the managed default database path", () => {
   assert.strictEqual(engine.config.dbPath, dbPath);
 });
 
-test("loadRagParams: missing path returns {} and overrides are merged", async () => {
-  const missing = await loadRagParams({ path: path.join(makeTmpDir(), "nope.json") });
-  assert.deepStrictEqual(missing, {});
-
-  const tmp = makeTmpDir();
-  const ragPath = path.join(tmp, "rag_params.json");
-  fs.writeFileSync(
-    ragPath,
-    JSON.stringify({
-      KnowledgeBaseManager: {
-        resultDeduplication: { semanticThreshold: 0.5 },
-      },
-    }),
-  );
-
-  const loaded = await loadRagParams({ path: ragPath });
-  const loadedManager = loaded.KnowledgeBaseManager as UnknownRecord;
-  assert.strictEqual(
-    (loadedManager.resultDeduplication as UnknownRecord).semanticThreshold,
-    0.5,
-  );
-
-  const overridden = await loadRagParams({
-    path: ragPath,
-    overrides: {
-      KnowledgeBaseManager: { tagMemoVersioning: { activeVersion: "v10" } },
-    },
-  });
-  const overriddenManager = overridden.KnowledgeBaseManager as UnknownRecord;
-  assert.strictEqual(
-    (overriddenManager.tagMemoVersioning as UnknownRecord).activeVersion,
-    "v10",
-  );
-  assert.strictEqual(
-    (overriddenManager.resultDeduplication as UnknownRecord).semanticThreshold,
-    0.5,
-  );
-});
-
-test("loadRagParamsSync mirrors the async variant", () => {
-  const tmp = makeTmpDir();
-  const ragPath = path.join(tmp, "rag_params.json");
-  fs.writeFileSync(
-    ragPath,
-    JSON.stringify({ KnowledgeBaseManager: { v9: { outboundMass: 0.9 } } }),
-  );
-
-  const loaded = loadRagParamsSync({ path: ragPath });
-  assert.strictEqual(
-    ((loaded.KnowledgeBaseManager as UnknownRecord).v9 as UnknownRecord).outboundMass,
-    0.9,
-  );
-  assert.deepStrictEqual(loadRagParamsSync({ path: path.join(tmp, "nope.json") }), {});
-});
-
-test("loadRagParams rejects malformed roots", async () => {
-  const tmp = makeTmpDir();
-  const ragPath = path.join(tmp, "bad.json");
-  fs.writeFileSync(ragPath, JSON.stringify([1, 2, 3]));
-  await assert.rejects(() => loadRagParams({ path: ragPath }), /root must be/);
-});
-
 // ── Engine factory & wiring ──────────────────────────────────────────
 
 test("createMemoryEngine defers default wiring until initialize", async () => {
@@ -410,77 +341,17 @@ test("createMemoryEngine defers default wiring until initialize", async () => {
   await engine.close();
 });
 
-test("initialize() is idempotent and exposes ragParams", async () => {
-  const { engine, tmp } = makeEngine();
-  const ragPath = path.join(tmp, "rag_params.json");
-  fs.writeFileSync(
-    ragPath,
-    JSON.stringify({
-      KnowledgeBaseManager: { resultDeduplication: { semanticThreshold: 0.83 } },
-    }),
-  );
-  engine.options.ragParamsPath = ragPath;
+test("initialize() is idempotent with canonical config supplied at construction", async () => {
+  const { engine } = makeEngine({ config: { semanticThreshold: 0.83 } });
 
   await engine.initialize();
   assert.strictEqual(engine.initialized, true);
-  assert.ok(engine.ragParams);
-  assert.strictEqual(
-    (
-      (engine.ragParams.KnowledgeBaseManager as UnknownRecord)
-        .resultDeduplication as UnknownRecord
-    ).semanticThreshold,
-    0.83,
-  );
-  assert.strictEqual(
-    engine.config.semanticThreshold,
-    0.83,
-    "rag dedupe knob applied to config",
-  );
+  assert.strictEqual(engine.config.semanticThreshold, 0.83);
 
   const ctxRef = engine.ctx;
   const second = engine.initialize();
   assert.strictEqual(engine.ctx, ctxRef);
-  assert.strictEqual(
-    await second,
-    undefined,
-    "second initialize resolves without rerunning",
-  );
-
-  engine.close();
-});
-
-test("initialize() rebuilds the default search pipeline after applying rag params", async () => {
-  const { engine } = makeEngine({
-    ragParams: {
-      KnowledgeBaseManager: { riverMemo: { enabled: true } },
-    },
-  });
-
-  assert.ok(!engine.searchPipeline.stages.some((stage) => stage.name === "riverMemo"));
-  await engine.initialize();
-  assert.ok(engine.searchPipeline.stages.some((stage) => stage.name === "riverMemo"));
-  await engine.close();
-});
-
-test("initialize() preserves an explicitly supplied search stage list", async () => {
-  const explicitStage = {
-    name: "explicit-search-stage",
-    async process(input: import("../../src/types.js").PipelineData) {
-      return input;
-    },
-  };
-  const { engine } = makeEngine({
-    ragParams: {
-      KnowledgeBaseManager: { riverMemo: { enabled: true } },
-    },
-    searchOptions: { stages: [explicitStage] },
-  });
-
-  await engine.initialize();
-  assert.deepEqual(
-    engine.searchPipeline.stages.map((stage) => stage.name),
-    ["explicit-search-stage"],
-  );
+  assert.strictEqual(await second, undefined);
   await engine.close();
 });
 
@@ -488,7 +359,7 @@ test("initialize() preserves an explicitly supplied search stage list", async ()
 
 test("flushBatch ingests a temp file and getStats() reflects counts", async () => {
   const root = makeTmpDir();
-  const abs = writeFile(root, "diaryA/note.md", NOTE_CONTENT);
+  const abs = writeFile(root, "spaceA/note.md", NOTE_CONTENT);
   const { engine } = makeEngine({ config: { rootPath: root } });
   await engine.initialize();
 
@@ -507,8 +378,8 @@ test("flushBatch ingests a temp file and getStats() reflects counts", async () =
   assert.ok(stats.files >= 1);
   assert.ok(stats.chunks >= 1);
   assert.ok(stats.tags >= 1);
-  assert.ok(Array.isArray(stats.diaries));
-  assert.ok(stats.diaries.includes("diaryA"));
+  assert.ok(Array.isArray(stats.spaces));
+  assert.ok(stats.spaces.includes("spaceA"));
   assert.ok(stats.lastIndexed, "lastIndexed timestamp present");
   assert.ok("vectorStats" in stats);
 
@@ -521,7 +392,7 @@ function writeNoteFile(root: string, rel: string, content: string): string {
 
 test("flush() is an alias of flushBatch()", async () => {
   const root = makeTmpDir();
-  const abs = writeNoteFile(root, "diaryA/note.md", NOTE_CONTENT);
+  const abs = writeNoteFile(root, "spaceA/note.md", NOTE_CONTENT);
   const { engine } = makeEngine({ config: { rootPath: root } });
   await engine.initialize();
 
@@ -539,7 +410,7 @@ test("flush() is an alias of flushBatch()", async () => {
 
 test("search() returns formatted results (ResultFormatterStage output)", async () => {
   const root = makeTmpDir();
-  const abs = writeNoteFile(root, "diaryA/note.md", NOTE_CONTENT);
+  const abs = writeNoteFile(root, "spaceA/note.md", NOTE_CONTENT);
   const { engine } = makeEngine({ config: { rootPath: root } });
   await engine.initialize();
   await engine.flushBatch([{ path: abs }]);
@@ -557,8 +428,8 @@ test("search() returns formatted results (ResultFormatterStage output)", async (
   assert.ok(Array.isArray(first.tags));
   assert.ok(first.tags.includes("量子"), "formatted tags hydrate from store");
 
-  // options forward into the pipeline (diaryNames / topK)
-  const limited = await engine.search("量子计算", { topK: 3, diaryName: "diaryA" });
+  // options forward into the pipeline (spaces / topK)
+  const limited = await engine.search("量子计算", { topK: 3, spaces: ["spaceA"] });
   assert.ok(limited.results.length <= 3);
 
   engine.close();
@@ -566,7 +437,7 @@ test("search() returns formatted results (ResultFormatterStage output)", async (
 
 test("handleDelete({ path }) removes file rows and vectors", async () => {
   const root = makeTmpDir();
-  const abs = writeNoteFile(root, "diaryA/note.md", NOTE_CONTENT);
+  const abs = writeNoteFile(root, "spaceA/note.md", NOTE_CONTENT);
   const { engine } = makeEngine({ config: { rootPath: root } });
   await engine.initialize();
   await engine.flushBatch([{ path: abs }]);
@@ -579,8 +450,8 @@ test("handleDelete({ path }) removes file rows and vectors", async () => {
   assert.strictEqual(stats.files, 0, "file row removed");
   assert.strictEqual(stats.chunks, 0, "chunk rows removed");
 
-  const indexStats = await engine.ctx.vectorStore!.getIndexStats!("diaryA");
-  assert.strictEqual(Number(indexStats.size), 0, "vectors removed from diary index");
+  const indexStats = await engine.ctx.vectorStore!.getIndexStats!("spaceA");
+  assert.strictEqual(Number(indexStats.size), 0, "vectors removed from space index");
 
   // Idempotent: unknown path resolves to deleted:false
   const again = await engine.handleDelete({ path: abs });
@@ -591,7 +462,7 @@ test("handleDelete({ path }) removes file rows and vectors", async () => {
 
 test("deleteFile(path) convenience mirrors handleDelete", async () => {
   const root = makeTmpDir();
-  const abs = writeNoteFile(root, "diaryA/note.md", NOTE_CONTENT);
+  const abs = writeNoteFile(root, "spaceA/note.md", NOTE_CONTENT);
   const { engine } = makeEngine({ config: { rootPath: root } });
   await engine.initialize();
   await engine.flushBatch([{ path: abs }]);
@@ -605,15 +476,15 @@ test("deleteFile(path) convenience mirrors handleDelete", async () => {
 
 test("custom dimension propagates to the vector store index", async () => {
   const root = makeTmpDir();
-  const abs = writeNoteFile(root, "diaryA/note.md", NOTE_CONTENT);
+  const abs = writeNoteFile(root, "spaceA/note.md", NOTE_CONTENT);
   const { engine } = makeEngine({ config: { rootPath: root } });
   await engine.initialize();
   await engine.flushBatch([{ path: abs }]);
 
-  const stats = await engine.ctx.vectorStore!.getIndexStats!("diaryA");
+  const stats = await engine.ctx.vectorStore!.getIndexStats!("spaceA");
   assert.strictEqual(Number(stats.dimension), DIM);
 
-  const tagStats = await engine.ctx.vectorStore!.getIndexStats!("global_tags");
+  const tagStats = await engine.ctx.vectorStore!.getIndexStats!("tag_vectors");
   assert.strictEqual(Number(tagStats.dimension), DIM);
   engine.close();
 });
@@ -621,7 +492,7 @@ test("custom dimension propagates to the vector store index", async () => {
 test("injected fake embedding provider is used instead of the network provider", async () => {
   const fake = makeFakeEmbeddingProvider(DIM);
   const root = makeTmpDir();
-  const abs = writeNoteFile(root, "diaryA/note.md", NOTE_CONTENT);
+  const abs = writeNoteFile(root, "spaceA/note.md", NOTE_CONTENT);
   const engine = createMemoryEngine({
     config: {
       dimension: DIM,
@@ -647,25 +518,6 @@ test("injected fake embedding provider is used instead of the network provider",
   await engine.close();
 });
 
-test("_countFiles fallback accepts legacy snake_case chunk rows", async () => {
-  const { engine } = makeEngine();
-  await engine.initialize();
-
-  const legacyStore = engine.metadataStore as unknown as {
-    countFiles?: () => Promise<number>;
-    getAllChunks: () => Promise<
-      Array<{ id: number; file_id: number; content: string }>
-    >;
-  };
-  legacyStore.countFiles = undefined;
-  legacyStore.getAllChunks = async () => [
-    { id: 1, file_id: 42, content: "legacy chunk" },
-  ];
-
-  assert.equal(await engine._countFiles(), 1);
-  await engine.close();
-});
-
 test("custom metadataStore / vectorStore providers are injected verbatim", async () => {
   const storePath = makeTmpDir();
 
@@ -686,9 +538,9 @@ test("custom metadataStore / vectorStore providers are injected verbatim", async
 test("close() flushes pending saves and closes the metadata store idempotently", async () => {
   const { engine } = makeEngine();
   await engine.initialize();
-  assert.strictEqual(engine.ctx.metadataStore!._closed, false);
+  assert.strictEqual((engine.ctx.metadataStore as SqliteMetadataStore)._closed, false);
 
   await engine.close();
-  assert.strictEqual(engine.ctx.metadataStore!._closed, true);
+  assert.strictEqual((engine.ctx.metadataStore as SqliteMetadataStore)._closed, true);
   await engine.close();
 });

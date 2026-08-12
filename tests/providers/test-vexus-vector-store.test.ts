@@ -15,9 +15,9 @@ function makeStore() {
   return new VexusVectorStore({
     dimension: DIM,
     storePath: ".", // not used in in-memory tests
-    tagIndexCapacity: CAPACITY,
+    tagVectorIndexCapacity: CAPACITY,
     indexSaveDelay: 100,
-    tagIndexSaveDelay: 100,
+    tagVectorIndexSaveDelay: 100,
   });
 }
 
@@ -171,7 +171,7 @@ test("saveIndex and loadIndex roundtrip", async () => {
     const store = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
 
     const indexName = "persist-test";
@@ -200,7 +200,7 @@ test("saveIndex and loadIndex roundtrip", async () => {
     const store2 = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
 
     await store2.loadIndex(indexName, savePath);
@@ -220,25 +220,25 @@ test("saveIndex and loadIndex roundtrip", async () => {
   }
 });
 
-test("persistTagIndex invalidates old global tag files when disabled", async () => {
+test("persistTagVectorIndex invalidates old global tag files when disabled", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-tag-persist-off-"));
   try {
     const source = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
-      persistTagIndex: true,
+      tagVectorIndexCapacity: CAPACITY,
+      persistTagVectorIndex: true,
     });
-    await source.add("global_tags", 7, vec(1, 0, 0, 0));
-    await source.saveIndex("global_tags");
-    const tagPath = source._getIndexPath("global_tags");
+    await source.add("tag_vectors", 7, vec(1, 0, 0, 0));
+    await source.saveIndex("tag_vectors");
+    const tagPath = source._getIndexPath("tag_vectors");
     assert.equal(fs.existsSync(tagPath), true);
 
     const disabled = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
-      persistTagIndex: false,
+      tagVectorIndexCapacity: CAPACITY,
+      persistTagVectorIndex: false,
     });
     assert.equal(
       await (
@@ -248,13 +248,13 @@ test("persistTagIndex invalidates old global tag files when disabled", async () 
       ).restorePersistedIndexes([]),
       true,
     );
-    assert.equal(disabled.indices.has("global_tags"), false);
+    assert.equal(disabled.indices.has("tag_vectors"), false);
     assert.equal(fs.existsSync(tagPath), false);
     assert.equal(fs.existsSync(`${tagPath}.meta.json`), false);
 
     const before = fs.readdirSync(tmpDir).sort();
-    await disabled.add("global_tags", 8, vec(0, 1, 0, 0));
-    disabled.scheduleIndexSave("global_tags");
+    await disabled.add("tag_vectors", 8, vec(0, 1, 0, 0));
+    disabled.scheduleIndexSave("tag_vectors");
     disabled.flushPendingSaves();
     assert.deepEqual(fs.readdirSync(tmpDir).sort(), before);
   } finally {
@@ -265,33 +265,33 @@ test("persistTagIndex invalidates old global tag files when disabled", async () 
   }
 });
 
-test("persistTagIndex true restores the global tag index", async () => {
+test("persistTagVectorIndex true restores the global tag index", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vexus-tag-persist-on-"));
   try {
     const source = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
-      persistTagIndex: true,
+      tagVectorIndexCapacity: CAPACITY,
+      persistTagVectorIndex: true,
     });
-    await source.add("global_tags", 9, vec(1, 0, 0, 0));
-    await source.saveIndex("global_tags");
+    await source.add("tag_vectors", 9, vec(1, 0, 0, 0));
+    await source.saveIndex("tag_vectors");
 
     const reopened = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
-      persistTagIndex: true,
+      tagVectorIndexCapacity: CAPACITY,
+      persistTagVectorIndex: true,
     });
     assert.equal(
       await (
         reopened as unknown as {
           restorePersistedIndexes(indexNames: readonly string[]): Promise<boolean>;
         }
-      ).restorePersistedIndexes(["global_tags"]),
+      ).restorePersistedIndexes(["tag_vectors"]),
       true,
     );
-    assert.equal((await reopened.getIndexStats("global_tags")).size, 1);
+    assert.equal((await reopened.getIndexStats("tag_vectors")).size, 1);
   } finally {
     try {
       for (const file of fs.readdirSync(tmpDir)) fs.unlinkSync(path.join(tmpDir, file));
@@ -313,7 +313,7 @@ test("restorePersistedIndexes rejects missing, corrupt, and wrong-dimension inde
     const store = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
     assert.equal(await restore(store, ["missing"]), false);
 
@@ -325,7 +325,7 @@ test("restorePersistedIndexes rejects missing, corrupt, and wrong-dimension inde
     const wrongDimension = new VexusVectorStore({
       dimension: 2,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
     await wrongDimension.add("wrong-dimension", 1, new Float32Array([1, 0]));
     await wrongDimension.saveIndex("wrong-dimension");
@@ -346,7 +346,7 @@ test("restorePersistedIndexes atomically commits every loaded index", async () =
     const source = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
     await source.add("loaded-a", 11, vec(1, 0, 0, 0));
     await source.add("loaded-b", 22, vec(0, 1, 0, 0));
@@ -356,7 +356,7 @@ test("restorePersistedIndexes atomically commits every loaded index", async () =
     const reopened = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
     assert.equal(
       await (
@@ -401,7 +401,7 @@ test("restorePersistedIndexes refuses disk loading when indexLoadEnabled is fals
     const source = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
     await source.add("disabled-load", 31, vec(1, 0, 0, 0));
     await source.saveIndex("disabled-load");
@@ -409,7 +409,7 @@ test("restorePersistedIndexes refuses disk loading when indexLoadEnabled is fals
     const reopened = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
       indexLoadEnabled: false,
     });
     assert.equal(
@@ -437,7 +437,7 @@ test("resetDerivedState clears timers, memory, and only Memoria index files", ()
     const store = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
     store.getOrCreateIndex("reset-me");
     store.scheduleIndexSave("reset-me");
@@ -484,7 +484,7 @@ test("scheduleIndexSave coalesces multiple calls into one timer", async () => {
     const store = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
       indexSaveDelay: 50,
     });
 
@@ -519,7 +519,7 @@ test("flushPendingSaves persists ALL indices, not only scheduled ones", async ()
     const store = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
       indexSaveDelay: 99999, // never fires naturally
     });
 
@@ -559,7 +559,7 @@ test("getOrCreateIndex lazily loads a persisted index from disk", async () => {
     const store = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
 
     const indexName = "lazy-load-test";
@@ -573,7 +573,7 @@ test("getOrCreateIndex lazily loads a persisted index from disk", async () => {
       const store2 = new VexusVectorStore({
         dimension: DIM,
         storePath: tmpDir,
-        tagIndexCapacity: CAPACITY,
+        tagVectorIndexCapacity: CAPACITY,
       });
       const empty = await store2.search(indexName, vec(1, 0, 0, 0), 2);
       assert.deepStrictEqual(empty, [], "fresh store has no data (save blocked)");
@@ -584,7 +584,7 @@ test("getOrCreateIndex lazily loads a persisted index from disk", async () => {
     const store2 = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
     });
     store2.getOrCreateIndex(indexName);
 
@@ -609,7 +609,7 @@ test("flushPendingSaves clears all timers", async () => {
     const store = new VexusVectorStore({
       dimension: DIM,
       storePath: tmpDir,
-      tagIndexCapacity: CAPACITY,
+      tagVectorIndexCapacity: CAPACITY,
       indexSaveDelay: 10000, // Long delay so it won't fire naturally
     });
 

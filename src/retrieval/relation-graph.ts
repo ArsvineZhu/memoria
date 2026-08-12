@@ -12,7 +12,7 @@ export type RelationStatus = "active" | "stale" | "rejected";
 export type MemoryRelation = MemoryRelationRecord;
 
 export interface RelationGraphSnapshot {
-  schema: "memoria-relation-graph-v1";
+  schema: "relation-graph-v1";
   revision: number;
   relations: MemoryRelation[];
 }
@@ -25,7 +25,7 @@ export interface RelatedChunk {
   confidence: number;
 }
 
-const RELATION_GRAPH_KEY = "memoria.relation_graph.v1";
+const RELATION_GRAPH_KEY = "relation_graph";
 
 interface RelationReadCache {
   adjacencyGeneration: number | null;
@@ -181,7 +181,7 @@ export function extractMdxRelations(
     );
   };
 
-  // Mask fenced and inline code before scanning. This keeps examples and
+  // Mask fenced and inline code before scanning. This keeps code snippets and
   // code blocks from becoming durable user-source relations while retaining
   // ordinary Markdown/MDX links.
   const scanContent = content
@@ -238,7 +238,7 @@ export function extractMdxRelations(
 
 function asSnapshot(value: unknown): RelationGraphSnapshot {
   if (!value || typeof value !== "object") {
-    return { schema: "memoria-relation-graph-v1", revision: 0, relations: [] };
+    return { schema: "relation-graph-v1", revision: 0, relations: [] };
   }
   const source = value as Record<string, unknown>;
   const relations = Array.isArray(source.relations)
@@ -254,7 +254,7 @@ function asSnapshot(value: unknown): RelationGraphSnapshot {
       })
     : [];
   return {
-    schema: "memoria-relation-graph-v1",
+    schema: "relation-graph-v1",
     revision: Number.isSafeInteger(source.revision) ? Number(source.revision) : 0,
     relations: relations.map((relation) => ({
       ...relation,
@@ -274,12 +274,11 @@ function asSnapshot(value: unknown): RelationGraphSnapshot {
 export class RelationGraphStore {
   private readonly metadataStore: MetadataStoreContract;
   private fallback: RelationGraphSnapshot = {
-    schema: "memoria-relation-graph-v1",
+    schema: "relation-graph-v1",
     revision: 0,
     relations: [],
   };
   private tail: Promise<void> = Promise.resolve();
-  private legacyMigrationAttempted = false;
   private readonly readCache: RelationReadCache;
 
   constructor(metadataStore: MetadataStoreContract) {
@@ -312,58 +311,12 @@ export class RelationGraphStore {
       let relations = await this.metadataStore.listRelations({
         includeInactive: true,
       });
-      if (
-        relations.length === 0 &&
-        !this.legacyMigrationAttempted &&
-        typeof this.metadataStore.getKv === "function"
-      ) {
-        this.legacyMigrationAttempted = true;
-        const legacyRaw = await this.metadataStore.getKv(RELATION_GRAPH_KEY);
-        let legacyValue: unknown = legacyRaw;
-        if (typeof legacyRaw === "string") {
-          try {
-            legacyValue = JSON.parse(legacyRaw);
-          } catch {
-            legacyValue = null;
-          }
-        }
-        const legacy = asSnapshot(legacyValue);
-        if (legacy.relations.length > 0) {
-          const sources = new Map<string, MemoryRelation[]>();
-          const derived: MemoryRelation[] = [];
-          for (const relation of legacy.relations) {
-            if (relation.origin === "source") {
-              const group = sources.get(relation.from) || [];
-              group.push(relation);
-              sources.set(relation.from, group);
-            } else {
-              derived.push(relation);
-            }
-          }
-          if (typeof this.metadataStore.replaceExplicitRelations === "function") {
-            for (const [from, group] of sources) {
-              await this.metadataStore.replaceExplicitRelations(
-                from,
-                group[0]?.sourceRevision || `legacy-kv:${legacy.revision}`,
-                group,
-              );
-            }
-          }
-          if (
-            derived.length > 0 &&
-            typeof this.metadataStore.upsertDerivedRelations === "function"
-          ) {
-            await this.metadataStore.upsertDerivedRelations(derived);
-          }
-          relations = await this.metadataStore.listRelations({ includeInactive: true });
-        }
-      }
       const generation =
         typeof this.metadataStore.getRelationGeneration === "function"
           ? await this.metadataStore.getRelationGeneration()
           : relations.length;
       this.fallback = {
-        schema: "memoria-relation-graph-v1",
+        schema: "relation-graph-v1",
         revision: generation,
         relations: relations.map((relation) => ({ ...relation })),
       };
@@ -398,7 +351,7 @@ export class RelationGraphStore {
     return this.enqueue(async () => {
       const sourceRevision =
         relations.find((relation) => relation.sourceRevision)?.sourceRevision ||
-        `legacy:${Date.now()}`;
+        `relation:${Date.now()}`;
       if (typeof this.metadataStore.replaceExplicitRelations === "function") {
         await this.metadataStore.replaceExplicitRelations(
           from,
@@ -413,7 +366,7 @@ export class RelationGraphStore {
           !(relation.from === from && relation.origin === "source" && relation.active),
       );
       const next: RelationGraphSnapshot = {
-        schema: "memoria-relation-graph-v1",
+        schema: "relation-graph-v1",
         revision: current.revision + 1,
         relations: [...retained, ...relations],
       };
@@ -465,7 +418,7 @@ export class RelationGraphStore {
         }
       }
       const nextSnapshot: RelationGraphSnapshot = {
-        schema: "memoria-relation-graph-v1",
+        schema: "relation-graph-v1",
         revision: current.revision + 1,
         relations: [...byId.values()].filter((relation) => relation.active),
       };
@@ -497,7 +450,7 @@ export class RelationGraphStore {
         };
       });
       const next: RelationGraphSnapshot = {
-        schema: "memoria-relation-graph-v1",
+        schema: "relation-graph-v1",
         revision: current.revision + 1,
         relations: changed,
       };

@@ -13,18 +13,17 @@ import { at } from "../../utils/numerical.js";
 /**
  * Embeds the raw query text into one or more query vectors.
  *
- * Mirrors the KnowledgeBaseManager search entry flow (EmbeddingUtils ->
+ * Implements the MemoryEngine search embedding flow (provider ->
  * getEmbeddingsBatch): query text is embedded first, and every downstream
  * stage consumes the vector. Optional query expansion (config.queryExpansion
- * + injectable rephraserFn) produces additional variants; optional epsilon
+ * + injectable queryRephraserFn) produces additional variants; optional epsilon
  * masking (config.queryEpsilon) zeros out near-zero components.
  *
  * Config (ctx.config):
  *   - queryExpansion: number of total query texts to produce (default 1)
- *   - rephraserFn:     async (queryText, index) => variantText (injectable;
+ *   - queryRephraserFn: async (queryText, index) => variantText (injectable;
  *                      no LLM is invoked from the library itself)
  *   - queryEpsilon:    mask vector components with |v| < epsilon to 0
- *                      (alias: epsilon)
  *
  * Output adds:
  *   - queries: [{ text, vector }]
@@ -58,7 +57,7 @@ class QueryEmbedderStage extends Stage {
     }
 
     const config = ctx.config || {};
-    const rephraserFn = config.rephraserFn || config.queryRephraserFn;
+    const rephraserFn = config.queryRephraserFn;
     const expansionCount = Math.max(1, Number(config.queryExpansion) || 1);
 
     // 1. Build the ordered query text list (original + injected variants).
@@ -81,9 +80,9 @@ class QueryEmbedderStage extends Stage {
     }
 
     // 2. Embed the whole list in a single batch (positions stay aligned).
-    //    DashScope-class providers differentiate query vs document text for
-    //    asymmetric retrieval; document/text defaults remain unchanged for
-    //    providers that ignore the second argument.
+    //    Providers may differentiate query vs document text for asymmetric
+    //    retrieval; document/text defaults remain unchanged for providers
+    //    that ignore the second argument.
     let vectors: Array<EmbeddingVector | null> | null = null;
     try {
       vectors = await embeddingProvider.embedBatch(texts, { textType: "query" });
@@ -118,9 +117,7 @@ class QueryEmbedderStage extends Stage {
     vector: EmbeddingVector,
     config: MemoryConfigOverrides,
   ): EmbeddingVector {
-    const epsilon = Number(
-      config.queryEpsilon != null ? config.queryEpsilon : config.epsilon,
-    );
+    const epsilon = Number(config.queryEpsilon);
     if (!(epsilon > 0)) return vector;
 
     const src = vector instanceof Float32Array ? vector : new Float32Array(vector);

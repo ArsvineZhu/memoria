@@ -1,12 +1,19 @@
 #![deny(clippy::all)]
+#![allow(
+    clippy::manual_is_multiple_of,
+    clippy::needless_range_loop,
+    clippy::same_item_push,
+    clippy::too_many_arguments,
+    clippy::type_complexity
+)]
 
-mod memo_artifact_builder;
-mod memo_dtsc;
-mod memo_pipeline;
-mod memo_sensing;
-mod rivermemo_topology_v3;
+mod propagation_structure_reranker;
+mod propagation_support_native;
+mod tag_graph_artifact_builder;
+mod tag_graph_observation;
+mod tag_retrieval_pipeline;
 
-use rivermemo_topology_v3::MemoRuntime;
+use propagation_structure_reranker::TagRetrievalRuntime;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -24,28 +31,14 @@ pub struct SearchResult {
 }
 
 #[napi(object)]
-pub struct SvdResult {
-    pub u: Vec<f64>, // 扁平化的正交基底向量集 (k * dim)
-    pub s: Vec<f64>, // 特征值 (奇异值)
-    pub k: u32,
-    pub dim: u32,
-}
-
-#[napi(object)]
-pub struct OrthogonalProjectionResult {
+pub struct ResidualDirectionsResult {
     pub projection: Vec<f64>,
     pub residual: Vec<f64>,
     pub basis_coefficients: Vec<f64>,
 }
 
 #[napi(object)]
-pub struct HandshakeResult {
-    pub magnitudes: Vec<f64>,
-    pub directions: Vec<f64>, // 扁平化的方向向量 (n * dim)
-}
-
-#[napi(object)]
-pub struct ProjectResult {
+pub struct TagBasisProjectionResult {
     pub projections: Vec<f64>,
     pub probabilities: Vec<f64>,
     pub entropy: f64,
@@ -53,7 +46,7 @@ pub struct ProjectResult {
 }
 
 #[napi(object)]
-pub struct DualWeightedProjectionResult {
+pub struct DiffusionDistributionResult {
     pub local_vector: Option<Vec<f64>>,
     pub transfer_vector: Option<Vec<f64>>,
     pub requested_count: u32,
@@ -65,7 +58,7 @@ pub struct DualWeightedProjectionResult {
 }
 
 #[napi(object)]
-pub struct MemoFusionResult {
+pub struct TagContextFusionResult {
     pub vector: Vec<f64>,
     pub selected_tag_ids: Vec<i64>,
     pub requested_count: u32,
@@ -76,7 +69,7 @@ pub struct MemoFusionResult {
 }
 
 #[napi(object)]
-pub struct IntrinsicResidualResult {
+pub struct TagResidualMetricsResult {
     pub tag_count: u32,
     pub computed_count: u32,
     pub skipped_count: u32,
@@ -86,9 +79,9 @@ pub struct IntrinsicResidualResult {
     pub effective_config: String,
 }
 
-/// 🌟 EPA Rust 基底重算结果
+/// 🌟 TagBasisProjection Rust 基底重算结果
 #[napi(object)]
-pub struct EpaBasisResult {
+pub struct TagBasisResult {
     pub success: bool,
     pub message: String,
     pub tag_count: u32,
@@ -103,9 +96,9 @@ pub struct EpaBasisResult {
     pub publish_elapsed_ms: f64,
 }
 
-/// 🌟 TagMemo V8.2: 成对语义距离预计算结果
+/// Canonical tag-pair similarity precomputation result.
 #[napi(object)]
-pub struct PairwiseSimResult {
+pub struct TagPairSimilarityResult {
     pub pair_count: u32,     // 实际共现 pair 总数 (经单文件≤100守恒后)
     pub computed_count: u32, // 本次实际完成余弦计算的 pair 数
     pub skipped_count: u32,  // 已有缓存、缺失向量或 sim 低于阈值被丢弃的 pair 数
@@ -122,9 +115,9 @@ pub struct VexusStats {
     pub memory_usage: f64,
 }
 
-/// VexusIndex 内部统一 Memo 运行时诊断。
+/// VexusIndex-owned tag retrieval runtime diagnostics.
 #[napi(object)]
-pub struct MemoRuntimeStats {
+pub struct TagRetrievalRuntimeStats {
     pub active_artifact_sig: Option<String>,
     pub generation: i64,
     pub node_count: u32,
@@ -137,10 +130,10 @@ pub struct MemoRuntimeStats {
 pub struct VexusIndex {
     index: Arc<RwLock<Index>>,
     dimensions: u32,
-    epa_pending_cache: Arc<std::sync::Mutex<Option<EpaPendingCache>>>,
-    /// TagMemo 与 RiverMemo 共用的原生图资产运行时。
+    tag_basis_pending_cache: Arc<std::sync::Mutex<Option<TagBasisPendingCache>>>,
+    /// Tag association graph artifact runtime shared by associative and structural retrieval.
     /// 与本 VexusIndex 实例同生命周期，禁止使用进程全局生产缓存。
-    memo_runtime: Arc<MemoRuntime>,
+    tag_retrieval_runtime: Arc<TagRetrievalRuntime>,
 }
 
 static INDEX_SAVE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -285,8 +278,8 @@ impl VexusIndex {
         Ok(Self {
             index: Arc::new(RwLock::new(index)),
             dimensions: dim,
-            epa_pending_cache: Arc::new(std::sync::Mutex::new(None)),
-            memo_runtime: Arc::new(MemoRuntime::new()),
+            tag_basis_pending_cache: Arc::new(std::sync::Mutex::new(None)),
+            tag_retrieval_runtime: Arc::new(TagRetrievalRuntime::new()),
         })
     }
 
@@ -331,8 +324,8 @@ impl VexusIndex {
         Ok(Self {
             index: Arc::new(RwLock::new(index)),
             dimensions: dim,
-            epa_pending_cache: Arc::new(std::sync::Mutex::new(None)),
-            memo_runtime: Arc::new(MemoRuntime::new()),
+            tag_basis_pending_cache: Arc::new(std::sync::Mutex::new(None)),
+            tag_retrieval_runtime: Arc::new(TagRetrievalRuntime::new()),
         })
     }
 
@@ -493,17 +486,17 @@ impl VexusIndex {
         Ok(results)
     }
 
-    /// RiverMemo 全局双场投影。
+    /// PropagationStructure 全局双场投影。
     ///
     /// Tag 向量直接从当前常驻 usearch F32 索引按 key 读取；整个查询只复用一个
     /// dimension 大小的临时缓冲区，不维护第二份全库向量矩阵。
     #[napi]
-    pub fn project_dual_weighted(
+    pub fn project_diffusion_distributions(
         &self,
         tag_ids: Vec<i64>,
         local_masses: Float64Array,
         transfer_masses: Float64Array,
-    ) -> Result<DualWeightedProjectionResult> {
+    ) -> Result<DiffusionDistributionResult> {
         let started_at = std::time::Instant::now();
         let dim = self.dimensions as usize;
         let local_weights: &[f64] = &local_masses;
@@ -592,7 +585,7 @@ impl VexusIndex {
             Some(output)
         };
 
-        Ok(DualWeightedProjectionResult {
+        Ok(DiffusionDistributionResult {
             local_vector: finalize(local_output, local_total_weight),
             transfer_vector: finalize(transfer_output, transfer_total_weight),
             requested_count: tag_ids.len() as u32,
@@ -604,12 +597,12 @@ impl VexusIndex {
         })
     }
 
-    /// 使用当前 VexusIndex 唯一 Tag 向量空间完成 TagMemo 上下文融合。
+    /// 使用当前 VexusIndex 唯一 Tag 向量空间完成 tag context fusion。
     ///
     /// 只在批量读取请求涉及的 Tag 向量时短持 usearch 读锁；语义去重、
     /// 上下文加权和最终融合均在释放索引锁后执行，不维护第二份全库向量。
     #[napi]
-    pub fn fuse_memo_context(
+    pub fn fuse_tag_context(
         &self,
         original: Float32Array,
         tag_ids: Vec<i64>,
@@ -617,21 +610,21 @@ impl VexusIndex {
         alpha: f64,
         dedup_threshold: Option<f64>,
         max_tags: Option<u32>,
-    ) -> Result<MemoFusionResult> {
+    ) -> Result<TagContextFusionResult> {
         let started_at = std::time::Instant::now();
         let dim = self.dimensions as usize;
         let source: &[f32] = &original;
         let weights: &[f64] = &tag_weights;
         if source.len() != dim {
             return Err(Error::from_reason(format!(
-                "Memo fusion dimension mismatch: expected {}, got {}",
+                "Tag context fusion dimension mismatch: expected {}, got {}",
                 dim,
                 source.len()
             )));
         }
         if tag_ids.len() != weights.len() {
             return Err(Error::from_reason(format!(
-                "Memo fusion input mismatch: ids={}, weights={}",
+                "Tag context fusion input mismatch: ids={}, weights={}",
                 tag_ids.len(),
                 weights.len()
             )));
@@ -662,13 +655,13 @@ impl VexusIndex {
         let mut vectors: Vec<(i64, f64, Vec<f32>, f64)> = Vec::with_capacity(requested.len());
         {
             let index = self.index.read().map_err(|error| {
-                Error::from_reason(format!("Memo fusion index lock failed: {}", error))
+                Error::from_reason(format!("Tag context fusion index lock failed: {}", error))
             })?;
             let mut buffer = vec![0.0f32; dim];
             for (id, weight) in requested {
                 let matches = index.get(id as u64, &mut buffer).map_err(|error| {
                     Error::from_reason(format!(
-                        "Memo fusion failed to read Tag vector {}: {:?}",
+                        "Tag context fusion failed to read Tag vector {}: {:?}",
                         id, error
                     ))
                 })?;
@@ -746,7 +739,7 @@ impl VexusIndex {
             }
         }
 
-        Ok(MemoFusionResult {
+        Ok(TagContextFusionResult {
             vector: fused,
             selected_tag_ids: selected.iter().map(|entry| entry.0).collect(),
             requested_count: requested_count as u32,
@@ -757,20 +750,21 @@ impl VexusIndex {
         })
     }
 
-    /// 在本 Tag 向量索引与 MemoRuntime 上执行统一查询数学管线。
+    /// 在本 Tag 向量索引与 TagRetrievalRuntime 上执行统一查询数学管线。
     ///
-    /// EPA、Residual Pyramid、Core/语言/层级门控、Spike 与向量融合全部在
-    /// 同一 Rust 后台任务中完成；返回值同时供 DTSC 和 Topology V3 读出复用。
+    /// TagBasisProjection、Residual TagResidualDecomposition、Core/语言/层级门控、activation propagation 与向量融合全部在
+    /// 同一 Rust 后台任务中完成；返回值同时供 propagation-support 和
+    /// propagation-structure 读出复用。
     #[napi]
-    pub fn run_memo_pipeline(
+    pub fn run_tag_retrieval_pipeline(
         &self,
         db_path: String,
         artifact_sig: String,
         input_json: String,
-    ) -> AsyncTask<memo_pipeline::MemoPipelineTask> {
-        memo_pipeline::run_with_runtime(
+    ) -> AsyncTask<tag_retrieval_pipeline::TagRetrievalPipelineTask> {
+        tag_retrieval_pipeline::run_with_runtime(
             self.index.clone(),
-            self.memo_runtime.clone(),
+            self.tag_retrieval_runtime.clone(),
             db_path,
             artifact_sig,
             self.dimensions as usize,
@@ -778,85 +772,96 @@ impl VexusIndex {
         )
     }
 
-    /// 在本 Tag 向量索引拥有的统一 MemoRuntime 上执行共同 Spike 感应。
+    /// 在本 Tag 向量索引拥有的统一 TagRetrievalRuntime 上执行共同 activation observation。
     ///
-    /// 输入只包含 EPA/Pyramid 门控后的初始 Tag 种子与传播参数；输出的
-    /// QueryObservation 同时供 DTSC 和 RiverMemo Topology V3 两个读出头消费。
+    /// 输入只包含 TagBasisProjection/TagResidualDecomposition 门控后的初始 Tag 种子与传播参数；输出的
+    /// QueryObservation 同时供 propagation-support 和 propagation-structure 两个读出头消费。
     #[napi]
-    pub fn sense_memo_query(
+    pub fn run_activation_propagation(
         &self,
         db_path: String,
         artifact_sig: String,
         input_json: String,
-    ) -> AsyncTask<memo_sensing::MemoSensingTask> {
-        memo_sensing::sense_with_runtime(
-            self.memo_runtime.clone(),
+    ) -> AsyncTask<tag_graph_observation::ActivationPropagationTask> {
+        tag_graph_observation::observe_with_runtime(
+            self.tag_retrieval_runtime.clone(),
             db_path,
             artifact_sig,
             input_json,
         )
     }
 
-    /// 在统一 QueryObservation 上执行 DTSC 测地曲线读出。
+    /// 在统一 QueryObservation 上执行 propagation-support 读出。
     ///
-    /// 与 RiverMemo Topology V3 读取同一个 MemoRuntime 活动图快照；
+    /// 与 propagation-structure 读取同一个 TagRetrievalRuntime 活动图快照；
     /// 差异只存在于读出方程，不再拥有独立图资产。
     #[napi]
-    pub fn rerank_memo_dtsc(
+    pub fn rerank_by_propagation_support(
         &self,
         db_path: String,
         artifact_sig: String,
         input_json: String,
-    ) -> AsyncTask<memo_dtsc::MemoDtscTask> {
-        memo_dtsc::rerank_with_runtime(self.memo_runtime.clone(), db_path, artifact_sig, input_json)
+    ) -> AsyncTask<propagation_support_native::PropagationSupportRerankerTask> {
+        propagation_support_native::rerank_with_runtime(
+            self.tag_retrieval_runtime.clone(),
+            db_path,
+            artifact_sig,
+            input_json,
+        )
     }
 
-    /// 在本 Tag 向量索引拥有的统一 MemoRuntime 上执行 RiverMemo Topology V3。
+    /// 在本 Tag 向量索引拥有的统一 TagRetrievalRuntime 上执行 propagation-structure 读出。
     ///
     /// 首次请求从持久化资产恢复 CSR，随后由本 VexusIndex 实例持有活动 Arc 快照；
     /// 查询只克隆快照，不再访问进程全局生产缓存。
     #[napi]
-    pub fn rerank_rivermemo_topology_v3(
+    pub fn rerank_by_propagation_structure(
         &self,
         db_path: String,
         artifact_sig: String,
         input_json: String,
-    ) -> AsyncTask<rivermemo_topology_v3::RiverMemoTopologyV3Task> {
-        rivermemo_topology_v3::rerank_with_runtime(
-            self.memo_runtime.clone(),
+    ) -> AsyncTask<propagation_structure_reranker::PropagationStructureRerankerTask> {
+        propagation_structure_reranker::rerank_with_runtime(
+            self.tag_retrieval_runtime.clone(),
             db_path,
             artifact_sig,
             input_json,
         )
     }
 
-    /// 从 SQLite 事实层和 Rust 派生表原生编译统一 Memo 图资产。
+    /// Build the canonical tag association graph artifact from SQLite facts and derived tables.
     ///
     /// 完整图、CSR、provenance、持久化 payload 与活动 Arc 均不跨越
     /// N-API 边界；JavaScript 只接收签名、代际与规模摘要。
     #[napi]
-    pub fn rebuild_memo_artifact(
+    pub fn rebuild_tag_graph_artifact(
         &self,
         db_path: String,
         input_json: String,
-    ) -> AsyncTask<memo_artifact_builder::NativeMemoArtifactBuildTask> {
-        memo_artifact_builder::rebuild_with_runtime(self.memo_runtime.clone(), db_path, input_json)
+    ) -> AsyncTask<tag_graph_artifact_builder::TagRetrievalArtifactBuildTask> {
+        tag_graph_artifact_builder::rebuild_with_runtime(
+            self.tag_retrieval_runtime.clone(),
+            db_path,
+            input_json,
+        )
     }
 
-    /// 释放本索引持有的统一 Memo 图快照。
+    /// Release the tag association graph artifact snapshot owned by this index.
     #[napi]
-    pub fn clear_memo_runtime(&self) -> Result<()> {
-        self.memo_runtime.clear().map_err(Error::from_reason)
+    pub fn clear_tag_retrieval_runtime(&self) -> Result<()> {
+        self.tag_retrieval_runtime
+            .clear()
+            .map_err(Error::from_reason)
     }
 
-    /// 获取统一 Memo 图快照的常驻诊断。
+    /// Return diagnostics for the resident tag association graph artifact snapshot.
     #[napi]
-    pub fn memo_runtime_stats(&self) -> Result<MemoRuntimeStats> {
+    pub fn tag_retrieval_runtime_stats(&self) -> Result<TagRetrievalRuntimeStats> {
         let (signature, generation, node_count, edge_count) = self
-            .memo_runtime
+            .tag_retrieval_runtime
             .diagnostics()
             .map_err(Error::from_reason)?;
-        Ok(MemoRuntimeStats {
+        Ok(TagRetrievalRuntimeStats {
             resident: signature.is_some(),
             active_artifact_sig: signature,
             generation: generation as i64,
@@ -902,88 +907,25 @@ impl VexusIndex {
         &self,
         db_path: String,
         table_type: String,
-        filter_diary_name: Option<String>,
+        filter_space: Option<String>,
     ) -> AsyncTask<RecoverTask> {
         AsyncTask::new(RecoverTask {
             index: self.index.clone(),
             db_path,
             table_type,
-            filter_diary_name,
+            filter_space,
             dimensions: self.dimensions,
-        })
-    }
-
-    /// 高性能 SVD 分解 (用于 EPA 基底构建)
-    /// flattened_vectors: n * dim 的扁平化向量数组
-    /// n: 向量数量
-    /// max_k: 最大保留的主成分数量
-    #[napi]
-    pub fn compute_svd(
-        &self,
-        flattened_vectors: Float32Array,
-        n: u32,
-        max_k: u32,
-    ) -> Result<SvdResult> {
-        let dim = self.dimensions as usize;
-        let n = n as usize;
-        let max_k = max_k as usize;
-
-        let vec_slice: &[f32] = &flattened_vectors;
-
-        if vec_slice.len() != n * dim {
-            return Err(Error::from_reason(format!(
-                "Flattened vectors length mismatch: expected {}, got {}",
-                n * dim,
-                vec_slice.len()
-            )));
-        }
-
-        // 使用 nalgebra 进行 SVD 分解
-        // M 是 n x dim 矩阵
-        use nalgebra::DMatrix;
-        let matrix = DMatrix::from_row_slice(n, dim, vec_slice);
-
-        // 计算 SVD: M = U * S * V^T
-        // 我们需要的是 V^T 的行，它们是原始空间中的主成分
-        let svd = matrix.svd(false, true);
-
-        let s = svd
-            .singular_values
-            .as_slice()
-            .iter()
-            .map(|&x| x as f64)
-            .collect::<Vec<_>>();
-        let v_t = svd
-            .v_t
-            .ok_or_else(|| Error::from_reason("Failed to compute V^T matrix".to_string()))?;
-
-        let k = std::cmp::min(s.len(), max_k);
-        let mut u_flattened = Vec::with_capacity(k * dim);
-
-        for i in 0..k {
-            let row = v_t.row(i);
-            // nalgebra 的 row view 可能不连续，手动迭代以确保安全
-            for &val in row.iter() {
-                u_flattened.push(val as f64);
-            }
-        }
-
-        Ok(SvdResult {
-            u: u_flattened,
-            s: s[..k].to_vec(),
-            k: k as u32,
-            dim: dim as u32,
         })
     }
 
     /// 高性能 Gram-Schmidt 正交投影
     #[napi]
-    pub fn compute_orthogonal_projection(
+    pub fn compute_residual_directions(
         &self,
         vector: Float32Array,
         flattened_tags: Float32Array,
         n_tags: u32,
-    ) -> Result<OrthogonalProjectionResult> {
+    ) -> Result<ResidualDirectionsResult> {
         let dim = self.dimensions as usize;
         let n = n_tags as usize;
 
@@ -1042,86 +984,22 @@ impl VexusIndex {
             residual[d] = (query[d] as f64) - projection[d];
         }
 
-        Ok(OrthogonalProjectionResult {
+        Ok(ResidualDirectionsResult {
             projection,
             residual,
             basis_coefficients,
         })
     }
 
-    /// 高性能握手分析
+    /// 高性能 TagBasisProjection 投影
     #[napi]
-    pub fn compute_handshakes(
-        &self,
-        query: Float32Array,
-        flattened_tags: Float32Array,
-        n_tags: u32,
-    ) -> Result<HandshakeResult> {
-        let dim = self.dimensions as usize;
-        let n = n_tags as usize;
-
-        let q: &[f32] = &query;
-        let tags: &[f32] = &flattened_tags;
-        let expected_tags_len = n.checked_mul(dim).ok_or_else(|| {
-            Error::from_reason(format!(
-                "Handshake input size overflow: n_tags={}, dimension={}",
-                n, dim
-            ))
-        })?;
-        if q.len() != dim || tags.len() != expected_tags_len {
-            return Err(Error::from_reason(format!(
-                "Handshake dimension mismatch: query expected {}, got {}; tags expected {}, got {}",
-                dim,
-                q.len(),
-                expected_tags_len,
-                tags.len()
-            )));
-        }
-
-        let mut magnitudes = Vec::with_capacity(n);
-        let mut directions = Vec::with_capacity(n * dim);
-
-        for i in 0..n {
-            let start = i * dim;
-            let tag_vec = &tags[start..start + dim];
-            let mut mag_sq = 0.0;
-            let mut delta = vec![0.0; dim];
-
-            for d in 0..dim {
-                let diff = (q[d] - tag_vec[d]) as f64;
-                delta[d] = diff;
-                mag_sq += diff * diff;
-            }
-
-            let mag = mag_sq.sqrt();
-            magnitudes.push(mag);
-
-            if mag > 1e-9 {
-                for d in 0..dim {
-                    directions.push(delta[d] / mag);
-                }
-            } else {
-                for _ in 0..dim {
-                    directions.push(0.0);
-                }
-            }
-        }
-
-        Ok(HandshakeResult {
-            magnitudes,
-            directions,
-        })
-    }
-
-    /// 高性能 EPA 投影
-    #[napi]
-    pub fn project(
+    pub fn project_tag_basis(
         &self,
         vector: Float32Array,
         flattened_basis: Float32Array,
         mean_vector: Float32Array,
         k: u32,
-    ) -> Result<ProjectResult> {
+    ) -> Result<TagBasisProjectionResult> {
         let dim = self.dimensions as usize;
         let k = k as usize;
 
@@ -1165,7 +1043,7 @@ impl VexusIndex {
             }
         }
 
-        Ok(ProjectResult {
+        Ok(TagBasisProjectionResult {
             projections,
             probabilities,
             entropy,
@@ -1173,50 +1051,52 @@ impl VexusIndex {
         })
     }
 
-    /// 🌟 EPA: Rust 侧重算基底并暂存在 Rust 内存中。
+    /// 🌟 TagBasisProjection: Rust 侧重算基底并暂存在 Rust 内存中。
     ///
-    /// 计算阶段只读 SQLite，不持有 JS 写租约；调用方应在结果成功后短租约调用 publish_epa_basis_cache。
+    /// 计算阶段只读 SQLite，不持有 JS 写租约；调用方应在结果成功后短租约调用 publish_tag_basis_projection_basis_cache。
     #[napi]
-    pub fn compute_epa_basis(
+    pub fn compute_tag_basis(
         &self,
         db_path: String,
         cluster_count: u32,
         max_basis_dim: u32,
-    ) -> AsyncTask<EpaBasisTask> {
+    ) -> AsyncTask<TagBasisTask> {
         println!(
-            "[Vexus-Lite][EPA] compute_epa_basis task accepted: db={}, cluster_count={}, max_basis_dim={}",
+            "[Vexus-Lite][TagBasisProjection] computeTagBasis task accepted: db={}, cluster_count={}, max_basis_dim={}",
             db_path,
             cluster_count,
             max_basis_dim
         );
-        AsyncTask::new(EpaBasisTask {
+        AsyncTask::new(TagBasisTask {
             db_path,
             dimensions: self.dimensions,
             cluster_count: cluster_count.max(8),
             max_basis_dim: max_basis_dim.max(1),
-            pending_cache: self.epa_pending_cache.clone(),
+            pending_cache: self.tag_basis_pending_cache.clone(),
         })
     }
 
-    /// 🌟 EPA: 发布最近一次 Rust 计算完成的 EPA cache。
+    /// 🌟 TagBasisProjection: 发布最近一次 Rust 计算完成的 TagBasisProjection cache。
     ///
     /// 该方法执行短 SQLite 写入，JS 调用方必须先获取 Rust 写租约。
     #[napi]
-    pub fn publish_epa_basis_cache(&self, db_path: String) -> Result<EpaBasisResult> {
+    pub fn publish_tag_basis_cache(&self, db_path: String) -> Result<TagBasisResult> {
         let pending = {
-            let guard = self
-                .epa_pending_cache
-                .lock()
-                .map_err(|e| Error::from_reason(format!("EPA pending cache lock failed: {}", e)))?;
+            let guard = self.tag_basis_pending_cache.lock().map_err(|e| {
+                Error::from_reason(format!(
+                    "TagBasisProjection pending cache lock failed: {}",
+                    e
+                ))
+            })?;
             guard.clone()
         };
 
         let pending = match pending {
             Some(cache) => cache,
             None => {
-                return Ok(EpaBasisResult {
+                return Ok(TagBasisResult {
                     success: false,
-                    message: "no pending EPA basis cache to publish".to_string(),
+                    message: "no pending TagBasisProjection basis cache to publish".to_string(),
                     tag_count: 0,
                     cluster_count: 0,
                     basis_count: 0,
@@ -1234,13 +1114,13 @@ impl VexusIndex {
         let target_db_identity = sqlite_database_identity(&db_path);
         if target_db_identity != pending.db_identity {
             return Err(Error::from_reason(format!(
-                "EPA pending cache database mismatch: computed for {}, publish requested for {}",
+                "TagBasisProjection pending cache database mismatch: computed for {}, publish requested for {}",
                 pending.db_identity, target_db_identity
             )));
         }
 
         println!(
-            "[Vexus-Lite][EPA] publish_epa_basis_cache started: db={}, tags={}, clusters={}, basis={}",
+            "[Vexus-Lite][TagBasisProjection] publishTagBasisCache started: db={}, tags={}, clusters={}, basis={}",
             db_path,
             pending.tag_count,
             pending.cluster_count,
@@ -1250,22 +1130,28 @@ impl VexusIndex {
         let started_at = std::time::Instant::now();
         let mut conn = open_sqlite_readwrite(&db_path)
             .map_err(|e| Error::from_reason(format!("DB write open/config failed: {}", e)))?;
-        let tx = conn
-            .transaction()
-            .map_err(|e| Error::from_reason(format!("EPA cache transaction failed: {}", e)))?;
+        let tx = conn.transaction().map_err(|e| {
+            Error::from_reason(format!(
+                "TagBasisProjection cache transaction failed: {}",
+                e
+            ))
+        })?;
         tx.execute(
             "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)",
-            rusqlite::params!["epa_basis_cache", pending.cache_json],
+            rusqlite::params!["tag_basis_cache", pending.cache_json],
         )
-        .map_err(|e| Error::from_reason(format!("EPA cache write failed: {}", e)))?;
-        tx.commit()
-            .map_err(|e| Error::from_reason(format!("EPA cache commit failed: {}", e)))?;
+        .map_err(|e| Error::from_reason(format!("TagBasisProjection cache write failed: {}", e)))?;
+        tx.commit().map_err(|e| {
+            Error::from_reason(format!("TagBasisProjection cache commit failed: {}", e))
+        })?;
 
         {
-            let mut guard = self
-                .epa_pending_cache
-                .lock()
-                .map_err(|e| Error::from_reason(format!("EPA pending cache lock failed: {}", e)))?;
+            let mut guard = self.tag_basis_pending_cache.lock().map_err(|e| {
+                Error::from_reason(format!(
+                    "TagBasisProjection pending cache lock failed: {}",
+                    e
+                ))
+            })?;
             if guard.as_ref().map(|cache| cache.cache_sig.as_str())
                 == Some(pending.cache_sig.as_str())
             {
@@ -1275,12 +1161,12 @@ impl VexusIndex {
 
         let publish_ms = started_at.elapsed().as_secs_f64() * 1000.0;
         println!(
-            "[Vexus-Lite][EPA] publish_epa_basis_cache finished: publish_elapsed={:.2}ms, compute_elapsed={:.2}ms",
+            "[Vexus-Lite][TagBasisProjection] publishTagBasisCache finished: publish_elapsed={:.2}ms, compute_elapsed={:.2}ms",
             publish_ms,
             pending.elapsed_ms
         );
 
-        Ok(EpaBasisResult {
+        Ok(TagBasisResult {
             success: true,
             message: "ok".to_string(),
             tag_count: pending.tag_count,
@@ -1296,30 +1182,30 @@ impl VexusIndex {
         })
     }
 
-    /// 预计算任务：矩阵内生残差 (TagMemo V7)
+    /// 预计算任务：tag residual metrics。
     #[napi]
-    pub fn compute_intrinsic_residuals(
+    pub fn compute_tag_residual_metrics(
         &self,
         db_path: String,
-        max_svd_rank: Option<u32>,
+        max_rank: Option<u32>,
         min_neighbors: Option<u32>,
         model_sig: Option<String>,
         effective_config_json: Option<String>,
-    ) -> AsyncTask<IntrinsicResidualTask> {
-        AsyncTask::new(IntrinsicResidualTask {
+    ) -> AsyncTask<TagResidualMetricsTask> {
+        AsyncTask::new(TagResidualMetricsTask {
             db_path,
             dimensions: self.dimensions,
-            max_basis: max_svd_rank.unwrap_or(4),
+            max_basis: max_rank.unwrap_or(4),
             min_neighbors: min_neighbors.unwrap_or(3),
             model_sig,
             effective_config_json,
         })
     }
 
-    /// 🌟 TagMemo V8.2: 预计算 Tag 对的语义距离（成对余弦相似度）
+    /// Precompute tag-pair semantic distance (pairwise cosine similarity).
     ///
     /// - 仅对实际共现的 pair 进行计算（避免 N² 爆炸）
-    /// - 单文件 Tag 数 > 100 的脏文件跳过（与 JS / V7 守恒一致）
+    /// - 单文件 Tag 数 > 100 的脏文件跳过，保持 JS 与 native 的守恒规则一致。
     /// - 增量模式：已存在且 model_sig 一致的 pair 直接跳过
     /// - sim < min_similarity 的 pair 不写入（默认丢弃噪声）
     /// - 单模型缓存策略：full_rebuild 会清空整张 sim 表，避免旧模型签名残留
@@ -1330,14 +1216,14 @@ impl VexusIndex {
     /// - `min_similarity`: 噪声阈值，默认 0.05
     /// - `full_rebuild`: 是否清空 sim 表后重算 (默认 false 增量)
     #[napi]
-    pub fn compute_pairwise_similarities(
+    pub fn compute_tag_pair_similarities(
         &self,
         db_path: String,
         model_sig: String,
         min_similarity: Option<f64>,
         full_rebuild: Option<bool>,
-    ) -> AsyncTask<PairwiseSimTask> {
-        AsyncTask::new(PairwiseSimTask {
+    ) -> AsyncTask<TagPairSimilaritiesTask> {
+        AsyncTask::new(TagPairSimilaritiesTask {
             db_path,
             dimensions: self.dimensions,
             model_sig,
@@ -1368,9 +1254,9 @@ fn open_sqlite_readwrite(db_path: &str) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-/// 🌟 EPA: Rust 侧 K-Means + 加权 PCA 计算结果暂存。
+/// 🌟 TagBasisProjection: Rust 侧 K-Means + 加权 PCA 计算结果暂存。
 #[derive(Clone)]
-pub struct EpaPendingCache {
+pub struct TagBasisPendingCache {
     cache_json: String,
     cache_sig: String,
     db_identity: String,
@@ -1385,15 +1271,15 @@ pub struct EpaPendingCache {
     density_bucket_count: u32,
 }
 
-/// 🌟 EPA: Rust 侧 K-Means + 加权 PCA 计算任务。
+/// 🌟 TagBasisProjection: Rust 侧 K-Means + 加权 PCA 计算任务。
 ///
-/// 注意：该任务只读 SQLite 并把结果暂存在 Rust 内存，不写 kv_store；写入由 publish_epa_basis_cache 在短租约内完成。
-pub struct EpaBasisTask {
+/// 注意：该任务只读 SQLite 并把结果暂存在 Rust 内存，不写 kv_store；写入由 publish_tag_basis_projection_basis_cache 在短租约内完成。
+pub struct TagBasisTask {
     db_path: String,
     dimensions: u32,
     cluster_count: u32,
     max_basis_dim: u32,
-    pending_cache: Arc<std::sync::Mutex<Option<EpaPendingCache>>>,
+    pending_cache: Arc<std::sync::Mutex<Option<TagBasisPendingCache>>>,
 }
 
 fn stable_sha256_hex(value: &str) -> String {
@@ -1415,7 +1301,7 @@ fn json_escape(value: &str) -> String {
     value
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
-        .replace('\n', "\n")
+        .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
 }
@@ -1442,7 +1328,7 @@ fn normalize_f32_vector(vector: &mut [f32]) {
     }
 }
 
-struct EpaDensityBucket {
+struct TagBasisDensityBucket {
     count: usize,
     sum: Vec<f32>,
     best_idx: usize,
@@ -1450,7 +1336,7 @@ struct EpaDensityBucket {
     samples: Vec<(usize, f64)>,
 }
 
-struct EpaAnchorCandidate {
+struct TagBasisAnchorCandidate {
     key: u16,
     density: usize,
     centroid: Vec<f32>,
@@ -1458,7 +1344,12 @@ struct EpaAnchorCandidate {
     base_score: f64,
 }
 
-fn epa_projection_bit(vector: &[f32], mean: &[f32], bit: usize, dim: usize) -> bool {
+fn tag_basis_projection_projection_bit(
+    vector: &[f32],
+    mean: &[f32],
+    bit: usize,
+    dim: usize,
+) -> bool {
     let mut acc = 0.0f64;
     let mut state = (bit as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     for _ in 0..16 {
@@ -1476,17 +1367,17 @@ fn epa_projection_bit(vector: &[f32], mean: &[f32], bit: usize, dim: usize) -> b
     acc >= 0.0
 }
 
-fn epa_density_key(vector: &[f32], mean: &[f32], dim: usize) -> u16 {
+fn tag_basis_projection_density_key(vector: &[f32], mean: &[f32], dim: usize) -> u16 {
     let mut key = 0u16;
     for bit in 0..12 {
-        if epa_projection_bit(vector, mean, bit, dim) {
+        if tag_basis_projection_projection_bit(vector, mean, bit, dim) {
             key |= 1u16 << bit;
         }
     }
     key
 }
 
-fn epa_residual_norm(vector: &[f32], mean: &[f32], dim: usize) -> f64 {
+fn tag_basis_projection_residual_norm(vector: &[f32], mean: &[f32], dim: usize) -> f64 {
     let mut norm = 0.0f64;
     for d in 0..dim {
         let v = (vector[d] - mean[d]) as f64;
@@ -1495,7 +1386,7 @@ fn epa_residual_norm(vector: &[f32], mean: &[f32], dim: usize) -> f64 {
     norm.sqrt()
 }
 
-fn select_epa_density_residual_samples(
+fn select_tag_basis_projection_density_residual_samples(
     vectors: &[Vec<f32>],
     names: &[String],
     requested_anchors: usize,
@@ -1506,14 +1397,14 @@ fn select_epa_density_residual_samples(
     let started_at = std::time::Instant::now();
     let tag_count = vectors.len();
     let anchor_count = requested_anchors.clamp(8, 128).min(tag_count);
-    let samples_per_anchor = std::env::var("EPA_RUST_SAMPLES_PER_ANCHOR")
+    let samples_per_anchor = std::env::var("TagBasisProjection_RUST_SAMPLES_PER_ANCHOR")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(32)
         .clamp(4, 128);
 
     println!(
-        "[Vexus-Lite][EPA] density-residual sampling started: tags={}, anchors={}, samples_per_anchor={}, dim={}",
+        "[Vexus-Lite][TagBasisProjection] density-residual sampling started: tags={}, anchors={}, samples_per_anchor={}, dim={}",
         tag_count,
         anchor_count,
         samples_per_anchor,
@@ -1530,11 +1421,11 @@ fn select_epa_density_residual_samples(
         *value /= tag_count as f32;
     }
 
-    let mut buckets: HashMap<u16, EpaDensityBucket> = HashMap::new();
+    let mut buckets: HashMap<u16, TagBasisDensityBucket> = HashMap::new();
     for (idx, vector) in vectors.iter().enumerate() {
-        let key = epa_density_key(vector, &mean, dim);
-        let residual = epa_residual_norm(vector, &mean, dim);
-        let bucket = buckets.entry(key).or_insert_with(|| EpaDensityBucket {
+        let key = tag_basis_projection_density_key(vector, &mean, dim);
+        let residual = tag_basis_projection_residual_norm(vector, &mean, dim);
+        let bucket = buckets.entry(key).or_insert_with(|| TagBasisDensityBucket {
             count: 0,
             sum: vec![0.0f32; dim],
             best_idx: idx,
@@ -1573,7 +1464,7 @@ fn select_epa_density_residual_samples(
     }
 
     println!(
-        "[Vexus-Lite][EPA] density buckets built: buckets={}, elapsed={:.2}ms",
+        "[Vexus-Lite][TagBasisProjection] density buckets built: buckets={}, elapsed={:.2}ms",
         buckets.len(),
         started_at.elapsed().as_secs_f64() * 1000.0
     );
@@ -1594,7 +1485,7 @@ fn select_epa_density_residual_samples(
         let residual = bucket.best_residual.max(1e-9);
         let base_score = density.powf(0.65) * residual.powf(0.35);
 
-        candidates.push(EpaAnchorCandidate {
+        candidates.push(TagBasisAnchorCandidate {
             key: *key,
             density: bucket.count,
             centroid,
@@ -1608,7 +1499,7 @@ fn select_epa_density_residual_samples(
             .partial_cmp(&a.base_score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    let candidate_limit = std::env::var("EPA_RUST_ANCHOR_CANDIDATE_LIMIT")
+    let candidate_limit = std::env::var("TagBasisProjection_RUST_ANCHOR_CANDIDATE_LIMIT")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(512)
@@ -1633,7 +1524,7 @@ fn select_epa_density_residual_samples(
         centered_centroids.push(centered);
     }
 
-    let mut selected: Vec<EpaAnchorCandidate> = Vec::with_capacity(anchor_count);
+    let mut selected: Vec<TagBasisAnchorCandidate> = Vec::with_capacity(anchor_count);
     let mut selected_centered: Vec<Vec<f64>> = Vec::with_capacity(anchor_count);
     let mut candidate_max_sim = vec![0.0f64; candidates.len()];
 
@@ -1694,7 +1585,7 @@ fn select_epa_density_residual_samples(
     }
 
     println!(
-        "[Vexus-Lite][EPA] density-residual sampling finished: anchors={}, representative_tags={}, svd_rows={}, elapsed={:.2}ms",
+        "[Vexus-Lite][TagBasisProjection] density-residual sampling finished: anchors={}, representative_tags={}, svd_rows={}, elapsed={:.2}ms",
         selected.len(),
         representative_tag_indices.len(),
         anchor_vectors.len(),
@@ -1711,9 +1602,9 @@ fn select_epa_density_residual_samples(
     )
 }
 
-impl Task for EpaBasisTask {
-    type Output = EpaBasisResult;
-    type JsValue = EpaBasisResult;
+impl Task for TagBasisTask {
+    type Output = TagBasisResult;
+    type JsValue = TagBasisResult;
 
     fn compute(&mut self) -> Result<Self::Output> {
         use nalgebra::DMatrix;
@@ -1722,7 +1613,7 @@ impl Task for EpaBasisTask {
         let start = Instant::now();
         let dim = self.dimensions as usize;
         println!(
-            "[Vexus-Lite][EPA] compute_epa_basis started: db={}, dim={}, cluster_count={}, max_basis_dim={}",
+            "[Vexus-Lite][TagBasisProjection] computeTagBasis started: db={}, dim={}, cluster_count={}, max_basis_dim={}",
             self.db_path,
             dim,
             self.cluster_count,
@@ -1746,8 +1637,9 @@ impl Task for EpaBasisTask {
                 .map_err(|e| Error::from_reason(format!("Query tags failed: {}", e)))?;
 
             for row in rows {
-                let (name, bytes) = row
-                    .map_err(|e| Error::from_reason(format!("Decode EPA Tag row failed: {}", e)))?;
+                let (name, bytes) = row.map_err(|e| {
+                    Error::from_reason(format!("Decode TagBasisProjection Tag row failed: {}", e))
+                })?;
                 if bytes.len() != dim * 4 {
                     continue;
                 }
@@ -1762,14 +1654,14 @@ impl Task for EpaBasisTask {
         }
 
         println!(
-            "[Vexus-Lite][EPA] loaded tag vectors: count={} elapsed={:.2}ms",
+            "[Vexus-Lite][TagBasisProjection] loaded tag vectors: count={} elapsed={:.2}ms",
             tag_vectors.len(),
             start.elapsed().as_secs_f64() * 1000.0
         );
 
         let tag_count = tag_vectors.len();
         if tag_count < 8 {
-            return Ok(EpaBasisResult {
+            return Ok(TagBasisResult {
                 success: false,
                 message: "not enough tag vectors".to_string(),
                 tag_count: tag_count as u32,
@@ -1787,7 +1679,7 @@ impl Task for EpaBasisTask {
 
         let requested_anchors = std::cmp::min(tag_count, self.cluster_count as usize);
         println!(
-            "[Vexus-Lite][EPA] density-residual sampling phase started: tag_count={}, requested_anchors={}, elapsed={:.2}ms",
+            "[Vexus-Lite][TagBasisProjection] density-residual sampling phase started: tag_count={}, requested_anchors={}, elapsed={:.2}ms",
             tag_count,
             requested_anchors,
             start.elapsed().as_secs_f64() * 1000.0
@@ -1799,10 +1691,15 @@ impl Task for EpaBasisTask {
             anchor_count,
             representative_tag_count,
             density_bucket_count,
-        ) = select_epa_density_residual_samples(&tag_vectors, &tag_names, requested_anchors, dim);
+        ) = select_tag_basis_projection_density_residual_samples(
+            &tag_vectors,
+            &tag_names,
+            requested_anchors,
+            dim,
+        );
         let k_clusters = centroids.len();
         println!(
-            "[Vexus-Lite][EPA] density-residual sampling phase finished: buckets={}, anchors={}, representative_tags={}, svd_rows={}, elapsed={:.2}ms",
+            "[Vexus-Lite][TagBasisProjection] density-residual sampling phase finished: buckets={}, anchors={}, representative_tags={}, svd_rows={}, elapsed={:.2}ms",
             density_bucket_count,
             anchor_count,
             representative_tag_count,
@@ -1812,9 +1709,9 @@ impl Task for EpaBasisTask {
         let total_weight: usize = weights.iter().sum();
 
         if total_weight == 0 {
-            return Ok(EpaBasisResult {
+            return Ok(TagBasisResult {
                 success: false,
-                message: "empty EPA clusters".to_string(),
+                message: "empty TagBasisProjection clusters".to_string(),
                 tag_count: tag_count as u32,
                 cluster_count: k_clusters as u32,
                 basis_count: 0,
@@ -1848,19 +1745,19 @@ impl Task for EpaBasisTask {
         }
 
         println!(
-            "[Vexus-Lite][EPA] SVD phase started: matrix={}x{}, elapsed={:.2}ms",
+            "[Vexus-Lite][TagBasisProjection] SVD phase started: matrix={}x{}, elapsed={:.2}ms",
             k_clusters,
             dim,
             start.elapsed().as_secs_f64() * 1000.0
         );
         let matrix = DMatrix::from_row_slice(k_clusters, dim, &matrix_data);
         let svd = matrix.svd(false, true);
-        let v_t = svd
-            .v_t
-            .ok_or_else(|| Error::from_reason("EPA SVD failed to compute V^T".to_string()))?;
+        let v_t = svd.v_t.ok_or_else(|| {
+            Error::from_reason("TagBasisProjection SVD failed to compute V^T".to_string())
+        })?;
 
         println!(
-            "[Vexus-Lite][EPA] SVD phase finished: elapsed={:.2}ms",
+            "[Vexus-Lite][TagBasisProjection] SVD phase finished: elapsed={:.2}ms",
             start.elapsed().as_secs_f64() * 1000.0
         );
 
@@ -1931,7 +1828,7 @@ impl Task for EpaBasisTask {
             .unwrap_or(0);
 
         let cache_json = format!(
-            "{{\"basis\":[{}],\"mean\":\"{}\",\"energies\":[{}],\"labels\":[{}],\"timestamp\":{},\"tagCount\":{},\"epaAlgorithm\":\"density-residual-sampling\",\"anchorCount\":{},\"representativeSampleCount\":{},\"densityBucketCount\":{},\"svdRows\":{}}}",
+            "{{\"basis\":[{}],\"mean\":\"{}\",\"energies\":[{}],\"labels\":[{}],\"timestamp\":{},\"tagCount\":{},\"tag_basis_projectionAlgorithm\":\"density-residual-sampling\",\"anchorCount\":{},\"representativeSampleCount\":{},\"densityBucketCount\":{},\"svdRows\":{}}}",
             basis_json,
             f32_slice_to_base64(&mean),
             energies_json,
@@ -1948,11 +1845,13 @@ impl Task for EpaBasisTask {
         let cache_sig = stable_sha256_hex(&cache_json);
         let db_identity = sqlite_database_identity(&self.db_path);
         {
-            let mut guard = self
-                .pending_cache
-                .lock()
-                .map_err(|e| Error::from_reason(format!("EPA pending cache lock failed: {}", e)))?;
-            *guard = Some(EpaPendingCache {
+            let mut guard = self.pending_cache.lock().map_err(|e| {
+                Error::from_reason(format!(
+                    "TagBasisProjection pending cache lock failed: {}",
+                    e
+                ))
+            })?;
+            *guard = Some(TagBasisPendingCache {
                 cache_json,
                 cache_sig,
                 db_identity,
@@ -1978,14 +1877,14 @@ impl Task for EpaBasisTask {
         }
 
         println!(
-            "[Vexus-Lite][EPA] compute_epa_basis finished and cached in Rust memory: tag_count={}, clusters={}, basis={} elapsed={:.2}ms",
+            "[Vexus-Lite][TagBasisProjection] computeTagBasis finished and cached in Rust memory: tag_count={}, clusters={}, basis={} elapsed={:.2}ms",
             tag_count,
             k_clusters,
             selected_k,
             elapsed_ms
         );
 
-        Ok(EpaBasisResult {
+        Ok(TagBasisResult {
             success: true,
             message: "computed_pending_publish".to_string(),
             tag_count: tag_count as u32,
@@ -2015,7 +1914,7 @@ impl Task for EpaBasisTask {
     }
 }
 
-pub struct IntrinsicResidualTask {
+pub struct TagResidualMetricsTask {
     db_path: String,
     dimensions: u32,
     max_basis: u32,
@@ -2025,21 +1924,21 @@ pub struct IntrinsicResidualTask {
 }
 
 #[derive(Clone, Copy)]
-enum IntrinsicResidualMethod {
+enum TagResidualMethod {
     AnchoredGs,
     Centroid,
     Svd,
 }
 
 #[derive(Clone)]
-struct IntrinsicNeighbor {
+struct TagResidualNeighbor {
     id: i64,
     weight: f64,
     semantic: f64,
 }
 
-struct IntrinsicResidualConfig {
-    method: IntrinsicResidualMethod,
+struct TagResidualConfig {
+    method: TagResidualMethod,
     max_neighbors: usize,
     max_basis: usize,
     min_neighbors: usize,
@@ -2049,16 +1948,11 @@ struct IntrinsicResidualConfig {
     semantic_floor: f64,
     semantic_hard_floor: f64,
     min_gain: f64,
-    v9_anchor_base: f64,
-    v9_anchor_scale: f64,
-    v9_anchor_gamma: f64,
-    v9_anchor_min: f64,
-    v9_anchor_max: f64,
 }
 
 #[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct IntrinsicResidualConfigInput {
+struct TagResidualConfigInput {
     method: Option<String>,
     max_neighbors: Option<usize>,
     max_basis: Option<usize>,
@@ -2070,31 +1964,26 @@ struct IntrinsicResidualConfigInput {
     semantic_hard_floor: Option<f64>,
     min_gain: Option<f64>,
     position_decay: Option<f64>,
-    v9_anchor_base: Option<f64>,
-    v9_anchor_scale: Option<f64>,
-    v9_anchor_gamma: Option<f64>,
-    v9_anchor_min: Option<f64>,
-    v9_anchor_max: Option<f64>,
 }
 
-fn intrinsic_method_from_name(value: Option<&str>) -> IntrinsicResidualMethod {
+fn tag_residual_method_from_name(value: Option<&str>) -> TagResidualMethod {
     match value
         .unwrap_or("anchored_gs")
         .trim()
         .to_ascii_lowercase()
         .as_str()
     {
-        "centroid" => IntrinsicResidualMethod::Centroid,
-        "svd" => IntrinsicResidualMethod::Svd,
-        _ => IntrinsicResidualMethod::AnchoredGs,
+        "centroid" => TagResidualMethod::Centroid,
+        "svd" => TagResidualMethod::Svd,
+        _ => TagResidualMethod::AnchoredGs,
     }
 }
 
-fn intrinsic_method_name(method: IntrinsicResidualMethod) -> &'static str {
+fn tag_residual_method_name(method: TagResidualMethod) -> &'static str {
     match method {
-        IntrinsicResidualMethod::AnchoredGs => "anchored_gs",
-        IntrinsicResidualMethod::Centroid => "centroid",
-        IntrinsicResidualMethod::Svd => "svd",
+        TagResidualMethod::AnchoredGs => "anchored_gs",
+        TagResidualMethod::Centroid => "centroid",
+        TagResidualMethod::Svd => "svd",
     }
 }
 
@@ -2132,7 +2021,7 @@ fn residual_norm_from_basis(tag_vec: &[f32], basis: &[Vec<f64>], dim: usize) -> 
     residual_sq.sqrt()
 }
 
-fn semantic_gate(sim: f64, cfg: &IntrinsicResidualConfig) -> f64 {
+fn semantic_gate(sim: f64, cfg: &TagResidualConfig) -> f64 {
     if !cfg.semantic_enabled {
         return 1.0;
     }
@@ -2160,7 +2049,7 @@ fn pair_key(a: i64, b: i64) -> (i64, i64) {
 
 fn compute_centroid_residual(
     tag_vec: &[f32],
-    neighbors: &[IntrinsicNeighbor],
+    neighbors: &[TagResidualNeighbor],
     tag_vectors: &std::collections::HashMap<i64, Vec<f32>>,
     dim: usize,
 ) -> Option<f64> {
@@ -2190,15 +2079,19 @@ fn compute_centroid_residual(
     for value in &mut centroid {
         *value /= mag;
     }
-    Some(residual_norm_from_basis(tag_vec, &[centroid], dim))
+    Some(residual_norm_from_basis(
+        tag_vec,
+        std::slice::from_ref(&centroid),
+        dim,
+    ))
 }
 
 fn compute_anchored_gs_residual(
     tag_vec: &[f32],
-    neighbors: &[IntrinsicNeighbor],
+    neighbors: &[TagResidualNeighbor],
     tag_vectors: &std::collections::HashMap<i64, Vec<f32>>,
     dim: usize,
-    cfg: &IntrinsicResidualConfig,
+    cfg: &TagResidualConfig,
 ) -> Option<f64> {
     let mut basis: Vec<Vec<f64>> = Vec::with_capacity(cfg.max_basis);
     let mut residual = tag_vec
@@ -2238,8 +2131,8 @@ fn compute_anchored_gs_residual(
             }
 
             let explain_gain = dot_f64(&residual, &candidate, dim).abs();
-            let topology = (1.0 + neighbor.weight).ln().max(1e-6);
-            let score = explain_gain * orth_norm * topology * neighbor.semantic;
+            let association_weight = (1.0 + neighbor.weight).ln().max(1e-6);
+            let score = explain_gain * orth_norm * association_weight * neighbor.semantic;
 
             if score > best_score {
                 best_score = score;
@@ -2273,7 +2166,7 @@ fn compute_anchored_gs_residual(
 
 fn compute_svd_residual(
     tag_vec: &[f32],
-    neighbors: &[IntrinsicNeighbor],
+    neighbors: &[TagResidualNeighbor],
     tag_vectors: &std::collections::HashMap<i64, Vec<f32>>,
     dim: usize,
     max_k: usize,
@@ -2308,9 +2201,9 @@ fn compute_svd_residual(
     Some(residual_norm_from_basis(tag_vec, &basis, dim))
 }
 
-impl Task for IntrinsicResidualTask {
-    type Output = IntrinsicResidualResult;
-    type JsValue = IntrinsicResidualResult;
+impl Task for TagResidualMetricsTask {
+    type Output = TagResidualMetricsResult;
+    type JsValue = TagResidualMetricsResult;
 
     fn compute(&mut self) -> Result<Self::Output> {
         use std::collections::HashMap;
@@ -2318,22 +2211,21 @@ impl Task for IntrinsicResidualTask {
 
         let start = Instant::now();
         let dim = self.dimensions as usize;
-        let config_input: IntrinsicResidualConfigInput = match self.effective_config_json.as_deref()
-        {
+        let config_input: TagResidualConfigInput = match self.effective_config_json.as_deref() {
             Some(raw) => serde_json::from_str(raw).map_err(|e| {
                 Error::from_reason(format!(
-                    "Invalid intrinsic residual effective config JSON: {}",
+                    "Invalid tag residual metrics effective config JSON: {}",
                     e
                 ))
             })?,
-            None => IntrinsicResidualConfigInput::default(),
+            None => TagResidualConfigInput::default(),
         };
         let config_source = if self.effective_config_json.is_some() {
             "js_snapshot"
         } else {
-            "legacy_args_and_defaults"
+            "defaults"
         };
-        let method = intrinsic_method_from_name(config_input.method.as_deref());
+        let method = tag_residual_method_from_name(config_input.method.as_deref());
         let max_neighbors = config_input.max_neighbors.unwrap_or(48).clamp(4, 256);
         let max_basis = config_input
             .max_basis
@@ -2353,13 +2245,7 @@ impl Task for IntrinsicResidualTask {
             .clamp(-1.0, 1.0);
         let min_gain = config_input.min_gain.unwrap_or(0.015).clamp(0.0, 1.0);
         let distance_decay = config_input.position_decay.unwrap_or(0.15).clamp(0.0, 4.0);
-        let v9_anchor_base = config_input.v9_anchor_base.unwrap_or(0.75).clamp(0.0, 4.0);
-        let v9_anchor_scale = config_input.v9_anchor_scale.unwrap_or(1.25).clamp(0.0, 4.0);
-        let v9_anchor_gamma = config_input.v9_anchor_gamma.unwrap_or(1.0).clamp(0.1, 8.0);
-        let v9_anchor_min = config_input.v9_anchor_min.unwrap_or(0.5).clamp(0.0, 4.0);
-        let v9_anchor_max = config_input.v9_anchor_max.unwrap_or(2.0).clamp(0.0, 8.0);
-
-        let cfg = IntrinsicResidualConfig {
+        let cfg = TagResidualConfig {
             method,
             max_neighbors,
             max_basis,
@@ -2370,17 +2256,12 @@ impl Task for IntrinsicResidualTask {
             semantic_floor,
             semantic_hard_floor,
             min_gain,
-            v9_anchor_base,
-            v9_anchor_scale,
-            v9_anchor_gamma,
-            v9_anchor_min: v9_anchor_min.min(v9_anchor_max),
-            v9_anchor_max: v9_anchor_max.max(v9_anchor_min),
         };
-        const INTRINSIC_ALGORITHM_VERSION: &str = "intrinsic_residual_ratio_v9_1_single_track";
+        const TAG_RESIDUAL_ALGORITHM_VERSION: &str = "tag-residual-metrics-v1";
         let effective_config = format!(
-            "{{\"algorithm\":\"{}\",\"method\":\"{}\",\"dimension\":{},\"maxNeighbors\":{},\"maxBasis\":{},\"minNeighbors\":{},\"semanticEnabled\":{},\"semanticPeak\":{},\"semanticSigma\":{},\"semanticFloor\":{},\"semanticHardFloor\":{},\"minGain\":{},\"positionDecay\":{},\"v9AnchorBase\":{},\"v9AnchorScale\":{},\"v9AnchorGamma\":{},\"v9AnchorMin\":{},\"v9AnchorMax\":{}}}",
-            INTRINSIC_ALGORITHM_VERSION,
-            intrinsic_method_name(cfg.method),
+            "{{\"algorithm\":\"{}\",\"method\":\"{}\",\"dimension\":{},\"maxNeighbors\":{},\"maxBasis\":{},\"minNeighbors\":{},\"semanticEnabled\":{},\"semanticPeak\":{},\"semanticSigma\":{},\"semanticFloor\":{},\"semanticHardFloor\":{},\"minGain\":{},\"positionDecay\":{}}}",
+            TAG_RESIDUAL_ALGORITHM_VERSION,
+            tag_residual_method_name(cfg.method),
             dim,
             cfg.max_neighbors,
             cfg.max_basis,
@@ -2391,12 +2272,7 @@ impl Task for IntrinsicResidualTask {
             cfg.semantic_floor,
             cfg.semantic_hard_floor,
             cfg.min_gain,
-            distance_decay,
-            cfg.v9_anchor_base,
-            cfg.v9_anchor_scale,
-            cfg.v9_anchor_gamma,
-            cfg.v9_anchor_min,
-            cfg.v9_anchor_max
+            distance_decay
         );
         let config_hash = stable_sha256_hex(&effective_config);
 
@@ -2426,7 +2302,7 @@ impl Task for IntrinsicResidualTask {
 
             for row in rows {
                 let (id, bytes) = row.map_err(|e| {
-                    Error::from_reason(format!("Decode intrinsic Tag row failed: {}", e))
+                    Error::from_reason(format!("Decode tag residual row failed: {}", e))
                 })?;
                 {
                     use sha2::Digest;
@@ -2446,7 +2322,7 @@ impl Task for IntrinsicResidualTask {
                 }
             }
 
-            let force_recompute = std::env::var("TAGMEMO_INTRINSIC_RESIDUAL_FORCE_RECOMPUTE")
+            let force_recompute = std::env::var("MEMORIA_TAG_RESIDUAL_FORCE_RECOMPUTE")
                 .map(|value| {
                     let normalized = value.trim().to_ascii_lowercase();
                     normalized == "true" || normalized == "1" || normalized == "yes"
@@ -2454,7 +2330,7 @@ impl Task for IntrinsicResidualTask {
                 .unwrap_or(false);
 
             if force_recompute {
-                println!("[Vexus-Lite][IntrinsicResidual] force recompute enabled by TAGMEMO_INTRINSIC_RESIDUAL_FORCE_RECOMPUTE.");
+                println!("[Vexus-Lite][TagResidualMetrics] force recompute enabled by MEMORIA_TAG_RESIDUAL_FORCE_RECOMPUTE.");
             }
 
             let adjacency_started = Instant::now();
@@ -2516,7 +2392,7 @@ impl Task for IntrinsicResidualTask {
 
             for row in rows {
                 let (fid, tid, position) = row.map_err(|e| {
-                    Error::from_reason(format!("Decode intrinsic adjacency row failed: {}", e))
+                    Error::from_reason(format!("Decode tag residual adjacency row failed: {}", e))
                 })?;
                 {
                     use sha2::Digest;
@@ -2544,7 +2420,7 @@ impl Task for IntrinsicResidualTask {
             );
 
             println!(
-                "[Vexus-Lite][IntrinsicResidual] adjacency built: sources={}, edge_updates={}, skipped_files={}, elapsed={:.2}ms",
+                "[Vexus-Lite][TagResidualMetrics] adjacency built: sources={}, edge_updates={}, skipped_files={}, elapsed={:.2}ms",
                 adjacency.len(),
                 edge_updates,
                 skipped_files,
@@ -2579,13 +2455,13 @@ impl Task for IntrinsicResidualTask {
                         pairwise_similarity.insert(pair_key(a, b), sim);
                     }
                     println!(
-                        "[Vexus-Lite][IntrinsicResidual] semantic cache loaded: pairs={}, model_sig={}, elapsed={:.2}ms",
+                        "[Vexus-Lite][TagResidualMetrics] semantic cache loaded: pairs={}, model_sig={}, elapsed={:.2}ms",
                         pairwise_similarity.len(),
                         model_sig,
                         pair_started.elapsed().as_secs_f64() * 1000.0
                     );
                 } else {
-                    println!("[Vexus-Lite][IntrinsicResidual] semantic gate enabled but model_sig missing; using semantic floor.");
+                    println!("[Vexus-Lite][TagResidualMetrics] semantic gate enabled but model_sig missing; using semantic floor.");
                 }
             }
         }
@@ -2605,10 +2481,10 @@ impl Task for IntrinsicResidualTask {
         let model_sig_value = self.model_sig.as_deref().unwrap_or("missing-model-sig");
         let artifact_sig = stable_sha256_hex(&format!(
             "{}|{}|{}|{}",
-            model_sig_value, graph_generation, INTRINSIC_ALGORITHM_VERSION, config_hash
+            model_sig_value, graph_generation, TAG_RESIDUAL_ALGORITHM_VERSION, config_hash
         ));
 
-        let force_recompute = std::env::var("TAGMEMO_INTRINSIC_RESIDUAL_FORCE_RECOMPUTE")
+        let force_recompute = std::env::var("MEMORIA_TAG_RESIDUAL_FORCE_RECOMPUTE")
             .map(|value| {
                 let normalized = value.trim().to_ascii_lowercase();
                 normalized == "true" || normalized == "1" || normalized == "yes"
@@ -2620,7 +2496,7 @@ impl Task for IntrinsicResidualTask {
             })?;
             let cached_count = conn
                 .query_row(
-                    "SELECT COUNT(*) FROM tag_intrinsic_residual_status WHERE artifact_sig = ?1",
+                    "SELECT COUNT(*) FROM tag_residual_metrics WHERE artifact_sig = ?1",
                     rusqlite::params![&artifact_sig],
                     |row| row.get::<_, i64>(0),
                 )
@@ -2630,24 +2506,24 @@ impl Task for IntrinsicResidualTask {
             if cached_count >= tag_vectors.len() {
                 let elapsed = start.elapsed().as_secs_f64() * 1000.0;
                 println!(
-                    "[Vexus-Lite][IntrinsicResidual] artifact cache complete; skipping recompute: artifact={}, processed={}, tags={}, elapsed={:.2}ms",
+                    "[Vexus-Lite][TagResidualMetrics] artifact cache complete; skipping recompute: artifact={}, processed={}, tags={}, elapsed={:.2}ms",
                     artifact_sig,
                     cached_count,
                     tag_vectors.len(),
                     elapsed
                 );
-                return Ok(IntrinsicResidualResult {
+                return Ok(TagResidualMetricsResult {
                     tag_count: tag_vectors.len() as u32,
                     computed_count: 0,
                     skipped_count: tag_vectors.len() as u32,
                     elapsed_ms: elapsed,
-                    algorithm_version: INTRINSIC_ALGORITHM_VERSION.to_string(),
+                    algorithm_version: TAG_RESIDUAL_ALGORITHM_VERSION.to_string(),
                     artifact_sig,
                     effective_config,
                 });
             }
             println!(
-                "[Vexus-Lite][IntrinsicResidual] artifact cache incomplete: artifact={}, processed={}, tags={}",
+                "[Vexus-Lite][TagResidualMetrics] artifact cache incomplete: artifact={}, processed={}, tags={}",
                 artifact_sig,
                 cached_count,
                 tag_vectors.len()
@@ -2655,7 +2531,7 @@ impl Task for IntrinsicResidualTask {
         }
 
         println!(
-            "[Vexus-Lite][IntrinsicResidual] input loaded: tags={}, config_source={}, effective_config={}, artifact={}, load_elapsed={:.2}ms",
+            "[Vexus-Lite][TagResidualMetrics] input loaded: tags={}, config_source={}, effective_config={}, artifact={}, load_elapsed={:.2}ms",
             tag_vectors.len(),
             config_source,
             effective_config,
@@ -2680,7 +2556,7 @@ impl Task for IntrinsicResidualTask {
                     0.0
                 };
                 println!(
-                    "[Vexus-Lite][IntrinsicResidual] progress: processed={}, computed={}, skipped={}, avg_neighbors={:.2}, elapsed={:.2}ms",
+                    "[Vexus-Lite][TagResidualMetrics] progress: processed={}, computed={}, skipped={}, avg_neighbors={:.2}, elapsed={:.2}ms",
                     computed + skipped,
                     computed,
                     skipped,
@@ -2711,7 +2587,7 @@ impl Task for IntrinsicResidualTask {
                 if semantic <= 0.0 {
                     continue;
                 }
-                candidates.push(IntrinsicNeighbor {
+                candidates.push(TagResidualNeighbor {
                     id: nid,
                     weight,
                     semantic,
@@ -2734,13 +2610,13 @@ impl Task for IntrinsicResidualTask {
             }
 
             let residual_energy = match cfg.method {
-                IntrinsicResidualMethod::AnchoredGs => {
+                TagResidualMethod::AnchoredGs => {
                     compute_anchored_gs_residual(tag_vec, &candidates, &tag_vectors, dim, &cfg)
                 }
-                IntrinsicResidualMethod::Centroid => {
+                TagResidualMethod::Centroid => {
                     compute_centroid_residual(tag_vec, &candidates, &tag_vectors, dim)
                 }
-                IntrinsicResidualMethod::Svd => {
+                TagResidualMethod::Svd => {
                     compute_svd_residual(tag_vec, &candidates, &tag_vectors, dim, cfg.max_basis)
                 }
             };
@@ -2748,8 +2624,8 @@ impl Task for IntrinsicResidualTask {
             if let Some(value) = residual_energy {
                 total_neighbors += candidates.len();
                 // 输入已单位化且基底正交，理论范围为 [0,1]；夹逼仅吸收浮点误差。
-                let raw_residual_ratio = value.clamp(0.0, 1.0);
-                results.push((tag_id, raw_residual_ratio, candidates.len()));
+                let residual_ratio = value.clamp(0.0, 1.0);
+                results.push((tag_id, residual_ratio, candidates.len()));
                 status_results.push((tag_id, "computed", candidates.len(), None));
                 computed += 1;
             } else {
@@ -2764,7 +2640,7 @@ impl Task for IntrinsicResidualTask {
         }
 
         println!(
-            "[Vexus-Lite][IntrinsicResidual] compute phase finished: computed={}, skipped={}, avg_neighbors={:.2}, elapsed={:.2}ms",
+            "[Vexus-Lite][TagResidualMetrics] compute phase finished: computed={}, skipped={}, avg_neighbors={:.2}, elapsed={:.2}ms",
             computed,
             skipped,
             if computed > 0 { total_neighbors as f64 / computed as f64 } else { 0.0 },
@@ -2776,9 +2652,6 @@ impl Task for IntrinsicResidualTask {
             let max_r = results.iter().map(|r| r.1).fold(0.0f64, f64::max);
             let min_r = results.iter().map(|r| r.1).fold(f64::MAX, f64::min);
 
-            // V9.1 单轨：原始 residual ratio 直接进入固定、数据库无关的锚增益映射。
-            // 不再计算依赖全库分布的 V8.3 median/MAD 兼容增益，避免任一离群标签
-            // 重新标定其他节点，也避免退休资产在全量重建后被原生侧重新写回。
             let computed_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|duration| duration.as_millis() as i64)
@@ -2790,26 +2663,18 @@ impl Task for IntrinsicResidualTask {
                 .transaction()
                 .map_err(|e| Error::from_reason(format!("Transaction failed: {}", e)))?;
 
-            // 数值表保存当前健康 V9.1 artifact；residual_energy 作为 V9.1 锚增益的
-            // 通用兼容镜像。退休的 v8_3_compat_gain 列保留物理结构但写入 NULL。
-            // 状态表按 artifact 版本化保留，允许 skipped/failed 也参与完整性判断。
-            tx.execute("DELETE FROM tag_intrinsic_residuals", [])
-                .map_err(|e| Error::from_reason(format!("Residual value clear failed: {}", e)))?;
-            tx.execute(
-                "DELETE FROM tag_intrinsic_residual_status WHERE artifact_sig = ?1",
-                rusqlite::params![&artifact_sig],
-            )
-            .map_err(|e| Error::from_reason(format!("Residual status clear failed: {}", e)))?;
+            tx.execute("DELETE FROM tag_residual_metrics", [])
+                .map_err(|e| Error::from_reason(format!("Residual metrics clear failed: {}", e)))?;
 
             tx.execute(
-                "INSERT OR REPLACE INTO tagmemo_artifacts \
-                 (artifact_sig, asset_type, model_sig, graph_generation, algorithm_version, config_hash, effective_config, status, created_at, updated_at) \
-                 VALUES (?1, 'intrinsic_residual', ?2, ?3, ?4, ?5, ?6, 'ready', ?7, ?7)",
+                "INSERT OR REPLACE INTO tag_derived_artifacts \
+                 (artifact_sig, artifact_type, model_sig, graph_generation, algorithm_version, config_hash, effective_config, status, created_at, updated_at) \
+                 VALUES (?1, 'tag_residual_metrics', ?2, ?3, ?4, ?5, ?6, 'ready', ?7, ?7)",
                 rusqlite::params![
                     &artifact_sig,
                     model_sig_value,
                     &graph_generation,
-                    INTRINSIC_ALGORITHM_VERSION,
+                    TAG_RESIDUAL_ALGORITHM_VERSION,
                     &config_hash,
                     &effective_config,
                     computed_at
@@ -2818,58 +2683,42 @@ impl Task for IntrinsicResidualTask {
             .map_err(|e| Error::from_reason(format!("Residual artifact registration failed: {}", e)))?;
 
             {
-                let mut insert = tx.prepare(
-                    "INSERT INTO tag_intrinsic_residuals \
-                     (tag_id, residual_energy, neighbor_count, raw_residual_ratio, v8_3_compat_gain, v9_anchor_gain, model_sig, artifact_sig, algorithm_version, config_hash, status) \
-                     VALUES (?1, ?2, ?3, ?4, NULL, ?2, ?5, ?6, ?7, ?8, 'computed')"
-                ).map_err(|e| Error::from_reason(format!("Prepare residual value insert failed: {}", e)))?;
-
-                for (tag_id, raw_residual, n_count) in &results {
-                    // V9.1 使用数据库无关的固定单调映射；该值同时作为 residual_energy
-                    // 通用镜像，旧读取器仍能获得有效增益，但不再生成 V8.3 专属数值。
-                    let v9_anchor_gain = (cfg.v9_anchor_base
-                        + cfg.v9_anchor_scale * raw_residual.powf(cfg.v9_anchor_gamma))
-                    .clamp(cfg.v9_anchor_min, cfg.v9_anchor_max);
-                    insert
-                        .execute(rusqlite::params![
-                            tag_id,
-                            v9_anchor_gain,
-                            *n_count as i64,
-                            raw_residual,
-                            model_sig_value,
-                            &artifact_sig,
-                            INTRINSIC_ALGORITHM_VERSION,
-                            &config_hash
-                        ])
-                        .map_err(|e| {
-                            Error::from_reason(format!("Residual value insert failed: {}", e))
-                        })?;
-                }
-            }
-
-            {
-                let mut insert_status = tx
+                let mut insert_metrics = tx
                     .prepare(
-                        "INSERT OR REPLACE INTO tag_intrinsic_residual_status \
-                     (tag_id, artifact_sig, status, neighbor_count, error_message, computed_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        "INSERT OR REPLACE INTO tag_residual_metrics \
+                     (tag_id, residual_energy, neighbor_count, residual_ratio, model_sig, artifact_sig, algorithm_version, config_hash, status, computed_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     )
                     .map_err(|e| {
-                        Error::from_reason(format!("Prepare residual status insert failed: {}", e))
+                        Error::from_reason(format!("Prepare residual metrics insert failed: {}", e))
                     })?;
 
                 for (tag_id, status, neighbor_count, error_message) in &status_results {
-                    insert_status
+                    let (residual_energy, residual_ratio) = results
+                        .iter()
+                        .find(|(result_id, _, _)| result_id == tag_id)
+                        .map(|(_, value, _)| (*value, *value))
+                        .unwrap_or((0.0, 0.0));
+                    let status = if error_message.is_some() {
+                        "failed"
+                    } else {
+                        *status
+                    };
+                    insert_metrics
                         .execute(rusqlite::params![
                             tag_id,
-                            &artifact_sig,
-                            status,
+                            residual_energy,
                             *neighbor_count as i64,
-                            error_message,
-                            computed_at
+                            residual_ratio,
+                            model_sig_value,
+                            &artifact_sig,
+                            TAG_RESIDUAL_ALGORITHM_VERSION,
+                            &config_hash,
+                            status,
+                            computed_at,
                         ])
                         .map_err(|e| {
-                            Error::from_reason(format!("Residual status insert failed: {}", e))
+                            Error::from_reason(format!("Residual metrics insert failed: {}", e))
                         })?;
                 }
             }
@@ -2878,7 +2727,7 @@ impl Task for IntrinsicResidualTask {
                 .map_err(|e| Error::from_reason(format!("Commit failed: {}", e)))?;
 
             println!(
-                "[Vexus-Lite][IntrinsicResidual] V9.1 single-track write finished: values={}, statuses={}, artifact={}, raw_min={:.6}, raw_max={:.6}, elapsed={:.2}ms",
+                "[Vexus-Lite][TagResidualMetrics] canonical single-track write finished: values={}, statuses={}, artifact={}, raw_min={:.6}, raw_max={:.6}, elapsed={:.2}ms",
                 results.len(),
                 status_results.len(),
                 artifact_sig,
@@ -2890,12 +2739,12 @@ impl Task for IntrinsicResidualTask {
 
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        Ok(IntrinsicResidualResult {
+        Ok(TagResidualMetricsResult {
             tag_count,
             computed_count: computed,
             skipped_count: skipped,
             elapsed_ms: elapsed,
-            algorithm_version: INTRINSIC_ALGORITHM_VERSION.to_string(),
+            algorithm_version: TAG_RESIDUAL_ALGORITHM_VERSION.to_string(),
             artifact_sig,
             effective_config,
         })
@@ -2906,9 +2755,9 @@ impl Task for IntrinsicResidualTask {
     }
 }
 
-/// 🌟 TagMemo V8.2: PairwiseSimTask
+/// Native task for canonical tag-pair similarities.
 /// 预计算实际共现的 Tag 对的余弦相似度，并写入 tag_pair_similarity。
-pub struct PairwiseSimTask {
+pub struct TagPairSimilaritiesTask {
     db_path: String,
     dimensions: u32,
     model_sig: String,
@@ -2916,9 +2765,9 @@ pub struct PairwiseSimTask {
     full_rebuild: bool,
 }
 
-impl Task for PairwiseSimTask {
-    type Output = PairwiseSimResult;
-    type JsValue = PairwiseSimResult;
+impl Task for TagPairSimilaritiesTask {
+    type Output = TagPairSimilarityResult;
+    type JsValue = TagPairSimilarityResult;
 
     fn compute(&mut self) -> Result<Self::Output> {
         use std::collections::{HashMap, HashSet};
@@ -2926,7 +2775,7 @@ impl Task for PairwiseSimTask {
 
         let start = Instant::now();
         let dim = self.dimensions as usize;
-        const PAIRWISE_ALGORITHM_VERSION: &str = "pairwise_cosine_v9_1_single_track";
+        const PAIRWISE_ALGORITHM_VERSION: &str = "pairwise_cosine_v1";
 
         // ====================================================================
         // Step 1-3: 只读加载 Tag 向量、共现 pair 与缓存集合
@@ -2975,7 +2824,7 @@ impl Task for PairwiseSimTask {
 
             // ====================================================================
             // Step 2: 在 Rust 侧聚合 file_tags，构建实际共现的 (tag_a, tag_b) 集合
-            // 单文件 Tag 数 > 100 的脏文件跳过（与 JS/V7 守恒）
+            // 单文件 Tag 数 > 100 的脏文件跳过，保持 JS 与 native 的守恒规则一致。
             // 约定 tag_a < tag_b
             // ====================================================================
             let mut stmt = conn
@@ -3202,9 +3051,9 @@ impl Task for PairwiseSimTask {
 
             let artifact_now = now_ms;
             tx.execute(
-        "INSERT OR REPLACE INTO tagmemo_artifacts \
-         (artifact_sig, asset_type, model_sig, graph_generation, algorithm_version, config_hash, effective_config, status, created_at, updated_at) \
-         VALUES (?1, 'pairwise_similarity', ?2, ?3, ?4, ?5, ?6, 'building', ?7, ?7)",
+        "INSERT OR REPLACE INTO tag_derived_artifacts \
+         (artifact_sig, artifact_type, model_sig, graph_generation, algorithm_version, config_hash, effective_config, status, created_at, updated_at) \
+         VALUES (?1, 'tag_pair_similarity', ?2, ?3, ?4, ?5, ?6, 'building', ?7, ?7)",
         rusqlite::params![
             &artifact_sig,
             &self.model_sig,
@@ -3271,7 +3120,7 @@ impl Task for PairwiseSimTask {
             }
 
             tx.execute(
-                "UPDATE tagmemo_artifacts SET status = 'ready', updated_at = ?2 \
+                "UPDATE tag_derived_artifacts SET status = 'ready', updated_at = ?2 \
          WHERE artifact_sig = ?1",
                 rusqlite::params![&artifact_sig, artifact_now],
             )
@@ -3286,7 +3135,7 @@ impl Task for PairwiseSimTask {
 
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
-        Ok(PairwiseSimResult {
+        Ok(TagPairSimilarityResult {
             pair_count,
             computed_count: computed,
             skipped_count: skipped,
@@ -3304,7 +3153,7 @@ pub struct RecoverTask {
     index: Arc<RwLock<Index>>,
     db_path: String,
     table_type: String,
-    filter_diary_name: Option<String>,
+    filter_space: Option<String>,
     dimensions: u32,
 }
 
@@ -3320,8 +3169,8 @@ impl Task for RecoverTask {
 
         if self.table_type == "tags" {
             sql = "SELECT id, vector FROM tags WHERE vector IS NOT NULL".to_string();
-        } else if self.table_type == "chunks" && self.filter_diary_name.is_some() {
-            sql = "SELECT c.id, c.vector FROM chunks c JOIN files f ON c.file_id = f.id WHERE f.diary_name = ?1 AND c.vector IS NOT NULL".to_string();
+        } else if self.table_type == "chunks" && self.filter_space.is_some() {
+            sql = "SELECT c.id, c.vector FROM chunks c JOIN files f ON c.file_id = f.id WHERE f.space = ?1 AND c.vector IS NOT NULL".to_string();
         } else {
             return Ok(0);
         }
@@ -3372,7 +3221,7 @@ impl Task for RecoverTask {
             Ok(())
         };
 
-        if let Some(name) = &self.filter_diary_name {
+        if let Some(name) = &self.filter_space {
             let rows = stmt
                 .query_map([name], |row| {
                     Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
@@ -3490,12 +3339,12 @@ fn watcher_path_allowed(
         Ok(value) => value,
         Err(_) => return false,
     };
-    let diary_name = rel_path
+    let space = rel_path
         .components()
         .next()
         .map(|value| value.as_os_str().to_string_lossy().to_string())
         .unwrap_or_else(|| "Root".to_string());
-    if ignore_folders.contains(&diary_name) {
+    if ignore_folders.contains(&space) {
         return false;
     }
 
@@ -3505,13 +3354,13 @@ fn watcher_path_allowed(
         .unwrap_or_default();
     if ignore_prefixes
         .iter()
-        .any(|prefix| diary_name.starts_with(prefix) || file_name.starts_with(prefix))
+        .any(|prefix| space.starts_with(prefix) || file_name.starts_with(prefix))
     {
         return false;
     }
     if ignore_suffixes
         .iter()
-        .any(|suffix| diary_name.ends_with(suffix) || file_name.ends_with(suffix))
+        .any(|suffix| space.ends_with(suffix) || file_name.ends_with(suffix))
     {
         return false;
     }
@@ -3805,5 +3654,11 @@ impl VexusWatcher {
         *lock = None;
         println!("[VexusWatcher] 🦀 Native watcher stopped.");
         Ok(())
+    }
+}
+
+impl Default for VexusWatcher {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -12,8 +12,8 @@ import {
 import * as publicApi from "../../src/index.js";
 
 test("query planner is part of the public ESM API", () => {
-  assert.equal(publicApi.planRetrieval, planRetrieval);
-  assert.equal(publicApi.profileNaturalLanguageQuery, profileNaturalLanguageQuery);
+  assert.equal("planRetrieval" in publicApi, false);
+  assert.equal("profileNaturalLanguageQuery" in publicApi, false);
 });
 
 test("query profiler extracts deterministic natural-language retrieval signals", () => {
@@ -46,37 +46,37 @@ test("query profiler does not expose cross-boundary cue fragments as concepts", 
   );
 });
 
-test("automatic planner selects topology for relation and path questions", () => {
+test("automatic planner selects structural retrieval for relation and path questions", () => {
   const decision = planRetrieval("这份记忆和上次实验记录有什么关联，沿着路径展开？");
 
-  assert.equal(decision.plan.strategy, "topology");
-  assert.equal(decision.plan.topology?.enabled, true);
-  assert.equal(decision.plan.riverMemo?.rerank, true);
+  assert.equal(decision.plan.strategy, "structural");
+  assert.equal(decision.plan.structural?.enabled, true);
+  assert.equal(decision.plan.structural?.propagationStructure, true);
   assert.equal(decision.plan.expansion?.related, true);
   assert.ok(decision.reason.length > 0);
-  assert.equal(decision.decision.strategy, "topology");
-  assert.ok(decision.decision.scores.topology > decision.decision.scores.semantic);
+  assert.equal(decision.decision.strategy, "structural");
+  assert.ok(decision.decision.scores.structural > decision.decision.scores.semantic);
   assert.ok(decision.decision.reasons.some((reason) => reason.includes("relation")));
 });
 
-test("automatic planner selects TagMemo+ for tag and concept questions", () => {
+test("automatic planner selects associative retrieval for tag and concept questions", () => {
   const decision = planRetrieval("找出和咖啡、生活记录这些主题最相关的记忆");
 
-  assert.equal(decision.plan.strategy, "field");
-  assert.equal(decision.plan.field?.enabled, true);
-  assert.equal(decision.plan.tagMemo?.plus, true);
-  assert.equal(decision.plan.topology?.enabled, false);
-  assert.equal(decision.decision.strategy, "field");
-  assert.ok(decision.decision.scores.field > decision.decision.scores.semantic);
+  assert.equal(decision.plan.strategy, "associative");
+  assert.equal(decision.plan.associative?.enabled, true);
+  assert.equal(decision.plan.associative?.propagationSupport, true);
+  assert.equal(decision.plan.structural?.enabled, false);
+  assert.equal(decision.decision.strategy, "associative");
+  assert.ok(decision.decision.scores.associative > decision.decision.scores.semantic);
 });
 
 test("explicit plan wins over natural-language auto selection", () => {
   const decision = planRetrieval("这两份记忆有什么关联？", {
-    plan: { strategy: "semantic", topology: { enabled: false } },
+    plan: { strategy: "semantic", structural: { enabled: false } },
   });
 
   assert.equal(decision.plan.strategy, "semantic");
-  assert.equal(decision.plan.topology?.enabled, false);
+  assert.equal(decision.plan.structural?.enabled, false);
   assert.equal(decision.explicit, true);
 });
 
@@ -91,26 +91,26 @@ test("async query interpreter can add intent without query syntax", async () => 
     },
   });
 
-  assert.equal(decision.plan.strategy, "topology");
+  assert.equal(decision.plan.strategy, "structural");
   assert.ok(decision.profile.relationHints.includes("causal"));
   assert.equal(decision.profile.confidence, 0.91);
 });
 
 test("graph readiness reports durable relation counts and native artifact gates", async () => {
   const ready = await readGraphReadiness({
-    config: { dbPath: "C:/data/memory.sqlite", tagIndexName: "global_tags" },
+    config: { dbPath: "C:/data/memory.sqlite", tagVectorIndexName: "tag_vectors" },
     metadataStore: {
       listRelations: async () => [{ origin: "source" }, { origin: "derived" }],
     } as never,
-    vexusIndex: {
-      rebuildMemoArtifact: async () => ({ artifactSig: "sig" }),
+    tagRetrievalRuntime: {
+      rebuildTagGraphArtifact: async () => ({ artifactSig: "sig" }),
     },
   });
 
   assert.equal(ready.explicitLinks, 1);
   assert.equal(ready.activeInferredLinks, 1);
   assert.equal(ready.candidatePathCount, 1);
-  assert.equal(ready.topologyArtifactReady, true);
+  assert.equal(ready.tagGraphArtifactReady, true);
   assert.equal(ready.permissionScopeReady, true);
 });
 
@@ -128,7 +128,7 @@ test("graph readiness failure does not take down ordinary planning", async () =>
     explicitLinks: 0,
     activeInferredLinks: 0,
     candidatePathCount: 0,
-    topologyArtifactReady: true,
+    tagGraphArtifactReady: true,
     permissionScopeReady: true,
   });
 });

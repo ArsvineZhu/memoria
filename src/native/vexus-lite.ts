@@ -72,18 +72,16 @@ export function getVexusIndex(): VexusNativeModule["VexusIndex"] {
 export type VexusIndex = InstanceType<VexusNativeModule["VexusIndex"]>;
 
 export type {
-  DualWeightedProjectionResult,
-  EpaBasisResult,
-  HandshakeResult,
-  IntrinsicResidualResult,
-  MemoFusionResult,
-  MemoRuntimeStats,
-  NativeMemoArtifactBuildResult,
-  OrthogonalProjectionResult,
-  PairwiseSimResult,
-  ProjectResult,
+  DiffusionDistributionResult,
+  TagBasisResult,
+  TagBasisProjectionResult,
+  ResidualDirectionsResult,
+  TagContextFusionResult,
+  TagResidualMetricsResult,
+  TagPairSimilarityResult,
+  TagRetrievalRuntimeStats,
+  TagRetrievalArtifactBuildResult,
   SearchResult,
-  SvdResult,
   VexusStats,
   WatcherConfig,
 } from "../../rust-vexus-lite/index.js";

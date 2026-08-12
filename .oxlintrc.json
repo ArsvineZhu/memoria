@@ -6,7 +6,7 @@
     "**/node_modules/**",
     "rust-vexus-lite/**",
     "VectorStoreTDB/**",
-    "examples/demo/demo-data/**"
+    "tutorials/*/data/runtime/**"
   ],
   "options": {
     "typeAware": true

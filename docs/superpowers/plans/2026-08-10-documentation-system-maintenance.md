@@ -14,7 +14,7 @@
 ## Global Constraints
 
 - `eval/` is out of scope: add it to `.gitignore`, do not edit it, and do not link it from maintained documentation.
-- Treat `package.json`, `src/`, tests, examples, `.github/workflows/ci.yml`, and `rust-vexus-lite/` metadata as implementation authorities.
+- Treat `package.json`, `src/`, tests, tutorials, `.github/workflows/ci.yml`, and `rust-vexus-lite/` metadata as implementation authorities.
 - Preserve unrelated existing worktree changes; only the existing untracked `eval/` is intentionally hidden by the ignore rule.
 - Do not change production behavior; source-comment edits must clarify existing behavior only.
 - Use `corepack pnpm` for root commands and exact paths that exist in the current tree.
@@ -67,7 +67,7 @@
 
 - [x] Document the verified runtime floors (`node` engine and pnpm package manager), frozen install, build/typecheck/lint/test gates, and native subproject commands.
 - [x] Derive the configuration table from `src/config/default-config.ts` and `src/types.ts`, covering `dataPath`, derived main/TDB paths, provider settings, pipeline gates, retrieval/post-processing knobs, and TDB settings without inventing environment variables.
-- [x] Document the actual `.env` consumers and the fact that live DashScope tests and the real-embedding example use different `.env` locations if the source confirms that distinction.
+- [x] Document the actual `.env` consumers and the fact that the live OpenAI-compatible test and provider-selection tutorial use their respective `.env` locations if the source confirms that distinction.
 - [x] Document extension points using actual exports/interfaces (`EmbeddingProviderContract`, `MetadataStoreContract`, `VectorStoreContract`, stages, and filesystem adapter).
 - [x] Add a contributor workflow that ends with `corepack pnpm format:check`, `corepack pnpm lint`, `corepack pnpm typecheck`, `corepack pnpm test`, and `git diff --check`.
 
@@ -92,10 +92,10 @@
 - [x] Replace duplicated or stale repository-tree prose with links to `INDEX.md` and the canonical data README.
 - [x] Verify every README command, import path, output path, and example filename against the current package scripts, source, and example tree.
 - [x] Rewrite the navigation table by audience/task and include the new indexes, contribution guide, configuration, testing, development, and agent instructions.
-- [x] Remove repeated full configuration tables from `GUIDE.md`, retaining setup, minimal ingest/search/delete/stat examples and links to canonical references.
-- [x] Reconcile API and functions prose with the actual root exports, subpath exports, engine methods, envelope names, TDB behavior, and compatibility adapter.
+- [x] Remove repeated full configuration tables from `GUIDE.md`, retaining setup, minimal ingest/search/delete/stat snippets and links to canonical references.
+- [x] Reconcile API and functions prose with the actual root exports, subpath exports, engine methods, envelope names, TDB behavior, and formal adapter entry points.
 
-### Task 4: Reconcile architecture, data, algorithms, operations, and examples
+### Task 4: Reconcile architecture, data, algorithms, operations, and tutorials
 
 **Files:**
 
@@ -106,9 +106,8 @@
 - Modify: `docs/TROUBLESHOOTING.md`
 - Modify: `docs/NATIVE-MATRIX.md`
 - Modify: `docs/RELEASE-CHECKLIST.md`
-- Modify: `data/README.md`
-- Modify: `examples/demo/README.md`
-- Modify: `examples/real-embed/README.md`
+- Modify: tutorial-owned data documentation under `tutorials/`
+- Modify: tutorial READMEs under `tutorials/`
 - Modify: `rust-vexus-lite/AGENTS.md`
 - Modify: selected stale source comments under `src/` and `rust-vexus-lite/`
 - Modify: `CHANGELOG.md`
@@ -124,7 +123,7 @@
   package metadata.
 
 - [x] Remove stale path names, historical phase labels, unsupported platform claims, and references to absent files after checking each against source/config/tests.
-- [x] Consolidate MDX/data-path ownership and backup/ignore policy around `data/README.md`.
+- [x] Consolidate MDX/data-path ownership and backup/ignore policy around the example READMEs.
 - [x] Make troubleshooting entries symptom-first, link to canonical configuration/persistence/testing guidance, and label live-key requirements precisely.
 - [x] Make the native matrix and release checklist state what is verified from the current tree/CI versus what requires a platform-specific manual build.
 - [x] Update example READMEs for exact build/run locations, required files, and expected no-key behavior.
@@ -146,7 +145,7 @@
 - It fails on missing relative Markdown targets and reports file/line/target.
 - `package.json` exposes `verify:docs` without changing production scripts.
 
-- [x] Define the maintained-file roots explicitly (`README.md`, `INDEX.md`, `CONTRIBUTING.md`, `AGENTS.md`, `docs/`, `data/README.md`, example READMEs, and the nested native AGENT file).
+- [x] Define the maintained-file roots explicitly (`README.md`, `INDEX.md`, `CONTRIBUTING.md`, `AGENTS.md`, `docs/`, example READMEs, and the nested native AGENT file).
 - [x] Write and run the verifier against the current docs.
 - [x] Implement only relative-target and fragment-safe path checking; ignore external URLs, mail links, code blocks, and `eval/`.
 - [x] Add the command to the development/contribution documentation and run it after all prose changes.
@@ -160,7 +159,7 @@
 - [x] Run `corepack pnpm verify:docs` and inspect all reported targets.
 - [x] Run `corepack pnpm format:check`, `corepack pnpm lint`, `corepack pnpm typecheck`, `corepack pnpm build`, `corepack pnpm typecheck:public`, `corepack pnpm test`, `corepack pnpm verify:public`, `corepack pnpm verify:pack`, and `git diff --check`.
 - [x] Confirm `eval/` is ignored, unchanged, absent from maintained indexes, and still present on disk without deletion.
-- [x] Re-scan all maintained docs for stale paths, duplicate commands, project-local `SKILL.md` claims, old `KnowledgeBaseManager.js` references, and unsupported phase/count assertions.
+- [x] Re-scan all maintained docs for stale paths, duplicate commands, project-local `SKILL.md` claims, historical implementation references, and unsupported phase/count assertions.
 - [x] Review `git diff --stat`, `git diff --name-status`, and final status; preserve unrelated changes and report any platform/live-key checks that could not be proven locally.
 
 `corepack pnpm format:check` was executed and still reports the repository's

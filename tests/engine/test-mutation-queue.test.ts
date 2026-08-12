@@ -23,7 +23,7 @@ function ingestResult(input: PipelineData): PipelineData {
     ...input,
     path: input.path ?? "logical/document",
     relPath: input.relPath ?? input.path ?? "logical/document",
-    diaryName: input.diaryName ?? "Logical",
+    space: input.space ?? "Logical",
     content: input.content ?? "",
     checksum: "queue-test",
     mtime: 0,
@@ -479,7 +479,7 @@ test("logical upsert and path-only delete serialize after the authority row exis
   }
 });
 
-test("logical upsert and path delete cannot interleave into a ghost vector", async () => {
+test("logical upsert and path delete cannot interleave into a stale vector", async () => {
   const engine = makeEngine();
   await engine.initialize();
   await engine.ingest({

@@ -39,7 +39,7 @@ class FileReaderStage extends Stage {
       PipelineData,
       | "path"
       | "relPath"
-      | "diaryName"
+      | "space"
       | "content"
       | "checksum"
       | "mtime"
@@ -52,7 +52,7 @@ class FileReaderStage extends Stage {
     > & {
       path: string;
       relPath: string;
-      diaryName: string;
+      space: string;
       content: string;
       checksum: string;
       mtime: number;
@@ -111,9 +111,9 @@ class FileReaderStage extends Stage {
     const relPath = relPathRaw.split(path.sep).join("/");
     const format = resolveDocumentFormat(input.format, relPath);
     const parts = relPath.split("/");
-    const diaryName =
+    const space =
       typeof input.documentId === "string"
-        ? input.diaryName || "Logical"
+        ? input.space || "Logical"
         : parts.length > 1
           ? (parts[0] ?? "Root")
           : "Root";
@@ -154,9 +154,9 @@ class FileReaderStage extends Stage {
         const metadataJson = serializeDocumentJson(documentMetadata, "metadata");
         const documentId = input.documentId ?? null;
         const revision = input.revision ?? null;
-        needsEmbedding = row.checksum !== checksum || row.diary_name !== diaryName;
+        needsEmbedding = row.checksum !== checksum || row.space !== space;
         needsMetadataWrite =
-          row.diary_name !== diaryName ||
+          row.space !== space ||
           row.checksum !== checksum ||
           row.mtime !== mtime ||
           row.size !== size ||
@@ -172,7 +172,7 @@ class FileReaderStage extends Stage {
       path: filePath,
       relPath,
       format,
-      diaryName,
+      space,
       content,
       sourceContent,
       checksum,

@@ -52,10 +52,10 @@ function parseNativeSearchResults(value: unknown): NativeSearchResult[] {
 interface VexusStoreConfig {
   dimension?: number;
   storePath?: string;
-  tagIndexCapacity?: number;
+  tagVectorIndexCapacity?: number;
   indexSaveDelay?: number;
-  tagIndexSaveDelay?: number;
-  persistTagIndex?: boolean;
+  tagVectorIndexSaveDelay?: number;
+  persistTagVectorIndex?: boolean;
   indexLoadEnabled?: boolean;
 }
 
@@ -63,7 +63,7 @@ interface VexusStoreConfig {
  * Vector store backed by the Rust N-API VexusIndex (usearch).
  *
  * Manages named indices in an in-memory Map, with optional delayed
- * persistence to disk.  Ported from modules/knowledgeBase/indexRepository.js
+ * persistence to disk. The implementation is owned by the Memoria vector store.
  * with all SQLite recovery / coordinator logic stripped out.
  */
 class VexusVectorStore extends VectorStore {
@@ -71,8 +71,8 @@ class VexusVectorStore extends VectorStore {
   storePath: string;
   defaultCapacity: number;
   indexSaveDelay: number;
-  tagIndexSaveDelay: number;
-  persistTagIndex: boolean;
+  tagVectorIndexSaveDelay: number;
+  persistTagVectorIndex: boolean;
   indexLoadEnabled: boolean;
   indices: Map<string, VexusIndex>;
   saveTimers: Map<string, NodeJS.Timeout>;
@@ -80,20 +80,20 @@ class VexusVectorStore extends VectorStore {
    * @param {object} config
    * @param {number} config.dimension          - Vector dimension
    * @param {string} [config.storePath]        - Directory for persisted indices
-   * @param {number} [config.tagIndexCapacity] - Default capacity for new indices (default 50000)
+   * @param {number} [config.tagVectorIndexCapacity] - Default capacity for new indices (default 50000)
    * @param {number} [config.indexSaveDelay]   - Delay in ms for scheduleIndexSave (default 5000)
-   * @param {number} [config.tagIndexSaveDelay]- Delay in ms for tag index saves (default 10000)
-   * @param {boolean} [config.persistTagIndex] - Whether to persist the tag index
+   * @param {number} [config.tagVectorIndexSaveDelay]- Delay in ms for tag index saves (default 10000)
+   * @param {boolean} [config.persistTagVectorIndex] - Whether to persist the tag index
    */
   constructor(config: VexusStoreConfig = {}) {
     super();
     this.dimension = config.dimension ?? 3072;
     assertDimension(this.dimension, "Vexus vector dimension");
     this.storePath = config.storePath ?? ".";
-    this.defaultCapacity = config.tagIndexCapacity ?? 50000;
+    this.defaultCapacity = config.tagVectorIndexCapacity ?? 50000;
     this.indexSaveDelay = config.indexSaveDelay ?? 5000;
-    this.tagIndexSaveDelay = config.tagIndexSaveDelay ?? 10000;
-    this.persistTagIndex = config.persistTagIndex ?? false;
+    this.tagVectorIndexSaveDelay = config.tagVectorIndexSaveDelay ?? 10000;
+    this.persistTagVectorIndex = config.persistTagVectorIndex ?? false;
     this.indexLoadEnabled = config.indexLoadEnabled !== false;
 
     /** @type {Map<string, VexusIndex>} */
@@ -120,7 +120,7 @@ class VexusVectorStore extends VectorStore {
     let index = null;
     if (
       this.indexLoadEnabled &&
-      (this.persistTagIndex || indexName !== "global_tags") &&
+      (this.persistTagVectorIndex || indexName !== "tag_vectors") &&
       this._indexFileExists(indexName)
     ) {
       try {
@@ -198,10 +198,10 @@ class VexusVectorStore extends VectorStore {
    * @param {string} indexName
    */
   scheduleIndexSave(indexName: string): void {
-    if (!this.persistTagIndex && indexName === "global_tags") return;
+    if (!this.persistTagVectorIndex && indexName === "tag_vectors") return;
     if (this.saveTimers.has(indexName)) return;
     const delay =
-      indexName === "global_tags" ? this.tagIndexSaveDelay : this.indexSaveDelay;
+      indexName === "tag_vectors" ? this.tagVectorIndexSaveDelay : this.indexSaveDelay;
     const timer = setTimeout(() => {
       this.saveTimers.delete(indexName);
       const index = this.indices.get(indexName);
@@ -347,7 +347,7 @@ class VexusVectorStore extends VectorStore {
   }
 
   async saveIndex(indexName: string, filePath?: string): Promise<void> {
-    if (!this.persistTagIndex && indexName === "global_tags") return;
+    if (!this.persistTagVectorIndex && indexName === "tag_vectors") return;
     const index = this.indices.get(indexName);
     if (!index) return;
     const resolvedPath = filePath || this._getIndexPath(indexName);
@@ -360,11 +360,11 @@ class VexusVectorStore extends VectorStore {
     const VexusIndex = getVexusIndex();
     const requestedNames = [...indexNames];
     const nonPersistedTagRequested =
-      !this.persistTagIndex && requestedNames.includes("global_tags");
-    if (!this.persistTagIndex) this._invalidatePersistedIndex("global_tags");
+      !this.persistTagVectorIndex && requestedNames.includes("tag_vectors");
+    if (!this.persistTagVectorIndex) this._invalidatePersistedIndex("tag_vectors");
     if (!this.indexLoadEnabled) return false;
     const namesToLoad = nonPersistedTagRequested
-      ? requestedNames.filter((name) => name !== "global_tags")
+      ? requestedNames.filter((name) => name !== "tag_vectors")
       : requestedNames;
     const loadedIndexes = new Map<string, VexusIndex>();
     for (const indexName of namesToLoad) {
@@ -450,14 +450,14 @@ class VexusVectorStore extends VectorStore {
    */
   flushPendingSaves(): void {
     for (const [name, timer] of this.saveTimers) {
-      if (!this.persistTagIndex && name === "global_tags") {
+      if (!this.persistTagVectorIndex && name === "tag_vectors") {
         clearTimeout(timer);
         this.saveTimers.delete(name);
       }
     }
     const toFlush = new Set(
       [...this.saveTimers.keys(), ...this.indices.keys()].filter(
-        (name) => this.persistTagIndex || name !== "global_tags",
+        (name) => this.persistTagVectorIndex || name !== "tag_vectors",
       ),
     );
     let firstError: unknown = null;

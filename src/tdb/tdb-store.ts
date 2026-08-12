@@ -117,6 +117,7 @@ class TDBStore implements TdbStoreContract {
   dbPath: string;
   busyTimeout: number;
   _closed: boolean;
+  /** @internal */
   db: BetterSqlite3.Database;
   /**
    * @param {object} config
@@ -582,7 +583,7 @@ class TDBStore implements TdbStoreContract {
    * gated-over/blob name for the generic VectorSearcherStage.
    * @returns {Promise<string[]>}
    */
-  async getDistinctDiaryNames() {
+  async getDistinctSpaces() {
     return this.listLibraries();
   }
 

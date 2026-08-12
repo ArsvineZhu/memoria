@@ -28,7 +28,7 @@ usearch = "2.8"
 # 哈希Map优化
 hashbrown = "0.14"
 
-# RiverMemo Topology V3 候选级并行计算
+# Canonical propagation-structure candidate-level parallel computation
 rayon = "1.10"
 
 # 线性代数 (用于 SVD)

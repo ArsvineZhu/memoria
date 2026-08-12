@@ -16,7 +16,7 @@ function makeContext(): PipelineContextLike {
       {
         id: 1,
         path: "life/coffee.mdx",
-        diary_name: "life",
+        space: "life",
         checksum: "a",
         mtime: 1_725_000_000,
         size: 1,
@@ -29,7 +29,7 @@ function makeContext(): PipelineContextLike {
       {
         id: 2,
         path: "life/old.mdx",
-        diary_name: "life",
+        space: "life",
         checksum: "b",
         mtime: 1_600_000_000,
         size: 1,
@@ -90,7 +90,7 @@ test("SQLite retrieval scope resolves with one joined authority query", async ()
   await store.replaceDocumentState({
     file: {
       path: "research/active.mdx",
-      diaryName: "research",
+      space: "research",
       checksum: "a",
       mtime: 1_725_000_000_000,
       size: 1,
@@ -104,7 +104,7 @@ test("SQLite retrieval scope resolves with one joined authority query", async ()
   await store.replaceDocumentState({
     file: {
       path: "private/secret.mdx",
-      diaryName: "private",
+      space: "private",
       checksum: "b",
       mtime: 1_725_000_000_000,
       size: 1,
@@ -145,7 +145,7 @@ test("SQLite retrieval scope includes document and path aliases for relation exp
   const a = await store.replaceDocumentState({
     file: {
       path: "research/a.mdx",
-      diaryName: "research",
+      space: "research",
       checksum: "a",
       mtime: 1,
       size: 1,
@@ -158,7 +158,7 @@ test("SQLite retrieval scope includes document and path aliases for relation exp
   const b = await store.replaceDocumentState({
     file: {
       path: "research/b.mdx",
-      diaryName: "research",
+      space: "research",
       checksum: "b",
       mtime: 1,
       size: 1,

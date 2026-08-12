@@ -47,4 +47,29 @@ test("VexusIndex can be instantiated with dimension and capacity", () => {
   assert.ok(index, "VexusIndex instance should be created");
   assert.ok(typeof index.add === "function", "add() should exist");
   assert.ok(typeof index.search === "function", "search() should exist");
+
+  const canonicalAbi = [
+    "rebuildTagGraphArtifact",
+    "runTagRetrievalPipeline",
+    "runActivationPropagation",
+    "rerankByPropagationSupport",
+    "rerankByPropagationStructure",
+    "clearTagRetrievalRuntime",
+    "tagRetrievalRuntimeStats",
+    "computeTagBasis",
+    "publishTagBasisCache",
+    "computeTagResidualMetrics",
+    "computeTagPairSimilarities",
+    "projectTagBasis",
+    "computeResidualDirections",
+    "projectDiffusionDistributions",
+    "fuseTagContext",
+  ] as const;
+  for (const method of canonicalAbi) {
+    assert.equal(
+      typeof (index as Record<string, unknown>)[method],
+      "function",
+      `${method}() should exist`,
+    );
+  }
 });

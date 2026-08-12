@@ -2,46 +2,31 @@
 
 ## Unreleased
 
-- 重建文档入口与维护边界：新增面向普通用户、高级用户和 AI Agent 的分层导航，
-  统一命令、路径、配置说明，并将 `eval/` 明确为 Git 忽略且不维护的目录。
-- 完成最终可靠性 remediation：partial embedding 不再提交，metadata-only 更新不重嵌入，
-  SQLite document replacement/TDB replacement 原子化；主引擎与 TDB 均增加 active-operation
-  drain、显式生命周期、失败恢复与结构化错误边界。
-- 统一 vector/BM25/hydration 的显式 scope；无 scope 时检索全部 authority index/library，
-  `Root` 仅作为 scope discovery 不可用时的兼容回退；`TimeDecayStage` 是唯一衰减执行者。
-- TDB `chunks.vector` 支持幂等迁移与 legacy backfill；dirty 状态、generation、clean reopen
-  restore 与失败重建均有本地回归覆盖；packed consumer 增加 CJS/ESM、metadata-only、TDB
-  close/reopen 与 deterministic semantic search 验证。
-- 修复 generation clean reopen 的 persisted Vexus index 注册、`indexLoadEnabled=false`
-  回退，以及全量 SQLite rebuild 前的 derived-state reset，避免 stale diary index
-  复活 ghost vectors；packed consumer 现在覆盖 close → reopen → vector recall。
-- 收紧 search 主链的 MetadataStore persistence error boundary：查询失败现在抛出带
-  `cause`、`retryable=true` 的 `MemoriaError("persistence")`，不再静默返回空结果或
-  跳过 candidate；同时修复 absolute/relative file mutation key 的 canonicalization。
-- 保持新增 MetadataStore capabilities optional，修复 legacy `file_id` fallback、
-  skipped ingest 的 clean-state 保留，以及 SQLite close failure 的传播与重试语义。
-- 同步 ARCHITECTURE/PERSISTENCE 文档，说明 constructor/deferred provider、generation
-  fast path、`replaceDocumentState()` 原子写入和 close/flush failure lifecycle 规则。
-- 完成原生 TypeScript 迁移：Node 24.18.1 / pnpm 11.20.0 / TypeScript 7.0.2、ES2024
-  NodeNext、ESM-first `src/index.ts` → `dist/`，并保留历史 `require('memoria')` facade。
-- 增加无 filesystem 依赖的 logical `ingest` / `upsert` / `ingestBatch` / `remove` API，
-  以及独立 `memoria/adapters/filesystem` 文件系统 adapter。
-- SQLite 文件元数据与内容 BLOB 作为权威状态，增加 revision/source/metadata 字段、
-  启动 reconciliation、向量索引重建和结构化 `MemoriaError`。
-- 增加数值边界校验、严格类型检查、ESM consumer、packed consumer 与双平台原生 smoke
-  覆盖，README 与维护文档统一为 TypeScript/ESM/pnpm 示例。
+- 完成 canonical naming hard reset：根运行时只保留
+  `createMemoryEngine`、`MemoryEngine`、`QueryBuilder`、`TDBEngine`、`TDBStore` 和
+  `TriviumDBAdapter`，ESM/CJS 与 public declarations 保持 exact parity。
+- 固定 `auto`、`semantic`、`associative`、`structural` 四种 retrieval strategy，收紧
+  `RetrievalPlan`、`QueryBuilder`、config 和 public type boundaries。
+- 将 basis、residual、activation propagation、graph diffusion、propagation history、
+  support rerank 和 structure rerank 统一到 canonical stage/layout；
+  `Activation Propagation → Graph Diffusion` 成为连续阶段。
+- 固定 SQLite table/column contract、`user_version = 1`、`files.space`、`tag_vectors`
+  和 canonical payload schemas。非空不匹配数据库只抛 persistence error，要求新建库；
+  不执行 migration、自动删除或双写。
+- 固定 Rust/N-API tag-retrieval ABI，重新生成 loader、declarations 和当前平台 binary；
+  未构建的平台 binary 必须在发布验收中单独标记未验证。
+- 删除旧 adapter、旧配置 loader、旧 retrieval naming 和旧 native forwarding path；
+  filesystem adapter 与 TDB 正式 subpath 保留。
+- 发布前必须重新创建 SQLite、vector indexes、tag association graph artifacts 和 propagation history；
+  本次变更不包含 publish、release、tag 或远端分支删除。
 
 ## 0.1.0 (2026-08-08)
 
-首个独立发布，能力继承 vcp-memory 全部积累：
+首个独立发布：
 
-- MemoryEngine 全生命周期：config merge / pipeline 初始化 / provider 注入 / 读写删
-- 检索管线覆盖 ingestion、embedding、chunking、candidate、retrieval、postprocessing、storage
-- 混合检索（向量 + BM25）、语义去重（exact/semantic）、Gram-Schmidt 向量正交化
-- 记忆综合体：TagMemory 浪潮算法、RiverMemory 拓扑（scaled-field solver / 河流可见性）、
-  EPA 语义分析（逻辑深度/主轴/共振）、残差金字塔
-- 标签体系：自动提取、加权 PCA / SVD 聚类、标签索引
-- TDB 冷知识库（TriviumDB）：独立搜索管线、TDBStore、adapter
-- 持久化：SQLite 元数据 + Rust N-API 向量索引，双写盘 + 懒加载恢复
-- 嵌入 Provider：OpenAI 兼容、DashScope 原生（qwen3.7-text-embedding，document/query 双模式）、测试伪嵌入
-- Rust N-API 向量引擎（rust-vexus-lite）：6 平台预编译二进制内置
+- MemoryEngine 生命周期、logical document ingestion、文件 snapshot ingestion、搜索、
+  删除和结构化 MemoriaError；
+- vector + BM25 hybrid retrieval、tag basis/residual analysis、tag association graph retrieval、
+  relation expansion、dedupe、time decay 和 external rerank；
+- TDB library：`TDBEngine`、`TDBStore`、`TriviumDBAdapter` 与独立数据目录；
+- SQLite metadata authority、Rust N-API vector indexes、embedding providers 和恢复检查。

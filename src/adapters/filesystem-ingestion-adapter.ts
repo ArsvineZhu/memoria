@@ -56,8 +56,8 @@ export interface FilesystemIngestionAdapterOptions {
 
 /**
  * Filesystem source adapter. It owns filesystem reads and chokidar lifecycle;
- * the engine only receives complete content snapshots through its compatibility
- * `flushBatch` contract.
+ * the engine only receives complete content snapshots through its file-ingestion
+ * contract.
  */
 class FilesystemIngestionAdapter {
   readonly rootPath: string;

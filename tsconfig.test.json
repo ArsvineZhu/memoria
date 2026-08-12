@@ -7,6 +7,6 @@
     "sourceMap": true,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["src/**/*.ts", "src/**/*.cts", "tests/**/*.ts", "examples/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.cts", "tests/**/*.ts", "tutorials/**/*.ts"],
   "exclude": ["tests/types/**/*.d.ts"]
 }

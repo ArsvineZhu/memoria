@@ -28,7 +28,7 @@ function engineParts() {
     dimension: DIMENSION,
     storePath: path.join(root, "vectors"),
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   return { root, metadataStore, vectorStore };
 }
@@ -360,6 +360,7 @@ test("TDBEngine rejects incomplete embedding batches before SQLite replacement",
   assert.deepEqual(await metadataStore.getChunks("facts", "partial.md"), before);
   assert.deepEqual(await metadataStore.getTdbGenerationState(), generation);
   await engine.close();
+  assert.equal(vectorStore.saveTimers.size, 0);
   metadataStore.close();
 });
 
@@ -548,7 +549,7 @@ test("TDBEngine clean reopen restores persisted indexes without rebuilding", asy
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const provider = embeddingProvider(async (texts = []) =>
     texts.map(() => new Float32Array([1, 0, 0, 0])),
@@ -576,7 +577,7 @@ test("TDBEngine clean reopen restores persisted indexes without rebuilding", asy
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   let replaceCalls = 0;
   const replace = secondVector.replaceIndex.bind(secondVector);
@@ -612,7 +613,7 @@ test("TDBEngine recovery removes obsolete persisted library indexes", async () =
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   const provider = embeddingProvider(async (texts = []) =>
     texts.map(() => new Float32Array([1, 0, 0, 0])),
@@ -645,7 +646,7 @@ test("TDBEngine recovery removes obsolete persisted library indexes", async () =
     dimension: DIMENSION,
     storePath,
     indexSaveDelay: 60_000,
-    tagIndexSaveDelay: 60_000,
+    tagVectorIndexSaveDelay: 60_000,
   });
   let replaceCalls = 0;
   const replace = secondVector.replaceIndex.bind(secondVector);

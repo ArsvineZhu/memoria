@@ -8,7 +8,7 @@ const DIMENSION = 4;
 interface Replacement {
   file: {
     path: string;
-    diaryName: string;
+    space: string;
     checksum: string;
     mtime: number;
     size: number;
@@ -57,7 +57,7 @@ function makeStore(): AtomicStore {
 async function seedStore(store: SqliteMetadataStore): Promise<number> {
   const fileId = await store.upsertFile({
     path: "Logical/atomic.md",
-    diaryName: "Logical",
+    space: "Logical",
     checksum: "old-checksum",
     mtime: 1,
     size: 11,
@@ -76,9 +76,9 @@ async function seedStore(store: SqliteMetadataStore): Promise<number> {
     { name: "legacy", vector: makeBuffer([0, 0, 1, 0]) },
   ]);
   await store.setFileTags(fileId, tagIds);
-  await store.setKv?.("memoria.metadata_generation", "7");
-  await store.setKv?.("memoria.vector_generation", "7");
-  await store.setKv?.("memoria.vector_dirty", "0");
+  await store.setKv?.("metadata_generation", "7");
+  await store.setKv?.("vector_generation", "7");
+  await store.setKv?.("vector_dirty", "0");
   return fileId;
 }
 
@@ -86,7 +86,7 @@ function replacement(): Replacement {
   return {
     file: {
       path: "Logical/atomic.md",
-      diaryName: "Logical",
+      space: "Logical",
       checksum: "new-checksum",
       mtime: 2,
       size: 12,
@@ -108,7 +108,7 @@ function preserveReplacement(): Replacement {
   return {
     file: {
       path: "Logical/atomic.md",
-      diaryName: "Logical",
+      space: "Logical",
       checksum: "old-checksum",
       mtime: 2,
       size: 11,
@@ -131,9 +131,9 @@ async function snapshot(store: SqliteMetadataStore, fileId: number) {
     chunks: await store.getChunksByFileId(fileId),
     tags: await store.getAllTags(),
     fileTags: await store.getFileTags(fileId),
-    metadataGeneration: await store.getKv?.("memoria.metadata_generation"),
-    vectorGeneration: await store.getKv?.("memoria.vector_generation"),
-    vectorDirty: await store.getKv?.("memoria.vector_dirty"),
+    metadataGeneration: await store.getKv?.("metadata_generation"),
+    vectorGeneration: await store.getKv?.("vector_generation"),
+    vectorDirty: await store.getKv?.("vector_dirty"),
   };
 }
 
@@ -156,9 +156,9 @@ test("replaceDocumentState atomically replaces file, chunks, tags, and file_tags
     (await store.getFileTags(fileId)).map((tag) => tag.name),
     ["beta", "alpha"],
   );
-  assert.deepStrictEqual(await store.getKv?.("memoria.metadata_generation"), "8");
-  assert.deepStrictEqual(await store.getKv?.("memoria.vector_generation"), "7");
-  assert.deepStrictEqual(await store.getKv?.("memoria.vector_dirty"), "1");
+  assert.deepStrictEqual(await store.getKv?.("metadata_generation"), "8");
+  assert.deepStrictEqual(await store.getKv?.("vector_generation"), "7");
+  assert.deepStrictEqual(await store.getKv?.("vector_dirty"), "1");
 
   const alpha = await store.getTagByName("alpha");
   assert.ok(alpha?.vector);
@@ -175,25 +175,25 @@ test("replaceDocumentState preserves chunks and clean vector generation when req
 
   assert.deepEqual(result.removedChunkIds, []);
   assert.deepEqual(await store.getChunksByFileId(fileId), beforeChunks);
-  assert.equal(await store.getKv?.("memoria.metadata_generation"), "8");
-  assert.equal(await store.getKv?.("memoria.vector_generation"), "8");
-  assert.equal(await store.getKv?.("memoria.vector_dirty"), "0");
+  assert.equal(await store.getKv?.("metadata_generation"), "8");
+  assert.equal(await store.getKv?.("vector_generation"), "8");
+  assert.equal(await store.getKv?.("vector_dirty"), "0");
   store.close();
 });
 
 test("metadata-only replacement keeps an existing dirty vector state dirty", async () => {
   const store = makeStore();
   const fileId = await seedStore(store);
-  await store.setKv?.("memoria.metadata_generation", "7");
-  await store.setKv?.("memoria.vector_generation", "6");
-  await store.setKv?.("memoria.vector_dirty", "1");
+  await store.setKv?.("metadata_generation", "7");
+  await store.setKv?.("vector_generation", "6");
+  await store.setKv?.("vector_dirty", "1");
 
   const result = await store.replaceDocumentState(preserveReplacement());
 
   assert.equal(result.fileId, fileId);
-  assert.equal(await store.getKv?.("memoria.metadata_generation"), "8");
-  assert.equal(await store.getKv?.("memoria.vector_generation"), "6");
-  assert.equal(await store.getKv?.("memoria.vector_dirty"), "1");
+  assert.equal(await store.getKv?.("metadata_generation"), "8");
+  assert.equal(await store.getKv?.("vector_generation"), "6");
+  assert.equal(await store.getKv?.("vector_dirty"), "1");
   store.close();
 });
 
@@ -306,7 +306,7 @@ test("deleteDocumentAuthority rolls back relation stale and document delete toge
     chunks: await store.getChunksByFileId(fileId),
     fileTags: await store.getFileTags(fileId),
     relations: await store.listRelations({ includeInactive: true }),
-    metadataGeneration: await store.getKv?.("memoria.metadata_generation"),
+    metadataGeneration: await store.getKv?.("metadata_generation"),
     relationGeneration: await store.getRelationGeneration(),
   };
   store.db.exec(
@@ -328,7 +328,7 @@ test("deleteDocumentAuthority rolls back relation stale and document delete toge
         chunks: await store.getChunksByFileId(fileId),
         fileTags: await store.getFileTags(fileId),
         relations: await store.listRelations({ includeInactive: true }),
-        metadataGeneration: await store.getKv?.("memoria.metadata_generation"),
+        metadataGeneration: await store.getKv?.("metadata_generation"),
         relationGeneration: await store.getRelationGeneration(),
       },
       before,

@@ -9,14 +9,13 @@ export type EmbeddingVector = VectorLike;
 export type UnknownRecord = Record<string, unknown>;
 
 export interface SourcePriority {
-  rag?: number;
+  semantic?: number;
   time?: number;
-  bm25_body?: number;
-  bm25_tag?: number;
+  bm25Body?: number;
+  bm25Tag?: number;
   continuity?: number;
   associate?: number;
   unknown?: number;
-  [source: string]: number | undefined;
 }
 
 export type QueryRephraser = (query: string, index: number) => string | Promise<string>;
@@ -43,11 +42,10 @@ export interface MemoryConfig {
   maxToken: number;
   concurrency: number;
   dimension: number;
-  tagIndexCapacity: number;
+  tagVectorIndexCapacity: number;
   indexSaveDelay: number;
-  tagIndexSaveDelay: number;
-  persistTagIndex: boolean;
-  indexLoadEnabled?: boolean;
+  tagVectorIndexSaveDelay: number;
+  persistTagVectorIndex: boolean;
   busyTimeout: number;
   busyRetryDelay: number;
   chunkMaxTokens: number;
@@ -61,21 +59,17 @@ export interface MemoryConfig {
   relationGraphEnabled: boolean;
   checkpoint: boolean | { enabled?: boolean; interval?: number };
   checkpointInterval: number;
-  epaProjectionEnabled: boolean;
-  residualPyramidEnabled: boolean;
-  tagMemoV9Enabled: boolean;
-  tagMemoV10Enabled: boolean;
-  riverMemoEnabled: boolean;
-  topologyV3Enabled: boolean;
-  nativeMemoEnabled: boolean;
+  tagBasisProjectionEnabled: boolean;
+  tagResidualDecompositionEnabled: boolean;
+  tagGraphPropagationEnabled: boolean;
+  propagationSupportRerankEnabled: boolean;
+  propagationStructureRerankEnabled: boolean;
+  propagationHistoryEnabled: boolean;
+  embeddingRerankEnabled: boolean;
+  nativeTagRetrievalEnabled: boolean;
   tagExpansionEnabled: boolean;
-  vectorReshapeEnabled: boolean;
-  geodesicRerankEnabled: boolean;
-  geodesicAlpha: number;
-  geodesicMinGeoSamples: number;
   associatorEnabled: boolean;
   externalRerankEnabled: boolean;
-  useLLMRerank: boolean;
   timeDecayEnabled: boolean;
   truncateEnabled: boolean;
   truncateMinScore?: number;
@@ -90,12 +84,10 @@ export interface MemoryConfig {
   indexNames: string[] | null;
   searchAllIndices: boolean;
   tagSearchEnabled: boolean;
-  tagIndexName: string;
-  tagK: number;
+  tagVectorIndexName: string;
+  tagVectorTopK: number;
   queryExpansion: number;
   queryEpsilon: number | null;
-  epsilon: number | null;
-  rephraserFn: QueryRephraser | null;
   queryRephraserFn: QueryRephraser | null;
   stopWords: string[];
   tokenizer: Tokenizer | null;
@@ -105,8 +97,6 @@ export interface MemoryConfig {
   minScore: number;
   vectorWeight: number;
   bm25Weight: number;
-  hybridAlpha: number;
-  hybridBeta: number;
   dedupeEnabled: boolean;
   dedupeSemantic: boolean;
   semanticThreshold: number;
@@ -114,7 +104,6 @@ export interface MemoryConfig {
   minSemanticCandidates: number;
   maxResults: number;
   sourcePriority: SourcePriority;
-  reranker: ExternalReranker | null;
   externalRerankMode: "ordered" | "rrf";
   externalRerankAlpha: number;
   timeDecayHalfLife: number;
@@ -130,42 +119,38 @@ export interface MemoryConfig {
   associatorVecK: number;
   associatorVecBoost: number;
   associatorUseVector: boolean;
-  epaClusterCount: number;
-  epaMaxBasisDim: number;
-  epaPerCandidateAnalysis: boolean;
+  tagBasisClusterCount: number;
+  tagBasisMaxDimensions: number;
+  tagBasisPerCandidateAnalysis: boolean;
   strictOrthogonalization: boolean;
-  pyramidMaxLevels: number;
-  pyramidTopK: number;
-  pyramidMinEnergyRatio: number;
-  minEnergyRatio: number;
-  maxLevels: number;
-  maxSafeHops: number;
-  baseMomentum: number;
-  momentum: number;
-  firingThreshold: number;
-  baseDecay: number;
-  wormholeDecay: number;
-  tensionThreshold: number;
+  residualMaxSteps: number;
+  residualTagTopK: number;
+  residualStopEnergyRatio: number;
+  propagationMaxHops: number;
+  routingBudget: number;
+  activationThreshold: number;
+  standardEdgePropagationFactor: number;
+  shortcutEdgePropagationFactor: number;
+  shortcutEdgeThreshold: number;
+  shortcutEdgeGain: number;
+  shortcutEdgeReserveMass: number;
   maxNeighborsPerNode: number;
-  branchLimit: number;
-  returnFlowFactor: number;
-  firGamma: number;
+  returnActivationFactor: number;
+  hopReadoutGamma: number;
   maxPropagationStates: number;
-  stateLimit: number;
-  pruneAbove: number;
-  localAlpha: number;
-  transferAlpha: number;
-  localMaxIterations: number;
-  transferMaxIterations: number;
-  solverMaxIterations: number;
-  solverTolerance: number;
-  supportMethod: string;
-  localMassRatio: number;
-  transferMassRatio: number;
-  pruneByEnergy: boolean;
-  minFieldEnergy: number;
-  riverDecay: number;
-  riverTopologyCap: number;
+  minimumInjectedActivation: number;
+  localDiffusionAlpha: number;
+  extendedDiffusionAlpha: number;
+  diffusionMaxIterations: number;
+  localDiffusionTolerance: number;
+  extendedDiffusionTolerance: number;
+  supportSelectionMethod: string;
+  localSupportMassRatio: number;
+  extendedSupportMassRatio: number;
+  historyUpdateScale: number;
+  historyRerankCap: number;
+  supportRerankAlpha: number;
+  supportRerankMinSamples: number;
   tdbEnabled: boolean;
   tdbRootPath: string;
   tdbStorePath: string;
@@ -182,44 +167,36 @@ export interface MemoryConfig {
   tdbMinScore: number;
   tdbExpandDepth: number;
   tdbTimeDecayEnabled: boolean;
-
-  // Compatibility knobs consumed by older adapters and persisted configs.
-  finalSemanticThreshold?: number;
-  tagExpansionBoost?: number;
-  tagExpansionTopK?: number;
-  v91FirGamma?: number;
-  v91ReturnFlowFactor?: number;
-  env?: UnknownRecord;
-  textType?: string;
-  timeoutMs?: number;
-  tdbForceMode?: string;
-  /** @deprecated Compatibility escape hatch; the concrete native type is internal. */
-  vexusIndex?: unknown;
-  [key: string]: unknown;
+  retrievalPlan?: RetrievalPlan;
+  retrievalFilters?: RetrievalPlan["filters"];
 }
 
-export type MemoryConfigOverrides = Partial<MemoryConfig> & UnknownRecord;
+export type MemoryConfigOverrides = Partial<MemoryConfig>;
 
 export interface MemoryEngineOptions {
   config?: MemoryConfigOverrides;
   /** Fixed per-engine retrieval defaults; normalized at construction time. */
   defaultRetrievalPlan?: RetrievalPlanInput;
   dbPath?: string;
-  ragParamsPath?: string;
-  ragParams?: UnknownRecord;
   embeddingProvider?: EmbeddingProviderContract;
   vectorStore?: VectorStoreContract;
   metadataStore?: MetadataStoreContract;
-  ctx?: PipelineContextOptions;
-  ingestOptions?: UnknownRecord;
-  deleteOptions?: UnknownRecord;
-  searchOptions?: UnknownRecord;
-  onReady?: (engine: unknown) => void | Promise<void>;
+  /** Optional model reranker injected into the external rerank stage. */
+  reranker?: ExternalReranker;
+  searchOptions?: SearchOptions;
+  onReady?: (engine: MemoryEngineOptions) => void | Promise<void>;
 }
 
-export interface SearchOptions extends UnknownRecord {
+export interface SearchOptions {
   retrievalPlan?: RetrievalPlanInput;
   inheritRetrievalDefaults?: boolean;
+  topK?: number;
+  indexNames?: string[];
+  spaces?: string[];
+  retrievalFilters?: RetrievalPlan["filters"];
+  queryExpansion?: number;
+  queryEpsilon?: number | null;
+  externalRerank?: boolean;
 }
 
 export type MemoryDocumentFormat = "text" | "markdown" | "mdx";
@@ -267,7 +244,7 @@ export interface FileInput {
   revision?: string;
   documentSource?: MemoryDocumentSource;
   documentMetadata?: UnknownRecord;
-  diaryName?: string;
+  space?: string;
 }
 
 export interface FileSnapshot extends Omit<
@@ -276,7 +253,7 @@ export interface FileSnapshot extends Omit<
   | "revision"
   | "documentSource"
   | "documentMetadata"
-  | "diaryName"
+  | "space"
   | "sourceContent"
   | "format"
 > {
@@ -286,7 +263,7 @@ export interface FileSnapshot extends Omit<
   sourceContent?: string;
   mtime: number;
   size: number;
-  diaryName: string;
+  space: string;
   checksum: string;
   needsEmbedding: boolean;
   needsChunkEmbedding?: boolean;
@@ -322,7 +299,6 @@ export interface VectorResult {
   indexName?: string;
   chunkId?: number | null;
   source?: string | null;
-  [key: string]: unknown;
 }
 
 export type IndexedVectorResult = Omit<VectorResult, "chunkId" | "indexName"> & {
@@ -337,17 +313,24 @@ export interface SearchResult extends VectorResult {
   path?: string;
   sourceFile?: string;
   relPath?: string;
-  diaryName?: string;
+  space?: string;
+  similarity?: number;
+  updatedAt?: number | null;
+  mtime?: number | null;
   fileId?: number | null;
   chunkIndex?: number | null;
   payload?: UnknownRecord;
   tags?: string[];
+  matchedTags?: string[];
+  checksum?: string;
   documentId?: string;
   revision?: string;
   sourceMetadata?: MemoryDocumentSource;
   metadata?: UnknownRecord;
   associationChannel?: "tag" | "vector";
   associationOf?: number;
+  tagMatchScore?: number;
+  decay?: number;
   rerankScore?: number;
 }
 
@@ -362,10 +345,15 @@ export interface ChunkCandidate {
   vectorScore?: number;
   bm25Score?: number;
   decay?: number;
-  embeddingSim?: number;
-  topologyBonus?: number;
-  topologyRaw?: number;
-  topologyReliability?: number;
+  embeddingSimilarity?: number;
+  supportScore?: number;
+  supportBonus?: number;
+  structureScore?: number;
+  structureBonus?: number;
+  structureReliability?: number;
+  propagationScore?: number;
+  propagationBonus?: number;
+  propagationReliability?: number;
   domainHits?: number[];
   [key: string]: unknown;
 }
@@ -373,7 +361,7 @@ export interface ChunkCandidate {
 export interface SearchEnvelope {
   query?: string;
   tokens?: string[];
-  options?: SearchOptions;
+  options?: SearchOptions | TdbSearchOptions;
   queries?: QueryVector[];
   queryVector?: EmbeddingVector;
   vectorResults?: VectorResult[];
@@ -381,30 +369,39 @@ export interface SearchEnvelope {
   candidates?: SearchResult[];
   results: SearchResult[];
   resultCount: number;
-  tagMemo?: TagMemoData;
-  geodesic?: GeodesicData;
-  geodesicSkipped?: boolean;
+  tagBasisProjection?: TagBasisProjectionData;
+  tagResidualDecomposition?: TagResidualDecompositionData;
+  tagGraphPropagation?: TagGraphPropagationData;
+  propagationSupport?: PropagationSupportData;
+  propagationStructure?: PropagationStructureData;
+  propagationHistory?: PropagationHistoryData;
   associatorStats?: AssociatorStats;
   associatorSkipped?: boolean;
-  pyramid?: PyramidData;
-  epa?: EpaEnvelope;
   tagExpansion?: TagExpansionData;
-  vectorReshape?: VectorReshapeData;
-  riverMemo?: RiverMemoData;
+  embeddingRerank?: EmbeddingRerankData;
+  tagBasisProjectionSkipped?: boolean;
+  tagResidualDecompositionSkipped?: boolean;
+  tagGraphPropagationSkipped?: boolean;
+  graphDiffusionSkipped?: boolean;
+  propagationStructureSkipped?: boolean;
+  tagExpansionSkipped?: boolean;
+  embeddingRerankSkipped?: boolean;
+  propagationSupportSkipped?: boolean;
+  tagRetrievalSkipped?: boolean;
+  tagRetrievalSkipReason?: string;
   dedupeStats?: DedupeStats;
   truncationStats?: TruncationStats;
   expansionStats?: ExpansionStats;
   reranked?: boolean;
   rerankSkipped?: boolean;
   rerankFailure?: "provider_error";
-  /** Compatibility field; runtime values are stable safe error codes. */
   rerankError?: string;
-  nativeMemoFailure?:
+  tagRetrievalFailure?:
     "artifact_build_failed" | "backend_unavailable" | "invalid_result";
-  topologyV3Failure?:
-    "native_backend_failed" | "artifact_unavailable" | "invalid_result";
-  nativeGeodesicFailure?:
+  propagationSupportFailure?:
     "backend_unavailable" | "artifact_unavailable" | "invalid_result";
+  propagationStructureFailure?:
+    "native_backend_failed" | "artifact_unavailable" | "invalid_result";
   defaultRetrievalPlan?: RetrievalPlan;
   requestedRetrievalPlan?: RetrievalPlanInput;
   retrievalDecision?: {
@@ -432,90 +429,6 @@ export interface SearchEnvelope {
     fallbacks: string[];
   };
   failed?: boolean;
-  [key: string]: unknown;
-}
-
-export interface RiverGraph {
-  nodes: UnknownRecord[];
-  edges: UnknownRecord[];
-  diagnostics: UnknownRecord;
-  [key: string]: unknown;
-}
-
-export interface RiverStateStore {
-  getKv(key: string): Promise<string | UnknownRecord | null>;
-  setKv(key: string, value: string): Promise<void>;
-}
-
-export interface RiverObservabilityResult extends UnknownRecord {
-  omega: number;
-  regime: string;
-}
-
-export interface EpaQueryAnalysis {
-  logicDepth: number;
-  entropy: number;
-  dominantAxes: EpaDominantAxis[];
-  resonance: {
-    resonance: number;
-    bridges: UnknownRecord[];
-    [key: string]: unknown;
-  };
-}
-
-export interface EpaEnvelope {
-  ready: boolean;
-  queryAnalysis: EpaQueryAnalysis;
-  candidateAnalyses: UnknownRecord[];
-}
-
-export interface PyramidFeatures {
-  depth: number;
-  coverage: number;
-  novelty: number;
-  coherence: number;
-  tagMemoActivation: number;
-  expansionSignal?: number;
-}
-
-export interface PyramidTag {
-  id: number;
-  name?: string | null;
-  contribution?: number;
-  isCore?: boolean;
-}
-
-export interface PyramidLevel {
-  tags: PyramidTag[];
-}
-
-export interface PyramidData {
-  levels: PyramidLevel[];
-  totalExplainedEnergy?: number;
-  finalResidual?: Vector | null;
-  features?: PyramidFeatures;
-}
-
-export interface TagMemoData extends UnknownRecord {
-  version?: string;
-  activations?: Map<number, number>;
-  ranked?: UnknownRecord[];
-  sourceField?: ReadonlyArray<readonly [number, number]>;
-  localField?: ReadonlyArray<readonly [number, number]>;
-  transferField?: ReadonlyArray<readonly [number, number]>;
-  riverGraph?: RiverGraph;
-  pruneThreshold?: number;
-  prunedFieldEntries?: number;
-  pruneSkipped?: boolean;
-  solverDiagnostics?: UnknownRecord & {
-    iterations?: number;
-    prunedNodeCount?: number;
-    converged?: boolean;
-  };
-  iterations?: number;
-  localDomain?: { ids: readonly number[]; [key: string]: unknown };
-  transferDomain?: { ids: readonly number[]; [key: string]: unknown };
-  rankedTags?: unknown[];
 }
 
 export interface TagExpansionData {
@@ -523,29 +436,167 @@ export interface TagExpansionData {
   boosted: number[];
 }
 
-export interface VectorReshapeData {
-  enabled: boolean;
-  traced: { checked: number; matched: number; skipped: number };
+export interface TagBasisDominantAxis {
+  index: number;
+  label?: string;
+  energy: number;
+  projection: number;
 }
 
-export interface GeodesicData {
-  version: "ts-v1" | "rust-dtsc-v1";
-  alpha: number;
-  minGeoSamples: number;
-  appliedCount: number;
-  degradedCount: number;
-  native?: boolean;
+export interface TagBasisQueryAnalysis {
+  projectionConcentration: number;
+  entropy: number;
+  dominantAxes: TagBasisDominantAxis[];
+  axisCoactivation: {
+    axisCoactivation: number;
+    coactiveAxisPairs: UnknownRecord[];
+    [key: string]: unknown;
+  };
+}
+
+export interface TagBasisProjectionEnvelope {
+  ready: boolean;
+  queryAnalysis: TagBasisQueryAnalysis;
+  candidateAnalyses: UnknownRecord[];
+}
+
+export interface TagBasisProjectionData extends TagBasisProjectionEnvelope {}
+
+export interface TagResidualDecompositionFeatures {
+  depth: number;
+  coverage: number;
+  novelty: number;
+  coherence: number;
+  propagationReadiness: number;
+  expansionSignal?: number;
+}
+
+export interface TagResidualDecompositionTag {
+  id: number;
+  name?: string | null;
+  contribution?: number;
+  isCore?: boolean;
+}
+
+export interface TagResidualDecompositionLevel {
+  level?: number;
+  tags: TagResidualDecompositionTag[];
+  projectionMagnitude?: number;
+  residualMagnitude?: number;
+  residualEnergyRatio?: number;
+  energyExplained?: number;
+  residualDirectionFeatures?: {
+    directionCoherence?: number;
+    meanPairwiseDirectionSimilarity?: number;
+    noveltySignal?: number;
+    directionDispersionHeuristic?: number;
+  } | null;
+}
+
+export interface TagResidualDecompositionData {
+  levels: TagResidualDecompositionLevel[];
+  totalExplainedEnergy?: number;
+  finalResidual?: Vector | null;
+  features?: TagResidualDecompositionFeatures;
+}
+
+export interface PropagationTrace extends UnknownRecord {
+  nodes?: UnknownRecord[];
+  edges?: UnknownRecord[];
+  diagnostics?: UnknownRecord;
+  [key: string]: unknown;
+}
+
+export interface TagGraphPropagationData extends UnknownRecord {
   schema?: string;
   algorithmVersion?: string;
+  activations?: Map<number, number>;
+  ranked?: UnknownRecord[];
+  rankedActivations?: readonly unknown[];
+  seedDistribution?: ReadonlyArray<readonly [number, number]>;
+  localDistribution?: ReadonlyArray<readonly [number, number]>;
+  extendedDistribution?: ReadonlyArray<readonly [number, number]>;
+  propagationTrace?: PropagationTrace;
+  pruneThreshold?: number;
+  prunedDistributionEntries?: number;
+  pruneSkipped?: boolean;
+  solverDiagnostics?: UnknownRecord & {
+    iterations?: number;
+    prunedNodeCount?: number;
+    converged?: boolean;
+  };
+  diffusionDiagnostics?: UnknownRecord;
+  iterations?: number;
+  localSupport?: { ids: readonly number[]; [key: string]: unknown };
+  extendedSupport?: { ids: readonly number[]; [key: string]: unknown };
+  rankedTags?: unknown[];
+}
+
+export interface PropagationHistoryStore {
+  getKv(key: string): Promise<string | UnknownRecord | null>;
+  setKv(key: string, value: string): Promise<void>;
+}
+
+export interface PropagationHistoryData {
+  sequence: number;
+  edgeTotals: ReadonlyMap<string, number> | ReadonlyArray<readonly [string, number]>;
+  spreadClass: string;
+  spreadScore: number;
+  historySupport: number;
+  nodeTotals?: Record<string, number>;
+  activeEdges?: number;
+  tickFlowMass?: number;
+  schema?: string;
+}
+
+export interface PropagationSupportData extends UnknownRecord {
+  schema?: string;
+  alpha?: number;
+  minSupportSamples?: number;
+  appliedCount?: number;
+  degradedCount?: number;
+  native?: boolean;
+  algorithmVersion?: string;
   diagnostics?: UnknownRecord;
-  scores: Array<{
+  supportScore?: number;
+  supportBonus?: number;
+  scores?: Array<{
     chunkId: number;
     originalScore: number;
-    geoScore: number;
-    normalizedGeoScore: number;
+    supportScore: number;
+    normalizedSupportScore: number;
     finalScore: number;
     hitCount: number;
   }>;
+}
+
+export interface PropagationStructureData extends UnknownRecord {
+  spreadClass?: string;
+  spreadScore?: number;
+  historySupport?: number;
+  structureScore?: number;
+  structureBonus?: number;
+  structureReliability?: number;
+  nodeCount?: number;
+  edgeCount?: number;
+  nodeTotals?: Record<string, number>;
+  rerankedCount?: number;
+  activeEdges?: number;
+  [key: string]: unknown;
+}
+
+export interface PropagationSpreadResult extends UnknownRecord {
+  spreadScore: number;
+  spreadClass: string;
+  activeEdges: number;
+  reachedNodes: number;
+}
+
+export interface EmbeddingRerankData {
+  enabled?: boolean;
+  traced?: { checked: number; matched: number; skipped: number };
+  appliedCount?: number;
+  degradedCount?: number;
 }
 
 export interface AssociatorStats {
@@ -572,19 +623,6 @@ export interface ExpansionStats {
   added: number;
   documentsExpanded?: number;
   mode?: "chunks" | "full-document";
-}
-
-export interface RiverMemoData extends UnknownRecord {
-  regime?: string;
-  omega?: number;
-  entropy?: number;
-  nodeCount?: number;
-  edgeCount?: number;
-  nodeTotals?: Record<string, number>;
-  rerankedCount?: number;
-  tickFlowMass?: number;
-  activeEdges?: number;
-  [key: string]: unknown;
 }
 
 export interface IngestEnvelope extends FileSnapshot {
@@ -625,7 +663,7 @@ export interface PipelineData extends UnknownRecord {
   sourceContent?: string;
   mtime?: number;
   size?: number;
-  diaryName?: string;
+  space?: string;
   checksum?: string;
   needsEmbedding?: boolean;
   needsChunkEmbedding?: boolean;
@@ -640,7 +678,7 @@ export interface PipelineData extends UnknownRecord {
   documentSource?: MemoryDocumentSource;
   documentMetadata?: UnknownRecord;
   tags?: string[];
-  /** Explicit query-time core tags for native Memo compatibility callers. */
+  /** Explicit query-time core tags for the native tag-retrieval backend. */
   coreTags?: string[];
   chunks?: string[];
   chunkEntries?: ChunkEntry[];
@@ -654,9 +692,9 @@ export interface PipelineData extends UnknownRecord {
   relationSourceKey?: string;
   relationSourceRevision?: string;
   query?: string;
-  options?: SearchOptions;
+  options?: SearchOptions | TdbSearchOptions;
   retrievalPlan?: RetrievalPlan;
-  diaryNames?: string[];
+  spaces?: string[];
   indexNames?: string[];
   libraries?: string[];
   resolvedIndexNames?: string[];
@@ -674,26 +712,28 @@ export interface PipelineData extends UnknownRecord {
   results?: SearchResult[];
   resultCount?: number;
   failed?: boolean;
-  pyramid?: PyramidData;
-  epa?: EpaEnvelope;
-  tagMemo?: TagMemoData;
-  geodesic?: GeodesicData;
-  geodesicSkipped?: boolean;
+  tagResidualDecomposition?: TagResidualDecompositionData;
+  tagBasisProjection?: TagBasisProjectionEnvelope;
+  tagGraphPropagation?: TagGraphPropagationData;
+  propagationSupport?: PropagationSupportData;
+  propagationSupportSkipped?: boolean;
+  propagationHistory?: PropagationHistoryData;
+  propagationHistorySkipped?: boolean;
   associatorStats?: AssociatorStats;
   associatorSkipped?: boolean;
-  riverGraph?: RiverGraph;
+  propagationTrace?: PropagationTrace;
   vector?: EmbeddingVector;
   tagExpansion?: TagExpansionData;
-  vectorReshape?: VectorReshapeData;
-  riverMemo?: RiverMemoData;
+  embeddingRerank?: EmbeddingRerankData;
+  propagationStructure?: PropagationStructureData;
   dedupeStats?: DedupeStats;
   truncationStats?: TruncationStats;
   expansionStats?: ExpansionStats;
-  nativeMemoFailure?:
+  tagRetrievalFailure?:
     "artifact_build_failed" | "backend_unavailable" | "invalid_result";
-  topologyV3Failure?:
+  nativeTagRetrievalFailure?:
     "native_backend_failed" | "artifact_unavailable" | "invalid_result";
-  nativeGeodesicFailure?:
+  nativePropagationSupportFailure?:
     "backend_unavailable" | "artifact_unavailable" | "invalid_result";
 }
 
@@ -776,8 +816,7 @@ export interface ReconciliationReport {
 export interface FileRow {
   id: number;
   path: string;
-  diary_name: string;
-  diaryName?: string;
+  space: string;
   checksum: string;
   mtime: number;
   size: number;
@@ -892,7 +931,7 @@ export interface RelationStoreContract {
 
 export interface FileMetadataInput {
   path: string;
-  diaryName: string;
+  space: string;
   checksum: string;
   mtime: number;
   size: number;
@@ -916,7 +955,7 @@ export interface TagMetadataInput {
 export interface DocumentStateReplacement {
   file: {
     path: string;
-    diaryName: string;
+    space: string;
     checksum: string;
     mtime: number;
     size: number;
@@ -975,26 +1014,24 @@ export interface HealthStatus {
 
 export interface MetadataStoreContract extends RelationStoreContract {
   dimension?: number | null;
-  /** Exposed for compatibility diagnostics used by the legacy tests/callers. */
-  _closed?: boolean;
   upsertFile(fileMeta: FileMetadataInput): Promise<number | null>;
   updateDocumentMetadata?(input: FileMetadataInput): Promise<{
     fileId: number;
     changed: boolean;
   }>;
-  countFiles?(): Promise<number>;
+  countFiles(): Promise<number>;
   getAllFiles?(): Promise<FileRow[]>;
   getLastIndexedAt?(): Promise<number | null>;
   getFileByPath(path: string): Promise<FileRow | null>;
   getFileByDocumentId?(documentId: string): Promise<FileRow | null>;
-  getDistinctDiaryNames(): Promise<string[]>;
+  getDistinctSpaces(): Promise<string[]>;
   getFileByChunkId(chunkId: number): Promise<FileRow | null>;
   deleteFile(fileId: number): Promise<void>;
   insertChunks(
     fileId: number,
     chunks: readonly ChunkMetadataInput[],
   ): Promise<number[]>;
-  replaceDocumentState?(
+  replaceDocumentState(
     replacement: DocumentStateReplacement,
   ): Promise<DocumentStateReplacementResult>;
   /** Atomic authority replacement including source-relation history. */
@@ -1070,49 +1107,20 @@ export interface DatabaseLike {
   close?(): void;
 }
 
-export interface EpaProjectResult {
+export interface TagBasisProjectionResult {
   projections: Float32Array | null;
   probabilities: Float32Array | null;
   entropy: number;
-  logicDepth: number;
-  dominantAxes: EpaDominantAxis[];
+  projectionConcentration: number;
+  dominantAxes: TagBasisDominantAxis[];
 }
 
-export interface EpaAnalysis {
-  logicDepth: number;
-  resonance: number;
-  entropy: number;
-  dominantAxes: EpaDominantAxis[];
-}
-
-export interface TagBoostEnvelope extends UnknownRecord {
-  vector: Float32Array;
-  info: {
-    matchedTags: string[];
-    coreTagsMatched: string[];
-    boostFactor: number;
-    tagBoost: number;
-    tagMatchScore: number;
-  };
-  energyField: unknown;
-  energyFieldProvenance: unknown;
-  artifactBundle: unknown;
-  preparedMemoObservation: unknown;
-}
-
-export interface EpaDominantAxis {
-  index: number;
-  label?: string;
-  energy: number;
-  projection: number;
-}
-
-export interface EpaLike {
+export interface TagBasisProjectionLike {
   initialized: boolean;
-  project(vector: VectorLike): EpaProjectResult;
-  detectCrossDomainResonance(vector: VectorLike): {
-    resonance: number;
-    bridges: UnknownRecord[];
+  project(vector: VectorLike): TagBasisProjectionResult;
+  detectCrossDomainAxisCoactivation(vector: VectorLike): {
+    axisCoactivation: number;
+    coactiveAxisPairs: UnknownRecord[];
     [key: string]: unknown;
   };
 }
@@ -1122,11 +1130,11 @@ export interface PipelineContextOptions {
   embeddingProvider?: EmbeddingProviderContract | null;
   vectorStore?: VectorStoreContract | null;
   metadataStore?: MetadataStoreContract | null;
-  /** @deprecated Compatibility escape hatch; the concrete native type is internal. */
-  vexusIndex?: unknown;
-  epa?: EpaLike;
-  riverStateStore?: RiverStateStore;
-  tagGraph?: Map<number, Map<number, number>>;
+  /** Internal tag-retrieval backend injected by engine construction. */
+  tagRetrievalRuntime?: unknown;
+  tagBasisProjection?: TagBasisProjectionLike;
+  propagationHistoryStore?: PropagationHistoryStore;
+  tagAssociationGraph?: Map<number, Map<number, number>>;
   reranker?: ExternalReranker;
   queryInterpreter?: {
     interpret(
@@ -1145,12 +1153,12 @@ export interface PipelineContextLike {
   embeddingProvider?: EmbeddingProviderContract | null;
   vectorStore?: VectorStoreContract | null;
   metadataStore?: MetadataStoreContract | null;
-  /** @deprecated Compatibility escape hatch; the concrete native type is internal. */
-  vexusIndex?: unknown;
-  epa?: EpaLike;
-  riverStateStore?: RiverStateStore;
-  tagGraph?: Map<number, Map<number, number>>;
-  checkpointState?: { fileCount: number; diaries: Set<string> };
+  /** Internal native tag-retrieval runtime handle. */
+  tagRetrievalRuntime?: unknown;
+  tagBasisProjection?: TagBasisProjectionLike;
+  propagationHistoryStore?: PropagationHistoryStore;
+  tagAssociationGraph?: Map<number, Map<number, number>>;
+  checkpointState?: { fileCount: number; spaces: Set<string> };
   reranker?: ExternalReranker;
   queryInterpreter?: {
     interpret(
@@ -1167,15 +1175,17 @@ export interface TdbSearchResult extends SearchResult {
   path: string;
   text: string;
   title?: string;
+  _expanded?: boolean;
 }
 
 export interface TdbSearchEnvelope extends Omit<
-  PipelineData,
+  SearchEnvelope,
   "results" | "resultCount"
 > {
   results: TdbSearchResult[];
   resultCount: number;
   tdbDisabled?: boolean;
+  [key: string]: unknown;
 }
 
 export interface TdbIngestEnvelope extends UnknownRecord {
@@ -1300,7 +1310,6 @@ export interface TdbRebuildChunk {
 }
 
 export interface TdbStoreContract {
-  db: DatabaseLike;
   dbPath: string;
   busyTimeout: number;
   upsertFile(meta: {
@@ -1344,7 +1353,7 @@ export interface TdbStoreContract {
   ): Promise<void>;
   countFiles(): Promise<number>;
   listLibraries(): Promise<string[]>;
-  getDistinctDiaryNames(): Promise<string[]>;
+  getDistinctSpaces(): Promise<string[]>;
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;
   healthCheck(): Promise<HealthStatus>;
@@ -1360,7 +1369,7 @@ export interface TdbEngineOptions {
   searchOptions?: TdbSearchOptions;
 }
 
-export interface TdbSearchOptions extends UnknownRecord {
+export interface TdbSearchOptions {
   libraries?: string[];
   topK?: number;
   minScore?: number;

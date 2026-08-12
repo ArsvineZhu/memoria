@@ -12,7 +12,7 @@ import { decodeVectorBlob } from "../../utils/vector-codec.js";
 /**
  * Postprocess stage: deduplicates merged candidates.
  *
- * Mirrors KnowledgeBaseManager.deduplicateResults / ResultDeduplicator:
+ * Uses the shared ResultDeduplicator:
  *   - hard dedupe by chunk id, normalized content and stable path identity
  *     (always active); the preferred representative survives with the
  *     highest source priority, score and completeness;
@@ -77,16 +77,15 @@ class ResultDeduplicatorStage extends Stage {
       dimension,
       semanticThreshold: config.semanticThreshold,
       maxResults: config.dedupeMaxResults,
-      // Pipeline source names mapped onto the original priority table
-      // (rag/vector = 50, time = 45, bm25 = 40, expansion/associate = 10).
+      // Pipeline source names map onto the canonical priority table.
       sourcePriority: Object.assign(
         {
-          rag: 50,
-          vector: 50,
-          hybrid: 50,
+          semantic: 50,
           time: 45,
+          bm25Body: 40,
+          bm25Tag: 40,
           continuity: 35,
-          expansion: 10,
+          associate: 10,
         },
         config.sourcePriority || {},
       ),

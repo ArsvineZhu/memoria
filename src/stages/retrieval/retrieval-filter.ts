@@ -193,7 +193,7 @@ class RetrievalFilterResolverStage extends Stage {
         if (!Number.isFinite(chunkId)) continue;
         const file = await store.getFileByChunkId(chunkId);
         if (!file) continue;
-        const space = String(file.diary_name || file.diaryName || "Root");
+        const space = String(file.space || "Root");
         if (allowedSpaces && !allowedSpaces.has(space)) continue;
         if (documentIds && !documentIds.has(String(file.document_id ?? ""))) continue;
         const recorded = Number(file.updated_at ?? file.mtime);

@@ -1,6 +1,8 @@
 import type {
   ChunkMetadataInput,
   ChunkRow,
+  DocumentStateReplacement,
+  DocumentStateReplacementResult,
   FileMetadataInput,
   FileRow,
   FileTagRow,
@@ -20,7 +22,7 @@ class MetadataStore implements MetadataStoreContract {
 
   /**
    * Insert or update a file record.
-   * @param {{path:string, diaryName:string, checksum:string, mtime:number, size:number}} fileMeta
+   * @param {{path:string, space:string, checksum:string, mtime:number, size:number}} fileMeta
    * @returns {Promise<number>} file ID
    */
   async upsertFile(_fileMeta: FileMetadataInput): Promise<number | null> {
@@ -36,12 +38,22 @@ class MetadataStore implements MetadataStoreContract {
     throw new Error("MetadataStore.getFileByPath() must be implemented");
   }
 
+  async countFiles(): Promise<number> {
+    throw new Error("MetadataStore.countFiles() must be implemented");
+  }
+
+  async replaceDocumentState(
+    _replacement: DocumentStateReplacement,
+  ): Promise<DocumentStateReplacementResult> {
+    throw new Error("MetadataStore.replaceDocumentState() must be implemented");
+  }
+
   /**
-   * Get all distinct diary names of stored files.
+   * Get all distinct space names of stored files.
    * @returns {Promise<string[]>}
    */
-  async getDistinctDiaryNames(): Promise<string[]> {
-    throw new Error("MetadataStore.getDistinctDiaryNames() must be implemented");
+  async getDistinctSpaces(): Promise<string[]> {
+    throw new Error("MetadataStore.getDistinctSpaces() must be implemented");
   }
 
   /**

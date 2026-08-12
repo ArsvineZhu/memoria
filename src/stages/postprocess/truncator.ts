@@ -10,7 +10,7 @@ import Stage from "../../core/stage.js";
 /**
  * Postprocess stage: caps candidate count and content length.
  *
- * The original KnowledgeBase search returns full chunk text (no truncation),
+ * The MemoryEngine search returns full chunk text when truncation is disabled,
  * so this stage is opt-in; when enabled it mirrors the classic topK /
  * resultLimit contract: candidates are cut to `topK` (alias `maxResults`)
  * and `content` (and the `text` alias) are sliced to `maxContentLength`

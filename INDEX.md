@@ -2,7 +2,7 @@
 
 `memoria` 是一个为 AI 应用提供持久化语义记忆的 Node.js 软件包。它用
 SQLite 保存正文和元数据，用 Rust 原生索引加速向量检索，并提供摄入、搜索、
-删除、兼容旧调用和 TDB 冷知识库能力。
+删除和 TDB 冷知识库能力；旧 adapter、旧配置键和旧数据库不属于当前 contract。
 
 ## 从哪里开始
 
@@ -25,10 +25,9 @@ SQLite 保存正文和元数据，用 Rust 原生索引加速向量检索，并�
 ```text
 src/                  TypeScript 源码和公开入口
 tests/                测试、类型测试和测试资料
-examples/             离线演示和真实嵌入演示，入口见 examples/README.md
-data/                 可备份的 Markdown/MDX 源文件和运行状态边界，入口见 data/README.md
-data/memoria/         主引擎生成的 SQLite 和向量索引
-data/tdb/             TDB 生成的 SQLite 和向量索引
+tutorials/            从入门到算法手册的可运行教程，入口见 tutorials/README.md
+tutorials/*/data/runtime/  各教程自己的运行时目录
+tutorials/data/content/    教程共用的只读 MDX 源语料
 docs/                 面向人的架构、API、运维和开发文档，入口见 docs/README.md 和 docs/INDEX.md
 scripts/              仓库检查和打包脚本，入口见 scripts/README.md
 rust-vexus-lite/      Rust 原生向量包，入口见 rust-vexus-lite/README.md 和其专属 AGENTS.md
@@ -42,8 +41,7 @@ dist/, dist-test/     编译产物，不是源码，不要手工编辑
 | --------------- | -------------------------------------------------------------------------------------------------------------- |
 | TypeScript 源码 | [src/README.md](src/README.md)、[src/AGENTS.md](src/AGENTS.md)                                                 |
 | 文档体系        | [docs/README.md](docs/README.md)、[docs/INDEX.md](docs/INDEX.md)                                               |
-| 数据边界        | [data/README.md](data/README.md)                                                                               |
-| 示例            | [examples/README.md](examples/README.md)                                                                       |
+| 教程            | [tutorials/README.md](tutorials/README.md)                                                                     |
 | 测试            | [tests/README.md](tests/README.md)                                                                             |
 | 仓库脚本        | [scripts/README.md](scripts/README.md)                                                                         |
 | 原生包          | [rust-vexus-lite/README.md](rust-vexus-lite/README.md)、[rust-vexus-lite/AGENTS.md](rust-vexus-lite/AGENTS.md) |
@@ -54,10 +52,10 @@ dist/, dist-test/     编译产物，不是源码，不要手工编辑
 
 ## 数据边界
 
-文件摄入的源文件放在 `data/content/**/*.mdx`；真实召回演示的 canonical 语料位于
-`data/content/recall-demo/`。`data/memoria/` 和
-`data/tdb/` 下的 SQLite 文件、向量索引和旁车文件都是运行时生成内容，具体
-规则见 [data/README.md](data/README.md)。
+仓库不维护根 `data/` 目录，也不把数据作为库的随包内容。教程源 MDX 位于
+`tutorials/data/content/retrieval/`；各教程的 `data/runtime/` 仅用于本地生成
+SQLite 和向量索引，并由 `.gitignore` 排除。
+库本身仍保留 `dataPath` 配置语义，由调用方决定自己的运行时目录。
 
 ## 范围边界
 

@@ -51,9 +51,9 @@ function newMetadataStore() {
 function newVectorStore() {
   return new VexusVectorStore({
     dimension: DIM,
-    tagIndexCapacity: 100,
+    tagVectorIndexCapacity: 100,
     indexSaveDelay: 60000,
-    tagIndexSaveDelay: 60000,
+    tagVectorIndexSaveDelay: 60000,
   });
 }
 
@@ -82,8 +82,8 @@ function makeTempFixture(t: { after(callback: () => void): void }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-pipeline-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  const alphaDir = path.join(dir, "diary1");
-  const betaDir = path.join(dir, "diary2");
+  const alphaDir = path.join(dir, "space1");
+  const betaDir = path.join(dir, "space2");
   fs.mkdirSync(alphaDir, { recursive: true });
   fs.mkdirSync(betaDir, { recursive: true });
 
@@ -152,7 +152,7 @@ test("DeletePipeline exposes a single fileDeleter stage", () => {
 });
 
 test("SearchPipeline assembles the default gated search chain", () => {
-  // Defaults per Phase 4.5 decisions: EPA + residual pyramid ON,
+  // Defaults: tag basis projection + residual decomposition ON,
   // everyone else opt-in.
   const pipeline = new SearchPipeline({});
   assert.strictEqual(pipeline.name, "searchPipeline");
@@ -165,22 +165,22 @@ test("SearchPipeline assembles the default gated search chain", () => {
       "vectorSearcher",
       "bm25Searcher",
       "candidateMerger",
-      "epaProjector",
-      "residualPyramid",
+      "tagBasisProjection",
+      "tagResidualDecomposition",
       "resultDeduplicator",
       "resultFormatter",
     ],
   );
 });
 
-test("SearchPipeline enables memo and postprocess stages when gated", () => {
+test("SearchPipeline enables tag-retrieval and postprocess stages when gated", () => {
   const pipeline = new SearchPipeline({
-    tagMemoV9Enabled: true,
-    tagMemoV10Enabled: true,
-    riverMemoEnabled: true,
+    tagGraphPropagationEnabled: true,
+    propagationHistoryEnabled: true,
+    propagationStructureRerankEnabled: true,
     tagExpansionEnabled: true,
-    vectorReshapeEnabled: true,
-    geodesicRerankEnabled: true,
+    embeddingRerankEnabled: true,
+    propagationSupportRerankEnabled: true,
     associatorEnabled: true,
     externalRerankEnabled: true,
     timeDecayEnabled: true,
@@ -195,14 +195,15 @@ test("SearchPipeline enables memo and postprocess stages when gated", () => {
     "vectorSearcher",
     "bm25Searcher",
     "candidateMerger",
-    "epaProjector",
-    "residualPyramid",
-    "tagMemoV9",
-    "tagMemoV10",
-    "riverMemo",
+    "tagBasisProjection",
+    "tagResidualDecomposition",
+    "activationPropagation",
+    "graphDiffusion",
+    "propagationHistory",
+    "propagationStructureReranker",
     "tagExpander",
-    "vectorReshaper",
-    "geodesicReranker",
+    "embeddingReranker",
+    "propagationSupportReranker",
     "expander",
     "associator",
     "resultDeduplicator",
@@ -213,20 +214,37 @@ test("SearchPipeline enables memo and postprocess stages when gated", () => {
   ]);
 });
 
+test("SearchPipeline keeps model rerank between dedupe and downstream score stages", () => {
+  const names = new SearchPipeline({
+    externalRerankEnabled: true,
+    timeDecayEnabled: true,
+    truncateEnabled: true,
+  }).stages.map((stage) => stage.name);
+
+  const dedupeIndex = names.indexOf("resultDeduplicator");
+  const rerankIndex = names.indexOf("externalReranker");
+  const decayIndex = names.indexOf("timeDecay");
+  const truncateIndex = names.indexOf("truncator");
+
+  assert.ok(dedupeIndex < rerankIndex);
+  assert.ok(rerankIndex < decayIndex);
+  assert.ok(decayIndex < truncateIndex);
+});
+
 test("SearchPipeline gates can be switched off individually", () => {
   const names = (config: MemoryConfigOverrides) =>
     new SearchPipeline(config).stages.map((s) => s.name);
 
-  const noMemo = names({ epaProjectionEnabled: false, residualPyramidEnabled: false });
-  assert.ok(!noMemo.includes("epaProjector"));
-  assert.ok(!noMemo.includes("residualPyramid"));
+  const noMemo = names({
+    tagBasisProjectionEnabled: false,
+    tagResidualDecompositionEnabled: false,
+  });
+  assert.ok(!noMemo.includes("tagBasisProjection"));
+  assert.ok(!noMemo.includes("tagResidualDecomposition"));
   assert.ok(noMemo.includes("vectorSearcher"));
 
   const rerankOnly = names({ externalRerankEnabled: true });
   assert.ok(rerankOnly.includes("externalReranker"));
-
-  const llmAlias = names({ useLLMRerank: true });
-  assert.ok(llmAlias.includes("externalReranker"));
 
   const noDedupe = names({ dedupeEnabled: false });
   assert.ok(
@@ -286,7 +304,7 @@ test("replace() swaps a stage by name and keeps the original pipeline intact", a
   );
 
   const out = await swapped.run(
-    { query: "alpha", options: { diaryNames: ["diary1"] } },
+    { query: "alpha", options: { spaces: ["space1"] } },
     ctx,
   );
   assert.strictEqual(spyCalls, 1);
@@ -309,9 +327,9 @@ test("IngestPipeline ingests a file: metadata, chunks, tags and vectors", async 
   const pipeline = new IngestPipeline({});
   const out = await pipeline.run({ path: alphaFile }, ctx);
 
-  const row = await metadataStore.getFileByPath("diary1/alpha.md");
+  const row = await metadataStore.getFileByPath("space1/alpha.md");
   assert.ok(row, "file row should exist");
-  assert.strictEqual(row.diary_name, "diary1");
+  assert.strictEqual(row.space, "space1");
   assert.strictEqual(row.checksum, out.checksum);
   assert.ok(row.size > 0);
   assert.strictEqual(out.fileId, row.id);
@@ -334,7 +352,7 @@ test("IngestPipeline ingests a file: metadata, chunks, tags and vectors", async 
     ["alpha-arch", "alpha-plan"],
   );
 
-  const hits = await vectorStore.search("diary1", embedVectorFor("alpha query"), 5);
+  const hits = await vectorStore.search("space1", embedVectorFor("alpha query"), 5);
   assert.ok(hits.length >= 1, "vector index should return the ingested chunk");
   assert.strictEqual(Number(hits[0].id), chunks[0].id);
 });
@@ -383,22 +401,22 @@ test("DeletePipeline removes file rows, chunks via cascade and vectors", async (
   const chunkIds = (await metadataStore.getChunksByFileId(fileId)).map((c) => c.id);
   assert.ok(chunkIds.length >= 1);
   assert.ok(
-    (await vectorStore.search("diary1", embedVectorFor("alpha query"), 5)).length >= 1,
+    (await vectorStore.search("space1", embedVectorFor("alpha query"), 5)).length >= 1,
   );
 
   const deleter = new DeletePipeline();
-  const out = await deleter.deleteFile("diary1/alpha.md", ctx);
+  const out = await deleter.deleteFile("space1/alpha.md", ctx);
   assert.strictEqual(out.deleted, true);
   assert.strictEqual(out.fileId, fileId);
 
-  assert.strictEqual(await metadataStore.getFileByPath("diary1/alpha.md"), null);
+  assert.strictEqual(await metadataStore.getFileByPath("space1/alpha.md"), null);
   assert.deepStrictEqual(await metadataStore.getChunksByFileId(fileId), []);
   assert.deepStrictEqual(await metadataStore.getFileTags(fileId), []);
   assert.deepStrictEqual(
-    await vectorStore.search("diary1", embedVectorFor("alpha query"), 5),
+    await vectorStore.search("space1", embedVectorFor("alpha query"), 5),
     [],
   );
-  assert.strictEqual((await vectorStore.getIndexStats("diary1")).size, 0);
+  assert.strictEqual((await vectorStore.getIndexStats("space1")).size, 0);
 });
 
 test("DeletePipeline is idempotent for unknown files", async (t) => {
@@ -408,7 +426,7 @@ test("DeletePipeline is idempotent for unknown files", async (t) => {
   const ctx = makeContext({ rootPath: dir }, { metadataStore });
 
   const deleter = new DeletePipeline();
-  const out = await deleter.deleteFile("diary1/ghost.md", ctx);
+  const out = await deleter.deleteFile("space1/archived.md", ctx);
   assert.strictEqual(out.deleted, false);
 });
 
@@ -428,7 +446,7 @@ test("SearchPipeline returns the best matching chunk on top", async (t) => {
   await ingest.run({ path: alphaFile }, ctx);
   await ingest.run({ path: betaFile }, ctx);
 
-  const alphaRow = await metadataStore.getFileByPath("diary1/alpha.md");
+  const alphaRow = await metadataStore.getFileByPath("space1/alpha.md");
   const alphaChunks = await metadataStore.getChunksByFileId(alphaRow!.id);
   const expectedChunkId = alphaChunks[0].id;
 
@@ -436,7 +454,7 @@ test("SearchPipeline returns the best matching chunk on top", async (t) => {
   const out = await pipeline.run(
     {
       query: "alpha project",
-      options: { diaryNames: ["diary1", "diary2"], topK: 5 },
+      options: { spaces: ["space1", "space2"], topK: 5 },
     },
     ctx,
   );
@@ -453,7 +471,7 @@ test("SearchPipeline returns the best matching chunk on top", async (t) => {
     top.path!.endsWith("alpha.md"),
     "result path should point at the source file",
   );
-  assert.strictEqual(top.diaryName, "diary1");
+  assert.strictEqual(top.space, "space1");
   assert.ok(
     typeof top.score === "number" && top.score > 0,
     "score should be a positive number",
@@ -499,12 +517,12 @@ test("run() merges per-run options into the stage input", async (t) => {
 
   const pipeline = new SearchPipeline({});
   const out = await pipeline.run(
-    { query: "alpha", options: { diaryNames: ["diary1"], topK: 1 } },
+    { query: "alpha", options: { spaces: ["space1"], topK: 1 } },
     ctx,
   );
 
   assert.strictEqual(out.results!.length, 1, "topK: 1 should cap the result list");
-  const row = await metadataStore.getFileByPath("diary1/alpha.md");
+  const row = await metadataStore.getFileByPath("space1/alpha.md");
   assert.strictEqual(
     out.results![0].id,
     (await metadataStore.getChunksByFileId(row!.id))[0].id,

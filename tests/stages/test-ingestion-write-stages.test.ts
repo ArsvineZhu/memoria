@@ -37,10 +37,10 @@ function newMetadataStore() {
 function newVectorStore() {
   return new VexusVectorStore({
     dimension: DIM,
-    tagIndexCapacity: 100,
+    tagVectorIndexCapacity: 100,
     indexSaveDelay: 60000,
-    tagIndexSaveDelay: 60000,
-    persistTagIndex: true,
+    tagVectorIndexSaveDelay: 60000,
+    persistTagVectorIndex: true,
   });
 }
 
@@ -78,8 +78,8 @@ function tagEntry(name: string, vector?: VectorLike) {
 
 function fileInfo(overrides = {}) {
   return {
-    relPath: "diary1/note1.md",
-    diaryName: "diary1",
+    relPath: "space1/note1.md",
+    space: "space1",
     checksum: "abc123",
     mtime: 1700000000000,
     size: 1024,
@@ -109,9 +109,9 @@ test("MetadataWriterStage upserts file metadata and returns fileId", async (t) =
   const stage = new MetadataWriterStage();
   const out = await stage.process(fileInfo(), makeCtx({}, { metadataStore: store }));
 
-  const file = await store.getFileByPath("diary1/note1.md");
+  const file = await store.getFileByPath("space1/note1.md");
   assert.ok(file, "file row should exist");
-  assert.strictEqual(file.diary_name, "diary1");
+  assert.strictEqual(file.space, "space1");
   assert.strictEqual(file.checksum, "abc123");
   assert.strictEqual(file.size, 1024);
   assert.strictEqual(out.fileId, file.id);
@@ -138,33 +138,33 @@ test("MetadataWriterStage uses the atomic replacement capability when available"
   assert.equal((await store.getChunksByFileId(out.fileId!)).length, 2);
 });
 
-test("MetadataWriterStage keeps the CRUD compatibility path without atomic capability", async (t) => {
+test("MetadataWriterStage requires atomic document replacement", async (t) => {
   const store = newMetadataStore();
   t.after(() => store.close());
-  const compatibilityStore = new Proxy(store, {
+  const nonAtomicStore = new Proxy(store, {
     get(target, property, receiver) {
       if (property === "replaceDocumentState") return undefined;
       return Reflect.get(target, property, receiver);
     },
   }) as unknown as MetadataStoreContract;
 
-  const out = await new MetadataWriterStage().process(
-    fileInfo({ documentId: "stage:compat", revision: "1" }),
-    makeCtx({}, { metadataStore: compatibilityStore }),
-  );
-
-  assert.ok(out.fileId);
-  assert.equal((await store.getChunksByFileId(out.fileId!)).length, 2);
-  assert.deepStrictEqual(
-    (await store.getFileTags(out.fileId!)).map((tag) => tag.name),
-    ["alpha", "beta"],
+  await assert.rejects(
+    () =>
+      new MetadataWriterStage().process(
+        fileInfo({ documentId: "stage:atomic-required", revision: "1" }),
+        makeCtx({}, { metadataStore: nonAtomicStore }),
+      ),
+    (error: unknown) =>
+      error instanceof MemoriaError &&
+      error.code === "configuration" &&
+      /replaceDocumentState/.test(error.message),
   );
 });
 
 test("MetadataWriterStage refuses relation-enabled writes without atomic authority", async (t) => {
   const store = newMetadataStore();
   t.after(() => store.close());
-  const compatibilityStore = new Proxy(store, {
+  const nonAtomicStore = new Proxy(store, {
     get(target, property, receiver) {
       if (property === "replaceDocumentAuthority") return undefined;
       return Reflect.get(target, property, receiver);
@@ -179,11 +179,11 @@ test("MetadataWriterStage refuses relation-enabled writes without atomic authori
           relationSourceKey: "document:relation-no-atomic",
           relationSourceRevision: "r1",
         }),
-        makeCtx({ relationGraphEnabled: true }, { metadataStore: compatibilityStore }),
+        makeCtx({ relationGraphEnabled: true }, { metadataStore: nonAtomicStore }),
       ),
     (error: unknown) => error instanceof MemoriaError && error.code === "configuration",
   );
-  assert.equal(await store.getFileByPath("diary1/note1.md"), null);
+  assert.equal(await store.getFileByPath("space1/note1.md"), null);
 });
 
 test("MetadataWriterStage writes chunk rows with vectors as BLOBs", async (t) => {
@@ -218,7 +218,7 @@ test("MetadataWriterStage replaces old chunks on re-embed and reports removedChu
   const stage = new MetadataWriterStage();
   const ctx = makeCtx({}, { metadataStore: store });
 
-  const input = fileInfo({ relPath: "diary1/re.md" });
+  const input = fileInfo({ relPath: "space1/re.md" });
   const first = await stage.process(input, ctx);
   assert.strictEqual(first.chunkIds.length, 2);
 
@@ -281,8 +281,8 @@ test("MetadataWriterStage atomically updates tags without replacing existing chu
   const ctx = makeCtx({}, { metadataStore: store });
   const first = await stage.process(
     fileInfo({
-      relPath: "diary1/tag-only.md",
-      diaryName: "diary1",
+      relPath: "space1/tag-only.md",
+      space: "space1",
       documentId: "tag-only:stage",
       revision: "r1",
       tags: ["old-tag"],
@@ -336,7 +336,7 @@ test("MetadataWriterStage refuses non-atomic tag-only updates before writing", a
   const ctx = makeCtx({}, { metadataStore: store });
   const first = await writer.process(
     fileInfo({
-      relPath: "diary1/no-atomic-tags.md",
+      relPath: "space1/no-atomic-tags.md",
       documentId: "no-atomic-tags",
       tags: ["old-tag"],
       tagEntries: [tagEntry("old-tag")],
@@ -344,7 +344,7 @@ test("MetadataWriterStage refuses non-atomic tag-only updates before writing", a
     ctx,
   );
   const originalChunks = await store.getChunksByFileId(first.fileId!);
-  const compatibilityStore = new Proxy(store, {
+  const nonAtomicStore = new Proxy(store, {
     get(target, property, receiver) {
       if (property === "replaceDocumentTags") return undefined;
       return Reflect.get(target, property, receiver);
@@ -364,7 +364,7 @@ test("MetadataWriterStage refuses non-atomic tag-only updates before writing", a
           needsMetadataWrite: true,
           chunkEntries: [],
         }),
-        makeCtx({}, { metadataStore: compatibilityStore }),
+        makeCtx({}, { metadataStore: nonAtomicStore }),
       ),
     (error: unknown) => error instanceof MemoriaError && error.code === "configuration",
   );
@@ -414,7 +414,7 @@ test("MetadataWriterStage re-associates previously stored tags without new embed
   await stage.process(
     fileInfo({
       relPath: "d1/a.md",
-      diaryName: "d1",
+      space: "d1",
       tags: ["alpha"],
       tagEntries: [tagEntry("alpha")],
     }),
@@ -425,7 +425,7 @@ test("MetadataWriterStage re-associates previously stored tags without new embed
   const out2 = await stage.process(
     fileInfo({
       relPath: "d1/b.md",
-      diaryName: "d1",
+      space: "d1",
       tags: ["alpha", "gamma"],
       tagEntries: [tagEntry("gamma")],
     }),
@@ -479,7 +479,7 @@ test("MetadataWriterStage writes checkpoint kv keys when checkpoint config is en
   await stage.process(
     fileInfo({
       relPath: "d1/a.md",
-      diaryName: "d1",
+      space: "d1",
       tags: ["alpha"],
       tagEntries: [tagEntry("alpha")],
       chunkEntries: [chunkEntry(0)],
@@ -489,7 +489,7 @@ test("MetadataWriterStage writes checkpoint kv keys when checkpoint config is en
   await stage.process(
     fileInfo({
       relPath: "d2/b.md",
-      diaryName: "d2",
+      space: "d2",
       tags: ["beta"],
       tagEntries: [tagEntry("beta")],
       chunkEntries: [chunkEntry(0)],
@@ -501,7 +501,7 @@ test("MetadataWriterStage writes checkpoint kv keys when checkpoint config is en
   assert.strictEqual(await store.getKv("last_file_indexed"), "d2/b.md");
   assert.strictEqual(await store.getKv("chunk_count"), "1");
   assert.strictEqual(await store.getKv("tag_count"), "1");
-  assert.strictEqual(await store.getKv("diary_count"), "2");
+  assert.strictEqual(await store.getKv("space_count"), "2");
 });
 
 test("MetadataWriterStage skips checkpoint writes by default", async (t) => {
@@ -517,7 +517,7 @@ test("MetadataWriterStage skips checkpoint writes by default", async (t) => {
 
 // ── VectorIndexerStage ─────────────────────────────────────────
 
-test("VectorIndexerStage writes chunk vectors to the diary index", async (t) => {
+test("VectorIndexerStage writes chunk vectors to the space index", async (t) => {
   const vectorStore = newVectorStore();
   const metadataStore = newMetadataStore();
   t.after(() => {
@@ -531,7 +531,7 @@ test("VectorIndexerStage writes chunk vectors to the diary index", async (t) => 
 
   const input = fileInfo({
     relPath: "d1/note.md",
-    diaryName: "d1",
+    space: "d1",
     chunkEntries: [chunkEntry(0, [1, 0, 0, 0]), chunkEntry(1, [0, 1, 0, 0])],
     tagEntries: [],
   });
@@ -543,7 +543,7 @@ test("VectorIndexerStage writes chunk vectors to the diary index", async (t) => 
   assert.strictEqual(Number(results[0].id), written.chunkIds[0]);
 });
 
-test("VectorIndexerStage writes tag vectors to the global_tags index", async (t) => {
+test("VectorIndexerStage writes tag vectors to the tag_vectors index", async (t) => {
   const vectorStore = newVectorStore();
   const metadataStore = newMetadataStore();
   t.after(() => {
@@ -556,7 +556,7 @@ test("VectorIndexerStage writes tag vectors to the global_tags index", async (t)
   const ctx = makeCtx({}, { metadataStore, vectorStore });
 
   const input = fileInfo({
-    diaryName: "d1",
+    space: "d1",
     chunkEntries: [chunkEntry(0, [1, 0, 0, 0])],
     tags: ["alpha"],
     tagEntries: [tagEntry("alpha", [0, 1, 0, 0])],
@@ -564,7 +564,7 @@ test("VectorIndexerStage writes tag vectors to the global_tags index", async (t)
   const written = await writer.process(input, ctx);
   await indexer.process(written, ctx);
 
-  const results = await vectorStore.search("global_tags", [0, 1, 0, 0], 1);
+  const results = await vectorStore.search("tag_vectors", [0, 1, 0, 0], 1);
   assert.ok(results.length >= 1);
   assert.strictEqual(Number(results[0].id), written.tagIds[0]);
 });
@@ -583,7 +583,7 @@ test("VectorIndexerStage removes stale chunk vectors before re-adding", async (t
 
   const first = fileInfo({
     relPath: "d1/note.md",
-    diaryName: "d1",
+    space: "d1",
     chunkEntries: [chunkEntry(0, [1, 0, 0, 0]), chunkEntry(1, [0, 1, 0, 0])],
     tags: [],
     tagEntries: [],
@@ -593,7 +593,7 @@ test("VectorIndexerStage removes stale chunk vectors before re-adding", async (t
 
   const second = fileInfo({
     relPath: "d1/note.md",
-    diaryName: "d1",
+    space: "d1",
     chunkEntries: [chunkEntry(0, [1, 0, 0, 0])],
     tags: [],
     tagEntries: [],
@@ -621,7 +621,7 @@ test("VectorIndexerStage reports count and schedules index saves", async (t) => 
   const ctx = makeCtx({}, { metadataStore, vectorStore });
 
   const input = fileInfo({
-    diaryName: "d1",
+    space: "d1",
     chunkEntries: [chunkEntry(0, [1, 0, 0, 0]), chunkEntry(1, [0, 1, 0, 0])],
     tagEntries: [tagEntry("alpha", [0, 1, 0, 0])],
   });
@@ -630,7 +630,7 @@ test("VectorIndexerStage reports count and schedules index saves", async (t) => 
 
   assert.strictEqual(out.vectorIndexWritten, 3);
   assert.ok(vectorStore.saveTimers.has("d1"));
-  assert.ok(vectorStore.saveTimers.has("global_tags"));
+  assert.ok(vectorStore.saveTimers.has("tag_vectors"));
 });
 
 // ── CooccurrenceBuilderStage ───────────────────────────────────
@@ -654,7 +654,7 @@ test("CooccurrenceBuilderStage rebuilds the matrix when configured", async (t) =
   // Two files sharing 'alpha': alpha-beta and alpha-gamma co-occur once.
   const f1 = fileInfo({
     relPath: "d1/a.md",
-    diaryName: "d1",
+    space: "d1",
     tags: ["alpha", "beta"],
     tagEntries: [tagEntry("alpha"), tagEntry("beta")],
     chunkEntries: [chunkEntry(0)],
@@ -662,7 +662,7 @@ test("CooccurrenceBuilderStage rebuilds the matrix when configured", async (t) =
   await writer.process(f1, ctx);
   const f2 = fileInfo({
     relPath: "d1/b.md",
-    diaryName: "d1",
+    space: "d1",
     tags: ["alpha", "gamma"],
     tagEntries: [tagEntry("alpha"), tagEntry("gamma")],
     chunkEntries: [chunkEntry(0)],
@@ -703,7 +703,7 @@ test("FileDeleterStage removes file rows, chunks, and vectors", async (t) => {
   const ctx = makeCtx({}, { metadataStore, vectorStore });
 
   const input = fileInfo({
-    diaryName: "delete-me",
+    space: "delete-me",
     chunkEntries: [chunkEntry(0, [1, 0, 0, 0]), chunkEntry(1, [0, 1, 0, 0])],
     tagEntries: [tagEntry("alpha")],
   });
@@ -714,18 +714,18 @@ test("FileDeleterStage removes file rows, chunks, and vectors", async (t) => {
   let stats = await vectorStore.getIndexStats("delete-me");
   assert.strictEqual(stats.size, 2);
 
-  const out = await deleter.process({ path: "diary1/note1.md" }, ctx);
+  const out = await deleter.process({ path: "space1/note1.md" }, ctx);
   assert.strictEqual(out.deleted, true);
 
-  assert.strictEqual(await metadataStore.getFileByPath("diary1/note1.md"), null);
+  assert.strictEqual(await metadataStore.getFileByPath("space1/note1.md"), null);
   assert.deepStrictEqual(await metadataStore.getChunksByFileId(fileId), []);
   assert.deepStrictEqual(await metadataStore.getFileTags(fileId), []);
   stats = await vectorStore.getIndexStats("delete-me");
   assert.strictEqual(stats.size, 0);
   assert.deepStrictEqual(await vectorStore.search("delete-me", [1, 0, 0, 0], 2), []);
-  assert.strictEqual((await vectorStore.getIndexStats("global_tags")).size, 0);
+  assert.strictEqual((await vectorStore.getIndexStats("tag_vectors")).size, 0);
   assert.deepStrictEqual(
-    await vectorStore.search("global_tags", [0.1, 0.2, 0.3, 0.4], 2),
+    await vectorStore.search("tag_vectors", [0.1, 0.2, 0.3, 0.4], 2),
     [],
   );
 });
@@ -736,11 +736,11 @@ test("FileDeleterStage returns deleted:false for unknown files", async (t) => {
   const deleter = new FileDeleterStage();
   const ctx = makeCtx({}, { metadataStore });
 
-  const out = await deleter.process({ path: "nope/ghost.md" }, ctx);
+  const out = await deleter.process({ path: "nope/archived.md" }, ctx);
   assert.strictEqual(out.deleted, false);
 });
 
-test("FileDeleterStage only removes vectors from the matching diary index", async (t) => {
+test("FileDeleterStage only removes vectors from the matching space index", async (t) => {
   const vectorStore = newVectorStore();
   const metadataStore = newMetadataStore();
   t.after(() => {
@@ -756,7 +756,7 @@ test("FileDeleterStage only removes vectors from the matching diary index", asyn
   const a = await writer.process(
     fileInfo({
       relPath: "d1/a.md",
-      diaryName: "d1",
+      space: "d1",
       chunkEntries: [chunkEntry(0, [1, 0, 0, 0])],
       tags: [],
       tagEntries: [],
@@ -767,7 +767,7 @@ test("FileDeleterStage only removes vectors from the matching diary index", asyn
   const b = await writer.process(
     fileInfo({
       relPath: "d2/b.md",
-      diaryName: "d2",
+      space: "d2",
       chunkEntries: [chunkEntry(0, [0, 1, 0, 0])],
       tags: [],
       tagEntries: [],
@@ -776,7 +776,7 @@ test("FileDeleterStage only removes vectors from the matching diary index", asyn
   );
   await indexer.process(b, ctx);
 
-  await deleter.process({ path: "d1/a.md", diaryName: "wrong-caller-index" }, ctx);
+  await deleter.process({ path: "d1/a.md", space: "wrong-caller-index" }, ctx);
 
   assert.strictEqual((await vectorStore.getIndexStats("d1")).size, 0);
   assert.strictEqual((await vectorStore.getIndexStats("d2")).size, 1);

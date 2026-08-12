@@ -132,7 +132,7 @@ class TDBSearchPipeline extends Pipeline {
 
   /**
    * Search entry point. `input.options` is flattened into the payload
-   * (libraries → diaryNames for the shared VectorSearcherStage, topK,
+   * (libraries → spaces for the shared VectorSearcherStage, topK,
    * minScore, …). The chain is inert when tdbEnabled is false.
    *
    * @param {{ query: string, vector?: Float32Array, options?: object }} input
@@ -147,7 +147,7 @@ class TDBSearchPipeline extends Pipeline {
     const runCtx: PipelineContextLike = { ...ctx, config: runConfig as MemoryConfig };
 
     const payload = { ...(input || {}) };
-    const options = (input && input.options) || {};
+    const options = (input && (input.options as TdbSearchOptions)) || {};
     Object.assign(payload, options, { query: input && input.query });
     const explicitAlpha = options.hybridAlpha;
     runCtx.config = {

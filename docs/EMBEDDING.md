@@ -1,117 +1,123 @@
 # EMBEDDING — 嵌入 Provider 体系
 
-> 本文描述 memoria 的嵌入层：`EmbeddingProvider` 接口契约、三种实现（DashScope
-> 原生 / OpenAI 兼容 / 离线 Fake）的逐项对比、document/query 双模式语义、维度
-> 一致性规则与 Provider 切换流程。所有字段、默认值与行为以
-> `src/interfaces/embedding-provider.ts`、`src/providers/*` 与
-> `src/stages/retrieval/query-embedder.ts` 源码为准；发布运行时对应 `dist/`。
+本文描述 `EmbeddingProvider` 契约、OpenAI-compatible HTTP provider、OpenAI-compatible
+reranker 和教程 fake
+provider。实现、字段和默认值以 `src/interfaces/embedding-provider.ts`、
+`src/providers/openai-compatible-embedding-provider.ts`、
+`tutorials/_support/fake-embedding.ts` 与调用阶段源码为准。
 
-## 1. 接口契约（src/interfaces/embedding-provider.ts）
+## 1. 接口契约
 
 ```ts
 class EmbeddingProvider {
-  async embedBatch(texts); // → Promise<(Float32Array|null)[]>，长度 === texts.length，失败位 null
+  async embedBatch(texts); // Promise<(Float32Array|null)[]>，长度等于输入
   async embed(text); // 基类默认实现：embedBatch([text])[0] || null
-  getDimension(); // → number
+  getDimension(); // number
 }
 ```
 
-- **返回对齐**：`embedBatch` 必须返回与输入同长度的数组；单条失败的
-  位置必须补 `null`（不能抛错、不能缺位）。
-- `embed(text)` 是基类提供的便捷默认实现，子类可不重写。
-- 全库调用方只依赖 `embedBatch` 与 `getDimension`（见 §3 调用位置）。
+- `embedBatch` 必须返回与输入同长度的数组；单条失败必须补 `null`。
+- `embed(text)` 是基类提供的便捷实现，provider 可以直接继承。
+- 库内部只依赖 `embedBatch` 和 `getDimension`。
+- provider 配置通过构造器传入，不从 `process.env` 读取。
 
-## 2. 三实现对比表
+## 2. 当前实现
 
-| 属性      | DashScope 原生                                                                            | OpenAI 兼容                                                             | FakeEmbeddingProvider             |
-| --------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------- |
-| 源码      | `src/providers/dashscope-embedding-provider.ts`                                           | `src/providers/openai-embedding-provider.ts`                            | `examples/demo/fake-embedding.ts` |
-| 协议端点  | DashScope 嵌入接口；`config.apiUrl` 可覆盖                                                | `{config.apiUrl}/v1/embeddings`                                         | 无网络                            |
-| 请求体    | `{ model, input: { texts }, parameters: { dimension, output_type: 'dense', text_type } }` | `{ model, input: [...texts] }`                                          | —                                 |
-| 默认模型  | `qwen3.7-text-embedding`                                                                  | 无内置默认；引擎使用 `config.model`                                     | `fakeEmbeddingProvider`           |
-| 默认维度  | `1024`；可由 `config.dimension` 覆盖                                                      | 类默认 `1024`；引擎装配显式传入 `config.dimension`（默认 `3072`）       | `128`；构造时可覆盖               |
-| 分批上限  | `maxBatchItems` 默认 `20`；服务端单批最多 20 条                                           | `maxBatchItems` 默认 `32`，并按 token 动态分桶；超限文本跳过并置 `null` | 无网络批处理                      |
-| 并发      | 默认 5 个 worker                                                                          | 默认 5 个 worker                                                        | 单线程                            |
-| 超时/重试 | `timeoutMs` 默认 `60000`ms；无重试；失败返回 `null`                                       | 无请求超时；429 和其他错误按候选模型重试                                | 永不失败（null 输入返回 null）    |
-| key 来源  | `config.apiKey`（Bearer）                                                                 | `config.apiKey`（Bearer）                                               | 无                                |
-| 返回类型  | `Float32Array`；维度不符返回 `null`                                                       | `number[]`；Provider 本身不做维度校验                                   | `Float32Array`                    |
-| 离线可用  | 否                                                                                        | 否                                                                      | 是（确定性、无需 key）            |
+| 实现                  | 源码                                                                                                      | 协议/网络                                                                 | 默认维度 |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------: |
+| OpenAI-compatible     | `src/providers/openai-compatible-embedding-provider.ts`，公共子路径 `memoria/providers/openai-compatible` | `POST {apiUrl}/v1/embeddings`，请求体 `{ model, input }`，Bearer `apiKey` |   `1024` |
+| FakeEmbeddingProvider | `tutorials/_support/fake-embedding.ts`                                                                    | 无网络，确定性输出                                                        |    `128` |
 
-共同点：都收取 `concurrency`（默认 5）；失败位均以 null 补齐，保证
-`embedBatch` 返回长度始终等于输入长度；都不读取 `process.env`
-（全部配置走构造器）。
+OpenAI-compatible provider 不绑定具体服务商、endpoint、模型或密钥。`apiUrl`、
+`apiKey`、`model` 和 `dimension` 应由调用方显式配置；库的默认配置对 endpoint、
+密钥和模型保持空值。provider 支持 `fallbackModels`、按 token/条数分批和有限的
+候选模型重试；超大文本或失败批次按输入位置返回 `null`。
 
-## 3. document / query 双模式
+## 3. document/query 调用语义
 
-查检索侧与索引侧来源调用：
+摄入和检索阶段都通过同一个 `embedBatch` 契约：
 
-| 调用位置        | 代码                                                                                     | text_type 语义                                         |
-| --------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| 入库 chunk 嵌入 | `src/stages/ingestion/chunk-embedder.ts:22` — `embedBatch(chunks)`                       | 无 options → DashScope 使用默认 `textType: 'document'` |
-| 入库 tag 嵌入   | `src/stages/ingestion/tag-embedder.ts:22` — `embedBatch(tags)`                           | 同上（默认 document）                                  |
-| 检索 query 嵌入 | `src/stages/retrieval/query-embedder.ts:71` — `embedBatch(texts, { textType: 'query' })` | **显式传 `textType: 'query'`**                         |
-| TDB 冷知识库    | `src/tdb/tdb-engine.ts:244/380` — `embedBatch(batch)` / `embedBatch([qText])`            | 无 options（默认 document）                            |
+| 调用位置   | 调用方式                                                                               |
+| ---------- | -------------------------------------------------------------------------------------- |
+| chunk 嵌入 | `src/stages/ingestion/chunk-embedder.ts` 的 `embedBatch(chunks)`                       |
+| tag 嵌入   | `src/stages/ingestion/tag-embedder.ts` 的 `embedBatch(tags)`                           |
+| query 嵌入 | `src/stages/retrieval/query-embedder.ts` 的 `embedBatch(texts, { textType: "query" })` |
+| TDB        | `src/tdb/tdb-engine.ts` 的 batch/query 调用                                            |
 
-- DashScope 为不对称检索语义：入库用 `document`、检索用 `query`（源码注释
-  建议区分）。`textType` 可在 `config` 中设默认（`textType === 'query'` 时
-  默认切 query，否则 document），每次调用亦可用 `options.textType` 覆盖。
-- **OpenAI 与 Fake 实现忽略第二个 options 参数**（embedBatch 签名只有
-  texts），即只有 DashScope 真正消费 `{textType}`。
+当前 OpenAI-compatible 和 Fake 实现不消费第二个 options 参数，但 query 阶段仍保留
+`textType: "query"` 的语义标记，便于未来实现需要区分 query/document 的兼容服务。
 
-## 4. 维度一致性规则
+## 4. 维度一致性
 
-- `getDimension()` 与 `config.dimension` 必须相等：引擎装配
-  （`src/engine.ts`）固定以 `dimension: this.config.dimension` 构建默认
-  OpenAI Provider；`config.dimension` 默认 3072（default-config.ts:39）。
-- 向量索引（Rust）与元数据存储按 config.dimension 建立，SQLite 侧对
-  BLOB 长度严格校验（`decodeVectorBlob` 字节数 ≠ dimension×4 → null）。
-- DashScope 对服务端返回做校验：长度 ≠ provider.dimension → 整条置 null
-  （警告 "Dimension mismatch"）。
+`embeddingProvider.getDimension()` 必须与 `config.dimension` 相等。向量索引和 SQLite
+向量字段都按 `config.dimension` 建立；维度改变时，必须使用新的 `dbPath` 和
+`storePath`，重新摄入全部文档。旧数据库、旧索引和 derived artifacts 不迁移。
+
+默认 provider 的装配形状如下：
 
 ```ts
-// 引擎装配（src/engine.ts:89-99）—— 维度默认锁在 config.dimension
-new OpenAIEmbeddingProvider({
-  apiUrl,
-  apiKey,
-  model,
-  modelSig,
-  dimension: config.dimension, // 默认 3072
-  maxBatchItems,
-  maxToken,
-  concurrency,
-  fallbackModels,
+new OpenAICompatibleEmbeddingProvider({
+  apiUrl: config.apiUrl,
+  apiKey: config.apiKey,
+  model: config.model,
+  modelSig: config.modelSig,
+  dimension: config.dimension,
+  maxBatchItems: config.maxBatchItems,
+  maxToken: config.maxToken,
+  concurrency: config.concurrency,
+  fallbackModels: config.fallbackModels,
 });
 ```
 
-## 5. 切换 Provider 与迁移库
+## 5. 使用方式
 
-1. 构造实例：`new DashScopeEmbeddingProvider({ apiUrl, apiKey, model, dimension })`（或 fake）。
-2. 注入引擎：`createMemoryEngine({ embeddingProvider: myProvider, config: { dimension: <相同值> } })`。
-3. **维度不可变**：已有向量的 BLOB 长度与 VEXUS 索引维度在创建时固定。
-   更换维度 = 旧库全部失效，**必须重灌**（确认备份后删除现有
-   `storePath`/`dbPath`，再重新 `flush`）；若前后维度相同（如两个 1024 的
-   商用模型互切），可复用旧库——但嵌入分布变化递归序，是否重灌视效果。
-4. 临时试验：注入 `fakeEmbeddingProvider`（128 维）验证管线流程，不回
-   生产（维度与真实模型不同）。
+通过公共子路径使用兼容 provider：
 
-## 6. 诚实的当前限制（均可源码验证）
+```ts
+import CompatibleEmbeddingProvider from "memoria/providers/openai-compatible";
 
-- **无 OAuth2 / AK-SK 签名**：两个网络实现都只支持静态 Bearer `apiKey`；
-  `src/` 全树无 `oauth` / `proxy` 相关代码与 `process.env` 读取。
-- **OpenAI 兼容层无超时**：fetch 无 AbortController，慢端点可能挂起
-  请求（429 有退避，但网络级停顿未处理）。
-- **OpenAI 返回 `number[]`**：契约标注 `Float32Array|null`，实际为
-  `number[]|null`；不使用为 Float32Array，代码依赖将向量转 Float32Array
-  的只在 Fake/DashScope 路径验证过。
-- **OpenAI 不做维度校验**：模型返回任意维度都能入库，传入下游
-  decode/encode 可能 BLOB 长度不匹配告警。
-- **DashScope 的 `maxToken` 未参与分桶**：构造项存在（默认 64000），
-  但 `embedBatch` 不按 token 切批（仅按条数 20）；超长文本直接由服务端
-  拒绝、返回 null（不等对 OpenAI 的本地 token 预检）。
-- **嵌入失败不抛错**：失败位全部静默置 `null`；入库侧 chunk/tag 过滤掉，
-  查询侧 `queries` 为空时置 `failed: true`（query-embedder 判定）。
-  一批全部失败无异常，仅服务端 warning 日志。
+const embeddingProvider = new CompatibleEmbeddingProvider({
+  apiUrl: "https://provider.example",
+  apiKey: "your-api-key",
+  model: "embedding-model",
+  dimension: 1024,
+});
+```
 
-验证视角：§2/§3 的调用点、构造函数默认值均与源码逐项对照；行为验证见
-`tests/providers/`（批次对齐、失败补 null）与 `tests/pipelines/`（query
-模式与维度一致性）。
+再将它注入 `createMemoryEngine({ embeddingProvider, config: { dimension: 1024 } })`。
+教程中的 `FakeEmbeddingProvider` 只用于保证流程可运行，不属于库的公开 runtime export。
+
+## 6. OpenAI-compatible reranker
+
+库也提供供应商中立的 OpenAI-compatible reranker 适配器。它不读取环境变量，也不
+提供 endpoint、密钥或模型默认值；调用方必须显式传入配置，并将返回的
+`ExternalReranker` 注入 `MemoryEngineOptions`：
+
+```ts
+import { createMemoryEngine } from "memoria";
+import { createOpenAICompatibleReranker } from "memoria/providers/openai-compatible";
+
+const engine = createMemoryEngine({
+  embeddingProvider,
+  reranker: createOpenAICompatibleReranker({
+    apiUrl: "https://provider.example/v1/chat/completions",
+    apiKey: "your-api-key",
+    model: "reranker-model",
+  }),
+  config: { externalRerankEnabled: true },
+});
+```
+
+默认搜索不会请求 reranker。适配器发送候选的 `chunkId`、path、title、tags 和截断正文，
+并读取 `choices[0].message.content` 中的 JSON score 数组；调用顺序和失败语义见
+[检索能力矩阵](RETRIEVAL_FEATURES.md)。
+
+## 7. 已知限制
+
+- 网络 provider 只实现静态 Bearer `apiKey`，没有 OAuth 或服务商专属签名流程。
+- 当前 fetch 请求没有独立的 AbortController 超时；429 会按 fallback model 顺序退避。
+- 网络 provider 返回 `number[]`，下游会按配置维度写入/校验向量。
+- provider 失败位置返回 `null`；摄入阶段过滤失败向量，query 阶段在没有成功向量时
+  将查询标记为 failed。
+- 缺少 `apiUrl`、`apiKey` 或 `model` 时，调用方必须在初始化前完成配置；provider selection
+  example 会在创建数据库前明确报错。

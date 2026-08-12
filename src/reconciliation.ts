@@ -9,7 +9,7 @@ import type {
 } from "./types.js";
 import { decodeVectorBlob } from "./utils/vector-codec.js";
 
-const TAG_INDEX_NAME = "global_tags";
+const TAG_INDEX_NAME = "tag_vectors";
 
 async function loadActiveTags(metadataStore: MetadataStoreContract) {
   return typeof metadataStore.getActiveTags === "function"
@@ -18,12 +18,6 @@ async function loadActiveTags(metadataStore: MetadataStoreContract) {
 }
 
 export type { VectorReconciliationPlan } from "./types.js";
-
-interface ReconciliationOptions {
-  metadataStore: MetadataStoreContract;
-  vectorStore: VectorStoreContract & { indices?: Map<string, unknown> };
-  dimension: number;
-}
 
 async function loadIndexableChunks(
   metadataStore: MetadataStoreContract,
@@ -39,7 +33,7 @@ async function loadIndexableChunks(
     result.push({
       chunkId: chunk.id,
       vector: chunk.vector ?? null,
-      indexName: file?.diary_name || file?.diaryName || "Root",
+      indexName: file?.space || "Root",
     });
   }
   return result;
@@ -55,7 +49,7 @@ async function loadExpectedIndexNames(
     ].sort();
   }
 
-  const names = new Set<string>(await metadataStore.getDistinctDiaryNames());
+  const names = new Set<string>(await metadataStore.getDistinctSpaces());
   if (hasTags) names.add(TAG_INDEX_NAME);
   return [...names].filter(Boolean).sort();
 }
@@ -225,15 +219,4 @@ export async function applyVectorReconciliationPlan(
       { cause: error, retryable: true },
     );
   }
-}
-
-/** Compatibility wrapper for callers that still use the old coordinator name. */
-export async function reconcileVectorIndexes(
-  options: ReconciliationOptions,
-): Promise<ReconciliationReport> {
-  const plan = await buildVectorReconciliationPlan(
-    options.metadataStore,
-    options.dimension,
-  );
-  return applyVectorReconciliationPlan(plan, options.vectorStore);
 }

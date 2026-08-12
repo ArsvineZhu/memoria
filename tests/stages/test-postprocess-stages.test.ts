@@ -26,14 +26,14 @@ async function seedMemoryFiles() {
   const nowSec = Math.floor(Date.now() / 1000);
   const oldFile = (await store.upsertFile({
     path: "d/old.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "o",
     mtime: nowSec - 30 * 86400,
     size: 3,
   }))!;
   const newFile = (await store.upsertFile({
     path: "d/new.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "n",
     mtime: nowSec - 3 * 86400,
     size: 3,
@@ -134,7 +134,7 @@ test("ResultDeduplicatorStage hydrates missing vectors through the metadata cont
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const fileId = (await store.upsertFile({
     path: "loader.md",
-    diaryName: "Root",
+    space: "Root",
     checksum: "loader",
     mtime: 0,
     size: 2,
@@ -217,7 +217,8 @@ test("ExternalRerankerStage reorders candidates with injected reranker", async (
     ];
   };
   const ctx = new PipelineContext({
-    config: { externalRerankEnabled: true, reranker },
+    config: { externalRerankEnabled: true },
+    reranker,
   });
   const out = await stage.process(
     {
@@ -245,7 +246,8 @@ test("ExternalRerankerStage keeps un-reranked candidates at the tail", async () 
     _candidates: readonly ChunkCandidate[],
   ): Promise<readonly ChunkCandidate[]> => [{ chunkId: 2, score: 0.99 }];
   const ctx = new PipelineContext({
-    config: { externalRerankEnabled: true, reranker },
+    config: { externalRerankEnabled: true },
+    reranker,
   });
   const out = await stage.process(
     {
@@ -270,12 +272,12 @@ test("ExternalRerankerStage supports weighted RRF fusion", async () => {
       externalRerankEnabled: true,
       externalRerankMode: "rrf",
       externalRerankAlpha: 1,
-      reranker: async () => [
-        { chunkId: 3, score: 0.8 },
-        { chunkId: 2, score: 0.7 },
-        { chunkId: 1, score: 0.6 },
-      ],
     },
+    reranker: async () => [
+      { chunkId: 3, score: 0.8 },
+      { chunkId: 2, score: 0.7 },
+      { chunkId: 1, score: 0.6 },
+    ],
   });
   const out = await stage.process(
     {
@@ -317,12 +319,12 @@ test("RRF order survives final result formatting", async () => {
         externalRerankEnabled: true,
         externalRerankMode: "rrf",
         externalRerankAlpha: 1,
-        reranker: async () => [
-          { chunkId: 3, score: 0.8 },
-          { chunkId: 2, score: 0.7 },
-          { chunkId: 1, score: 0.6 },
-        ],
       },
+      reranker: async () => [
+        { chunkId: 3, score: 0.8 },
+        { chunkId: 2, score: 0.7 },
+        { chunkId: 1, score: 0.6 },
+      ],
     }),
   );
   const formatted = await new ResultFormatterStage().process(
@@ -350,11 +352,11 @@ test("ExternalRerankerStage honors an explicit zero RRF weight", async () => {
         externalRerankEnabled: true,
         externalRerankMode: "rrf",
         externalRerankAlpha: 0,
-        reranker: async () => [
-          { chunkId: 2, score: 1 },
-          { chunkId: 1, score: 0 },
-        ],
       },
+      reranker: async () => [
+        { chunkId: 2, score: 1 },
+        { chunkId: 1, score: 0 },
+      ],
     }),
   );
 
@@ -379,10 +381,10 @@ test("ExternalRerankerStage passes through when gated off", async () => {
   const ctx = new PipelineContext({
     config: {
       externalRerankEnabled: false,
-      reranker: async () => {
-        called = true;
-        return [];
-      },
+    },
+    reranker: async () => {
+      called = true;
+      return [];
     },
   });
   const out = await stage.process(
@@ -401,11 +403,11 @@ test("ExternalRerankerStage propagates stable-read reentrancy errors", async () 
   const ctx = new PipelineContext({
     config: {
       externalRerankEnabled: true,
-      reranker: async () => {
-        throw new MemoriaError("concurrency", "mutation reentered stable read", {
-          details: { reason: "stable_read_reentrancy" },
-        });
-      },
+    },
+    reranker: async () => {
+      throw new MemoriaError("concurrency", "mutation reentered stable read", {
+        details: { reason: "stable_read_reentrancy" },
+      });
     },
   });
 
@@ -427,9 +429,9 @@ test("ExternalRerankerStage propagates lifecycle control errors", async () => {
   const ctx = new PipelineContext({
     config: {
       externalRerankEnabled: true,
-      reranker: async () => {
-        throw new MemoriaError("lifecycle", "close is not allowed here");
-      },
+    },
+    reranker: async () => {
+      throw new MemoriaError("lifecycle", "close is not allowed here");
     },
   });
 
@@ -449,9 +451,9 @@ test("ExternalRerankerStage hides provider exception details", async () => {
   const ctx = new PipelineContext({
     config: {
       externalRerankEnabled: true,
-      reranker: async () => {
-        throw new Error(`provider failed: ${secret}`);
-      },
+    },
+    reranker: async () => {
+      throw new Error(`provider failed: ${secret}`);
     },
   });
 
@@ -623,7 +625,7 @@ test("ExpanderStage adds same-file chunks with an expansion boost", async () => 
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const f1 = (await store.upsertFile({
     path: "a.md",
-    diaryName: "d",
+    space: "d",
     checksum: "a",
     mtime: 1,
     size: 1,
@@ -658,14 +660,14 @@ test("ExpanderStage applies the resolved hard scope before adding siblings", asy
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const inScopeFile = (await store.upsertFile({
     path: "research/a.md",
-    diaryName: "research",
+    space: "research",
     checksum: "a",
     mtime: 1,
     size: 1,
   }))!;
   const outsideFile = (await store.upsertFile({
     path: "private/b.md",
-    diaryName: "private",
+    space: "private",
     checksum: "b",
     mtime: 1,
     size: 1,
@@ -705,7 +707,7 @@ test("ExpanderStage can materialize the full parent document", async () => {
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const file = (await store.upsertFile({
     path: "docs/guide.md",
-    diaryName: "docs",
+    space: "docs",
     checksum: "guide",
     mtime: 1,
     size: 1,
@@ -745,7 +747,7 @@ test("ExpanderStage is gated off by default", async () => {
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const f1 = (await store.upsertFile({
     path: "a.md",
-    diaryName: "d",
+    space: "d",
     checksum: "a",
     mtime: 1,
     size: 1,
@@ -769,12 +771,12 @@ test("ExpanderStage is gated off by default", async () => {
 
 async function seedAssociatorStore() {
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
-  const makeFile = (path: string, diaryName: string, checksum: string) =>
-    store.upsertFile({ path, diaryName, checksum, mtime: 1, size: 1 });
-  const seedFile = (await makeFile("seed.md", "diary1", "seed"))!;
-  const tagFile = (await makeFile("tag.md", "diary2", "tag"))!;
-  const outsideFile = (await makeFile("outside.md", "diary3", "outside"))!;
-  const vectorFile = (await makeFile("vector.md", "diary2", "vector"))!;
+  const makeFile = (path: string, space: string, checksum: string) =>
+    store.upsertFile({ path, space, checksum, mtime: 1, size: 1 });
+  const seedFile = (await makeFile("seed.md", "space1", "seed"))!;
+  const tagFile = (await makeFile("tag.md", "space2", "tag"))!;
+  const outsideFile = (await makeFile("outside.md", "space3", "outside"))!;
+  const vectorFile = (await makeFile("vector.md", "space2", "vector"))!;
   const [seedChunk] = await store.insertChunks(seedFile, [
     {
       chunkIndex: 0,
@@ -822,7 +824,7 @@ test("AssociatorStage adds scoped tag and vector neighbors with deterministic me
   const vectorStore: VectorStoreContract = {
     search: async (indexName, _queryVector, _k) => {
       searchedIndexes.push(indexName);
-      if (indexName === "diary1") {
+      if (indexName === "space1") {
         return [
           { id: seedChunk, score: 0.99 },
           { id: vectorChunk, score: 0.6 },
@@ -852,7 +854,7 @@ test("AssociatorStage adds scoped tag and vector neighbors with deterministic me
 
   const out = await stage.process(
     {
-      resolvedIndexNames: ["diary1", "diary2", "global_tags"],
+      resolvedIndexNames: ["space1", "space2", "tag_vectors"],
       mergedCandidates: [{ chunkId: seedChunk, score: 0.9 }],
     },
     ctx,
@@ -869,7 +871,7 @@ test("AssociatorStage adds scoped tag and vector neighbors with deterministic me
   assert.strictEqual(out.associatorStats!.added, 2);
   assert.strictEqual(out.associatorStats!.fromTags, 1);
   assert.strictEqual(out.associatorStats!.fromVector, 1);
-  assert.deepStrictEqual(searchedIndexes.sort(), ["diary1", "diary2"]);
+  assert.deepStrictEqual(searchedIndexes.sort(), ["space1", "space2"]);
 });
 
 test("AssociatorStage applies the resolved chunk scope before adding neighbors", async () => {
@@ -886,7 +888,7 @@ test("AssociatorStage applies the resolved chunk scope before adding neighbors",
   } as VectorStoreContract;
   const out = await stage.process(
     {
-      resolvedIndexNames: ["diary1", "diary2", "diary3"],
+      resolvedIndexNames: ["space1", "space2", "space3"],
       allowedChunkIds: new Set([seedChunk, vectorChunk]),
       mergedCandidates: [{ chunkId: seedChunk, score: 0.9 }],
     },
@@ -937,7 +939,7 @@ test("AssociatorStage keeps vector-only candidates, excludes existing chunks, an
   });
   const out = await stage.process(
     {
-      resolvedIndexNames: ["diary1", "diary2"],
+      resolvedIndexNames: ["space1", "space2"],
       mergedCandidates: [
         { chunkId: seedChunk, score: 0.9 },
         { chunkId: tagChunk, score: 0.8 },
@@ -982,7 +984,7 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
     config: {},
     metadataStore: store,
   });
-  const tagMemoTrace = {
+  const tagGraphPropagationTrace = {
     activations: new Map<number, number>(),
     rankedTags: ["重要"],
     iterations: 3,
@@ -990,7 +992,7 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
   const out = await stage.process(
     {
       query: "记忆",
-      tagMemo: tagMemoTrace,
+      tagGraphPropagation: tagGraphPropagationTrace,
       mergedCandidates: [
         {
           chunkId: newChunk,
@@ -1011,7 +1013,7 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
   assert.strictEqual(row.path, "d/new.md");
   assert.strictEqual(row.sourceFile, "new.md");
   assert.strictEqual(row.fileId, newFile);
-  assert.strictEqual(row.diaryName, "diary1");
+  assert.strictEqual(row.space, "space1");
   assert.strictEqual(row.score, 0.77);
   assert.strictEqual(row.source, "associate");
   assert.strictEqual(row.associationChannel, "tag");
@@ -1019,7 +1021,11 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
   assert.ok(Number.isFinite(row.updatedAt));
   assert.deepStrictEqual(row.tags, ["重要"]);
   assert.deepStrictEqual(row.matchedTags, ["重要"]);
-  assert.strictEqual(out.tagMemo, tagMemoTrace, "traces pass through unchanged");
+  assert.strictEqual(
+    out.tagGraphPropagation,
+    tagGraphPropagationTrace,
+    "traces pass through unchanged",
+  );
   assert.strictEqual(out.resultCount, 1);
 });
 
@@ -1097,7 +1103,7 @@ test("full postprocess pipeline: merge -> dedupe -> decay -> truncate -> format"
   for (const row of out.results!) {
     assert.ok(row.content!.length <= 20);
     assert.ok(Number.isFinite(row.updatedAt));
-    assert.strictEqual(typeof row.diaryName, "string");
+    assert.strictEqual(typeof row.space, "string");
   }
   assert.strictEqual(out.results![0].tags!.length, 1, "tagged file resolves its tags");
   assert.strictEqual(out.results![0].tags![0], "重要");

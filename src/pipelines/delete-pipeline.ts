@@ -16,14 +16,14 @@ interface PipelineOptions {
 /**
  * DeletePipeline — single-file removal pipeline.
  *
- * Mirrors KnowledgeBaseManager._handleDeleteBatch for one file: the file
+ * Handles one file deletion in the MemoryEngine pipeline: the file
  * row plus its chunk rows (FK cascade) are removed and the chunk vectors
- * are dropped from the diary index. Tag rows and the shared tag index are
+ * are dropped from the space index. Tag rows and the shared tag index are
  * intentionally left untouched (tags are shared across files).
  *
  * Usage:
  *   const pipeline = new DeletePipeline();
- *   const result = await pipeline.deleteFile('diary1/note.md', ctx);
+ *   const result = await pipeline.deleteFile('space1/note.md', ctx);
  *   // ctx: { metadataStore, vectorStore, config: { rootPath? } }
  *
  * Result envelope: {0...source info, deleted: boolean, fileId, removedChunkIds}.

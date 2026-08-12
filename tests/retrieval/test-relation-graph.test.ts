@@ -118,7 +118,7 @@ test("relation graph persists source links and adds reversible derived links", a
   assert.equal(related.get("path:life/c.mdx")?.distance, 2);
 
   const snapshot = await graph.load();
-  assert.equal(snapshot.schema, "memoria-relation-graph-v1");
+  assert.equal(snapshot.schema, "relation-graph-v1");
   assert.equal(snapshot.relations.length, 2);
   assert.ok(String(stored).includes("co-retrieval"));
 });

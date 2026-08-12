@@ -1,13 +1,13 @@
 /**
  * ResultDeduplicator.js
  *
- * KnowledgeBaseManager 通用结果去重器。
+ * Memoria 通用结果去重器。
  *
  * 去重分为两层：
  * 1. 硬去重：按 chunkId、规范化正文和稳定路径身份消除完全重复项；
  * 2. 语义去重：对有向量的候选执行余弦近重复抑制，无向量候选始终安全保留。
  *
- * 本组件不属于 TagMemo/RiverMemo 的 Rust 查询主链。它只处理各召回引擎已经返回的候选，
+ * 本组件不属于 TagGraphPropagation/PropagationStructure 的 Rust 查询主链。它只处理各召回引擎已经返回的候选，
  * 为霰弹枪查询、多路 BM25/Time 合并和最终输出提供统一的后处理能力。
  */
 
@@ -59,10 +59,10 @@ class ResultDeduplicator {
       maxResults: 1000,
       minSemanticCandidates: 2,
       sourcePriority: {
-        rag: 50,
+        semantic: 50,
         time: 45,
-        bm25_body: 40,
-        bm25_tag: 40,
+        bm25Body: 40,
+        bm25Tag: 40,
         continuity: 35,
         associate: 10,
         unknown: 0,
@@ -378,10 +378,20 @@ class ResultDeduplicator {
 
   _getSourcePriority(candidate: Candidate): number {
     const source = String(candidate?.source || "unknown").toLowerCase();
-    const configured = Number(this.config.sourcePriority?.[source]);
+    const canonicalSource =
+      source === "vector" || source === "hybrid"
+        ? "semantic"
+        : source === "expansion"
+          ? "associate"
+          : source;
+    const configured = Number(
+      this.config.sourcePriority?.[
+        canonicalSource as keyof typeof this.config.sourcePriority
+      ],
+    );
     if (Number.isFinite(configured)) return configured;
     if (source.startsWith("bm25")) {
-      const bm25Priority = Number(this.config.sourcePriority?.bm25_body);
+      const bm25Priority = Number(this.config.sourcePriority?.bm25Body);
       return Number.isFinite(bm25Priority) ? bm25Priority : 40;
     }
     return Number(this.config.sourcePriority?.unknown) || 0;

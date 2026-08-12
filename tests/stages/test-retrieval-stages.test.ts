@@ -50,9 +50,9 @@ function makeVectorStore() {
   return new VexusVectorStore({
     dimension: dim,
     storePath: ".",
-    tagIndexCapacity: 100,
+    tagVectorIndexCapacity: 100,
     indexSaveDelay: 100,
-    tagIndexSaveDelay: 100,
+    tagVectorIndexSaveDelay: 100,
   });
 }
 
@@ -66,7 +66,7 @@ test("SearchScopeResolverStage gives call aliases precedence and preserves expli
     metadataStore,
   });
 
-  const callScope = await stage.process({ query: "q", diaryNames: ["call"] }, ctx);
+  const callScope = await stage.process({ query: "q", spaces: ["call"] }, ctx);
   assert.deepEqual(callScope.resolvedIndexNames, ["call"]);
   assert.equal(callScope.scopeSource, "call");
   assert.equal(callScope.scopeWasExplicit, true);
@@ -84,7 +84,7 @@ test("SearchScopeResolverStage records authority and fallback scope sources", as
     new PipelineContext({
       config: {},
       metadataStore: {
-        getExpectedVectorIndexNames: async () => ["authority", "global_tags"],
+        getExpectedVectorIndexNames: async () => ["authority", "tag_vectors"],
       } as unknown as MetadataStoreContract,
     }),
   );
@@ -105,14 +105,14 @@ test("space-only filters remain fail-closed after related expansion", async () =
   const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const fileA = (await metadataStore.upsertFile({
     path: "a/note.md",
-    diaryName: "A",
+    space: "A",
     checksum: "a",
     mtime: 1,
     size: 1,
   }))!;
   const fileB = (await metadataStore.upsertFile({
     path: "b/note.md",
-    diaryName: "B",
+    space: "B",
     checksum: "b",
     mtime: 1,
     size: 1,
@@ -157,14 +157,14 @@ test("retrieval filter spaces remain hard filters when caller scope is broader",
   const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const fileA = (await metadataStore.upsertFile({
     path: "a/note.md",
-    diaryName: "A",
+    space: "A",
     checksum: "a",
     mtime: 1,
     size: 1,
   }))!;
   const fileB = (await metadataStore.upsertFile({
     path: "b/note.md",
-    diaryName: "B",
+    space: "B",
     checksum: "b",
     mtime: 1,
     size: 1,
@@ -192,46 +192,46 @@ test("retrieval filter spaces remain hard filters when caller scope is broader",
 
 // ── Metadata store retrieval helpers (used by the stages) ────────────────
 
-test("SqliteMetadataStore.getDistinctDiaryNames returns unique diary names", async () => {
+test("SqliteMetadataStore.getDistinctSpaces returns unique space names", async () => {
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   await store.upsertFile({
     path: "d1/a.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "a",
     mtime: 1,
     size: 1,
   });
   await store.upsertFile({
     path: "d1/b.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "b",
     mtime: 1,
     size: 1,
   });
   await store.upsertFile({
     path: "d2/c.md",
-    diaryName: "diary2",
+    space: "space2",
     checksum: "c",
     mtime: 1,
     size: 1,
   });
 
-  const names = await store.getDistinctDiaryNames();
-  assert.deepStrictEqual(names.sort(), ["diary1", "diary2"]);
+  const names = await store.getDistinctSpaces();
+  assert.deepStrictEqual(names.sort(), ["space1", "space2"]);
 });
 
 test("getMetadataStore getFileIdsByTagId returns file ids tagged with a tag", async () => {
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const f1 = (await store.upsertFile({
     path: "x/a.md",
-    diaryName: "d",
+    space: "d",
     checksum: "a",
     mtime: 1,
     size: 1,
   }))!;
   const f2 = (await store.upsertFile({
     path: "x/b.md",
-    diaryName: "d",
+    space: "d",
     checksum: "b",
     mtime: 1,
     size: 1,
@@ -255,7 +255,7 @@ test("getMetadataStore getAllChunks returns every chunk row with content", async
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const f1 = (await store.upsertFile({
     path: "a.md",
-    diaryName: "d",
+    space: "d",
     checksum: "a",
     mtime: 1,
     size: 1,
@@ -275,7 +275,7 @@ test("getMetadataStore getFileByChunkId resolves a chunk to its file row", async
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const f1 = (await store.upsertFile({
     path: "a.md",
-    diaryName: "diaryX",
+    space: "spaceX",
     checksum: "a",
     mtime: 123,
     size: 5,
@@ -286,7 +286,7 @@ test("getMetadataStore getFileByChunkId resolves a chunk to its file row", async
   assert.ok(file);
   assert.strictEqual(file.id, f1);
   assert.strictEqual(file.path, "a.md");
-  assert.strictEqual(file.diary_name, "diaryX");
+  assert.strictEqual(file.space, "spaceX");
 
   const missing = await store.getFileByChunkId(999999);
   assert.strictEqual(missing, null);
@@ -310,12 +310,12 @@ test("QueryEmbedderStage embeds the query into queries entries", async () => {
   assert.ok(out.queries[0].vector && out.queries[0].vector.length === dim);
 });
 
-test("QueryEmbedderStage supports injectable rephraserFn query expansion", async () => {
+test("QueryEmbedderStage supports injectable queryRephraserFn query expansion", async () => {
   const stage = new QueryEmbedderStage();
-  const rephraserFn = async (query: string, i: number): Promise<string> =>
+  const queryRephraserFn = async (query: string, i: number): Promise<string> =>
     `${query} 重述${i}`;
   const ctx = new PipelineContext({
-    config: { queryExpansion: 3, rephraserFn },
+    config: { queryExpansion: 3, queryRephraserFn },
     embeddingProvider: fakeEmbeddingProvider,
   });
   const out = await stage.process({ query: "猫" }, ctx);
@@ -369,20 +369,20 @@ test("QueryEmbedderStage reports failure without an embedding provider", async (
 
 // ── VectorSearcherStage ─────────────────────────────────────────────────
 
-test("VectorSearcherStage searches the diary index and returns chunk ids", async () => {
+test("VectorSearcherStage searches the space index and returns chunk ids", async () => {
   const stage = new VectorSearcherStage();
   assert.strictEqual(stage.name, "vectorSearcher");
 
   const store = makeVectorStore();
-  await store.add("diary1", 1, vec(1, 0, 0, 0));
-  await store.add("diary1", 2, vec(0, 1, 0, 0));
-  await store.add("diary1", 3, vec(0, 0, 1, 0));
+  await store.add("space1", 1, vec(1, 0, 0, 0));
+  await store.add("space1", 2, vec(0, 1, 0, 0));
+  await store.add("space1", 3, vec(0, 0, 1, 0));
 
   const ctx = new PipelineContext({ config: {}, vectorStore: store });
   const out = await stage.process(
     {
       queries: [{ text: "query", vector: vec(1, 0.2, 0, 0) }],
-      diaryName: "diary1",
+      space: "space1",
       topK: 2,
     },
     ctx,
@@ -394,46 +394,46 @@ test("VectorSearcherStage searches the diary index and returns chunk ids", async
   assert.ok(out.vectorResults.every((r) => Number.isFinite(r.score)));
 });
 
-test("VectorSearcherStage supports explicit diaryNames (virtual index search)", async () => {
+test("VectorSearcherStage supports explicit spaces (virtual index search)", async () => {
   const stage = new VectorSearcherStage();
   const store = makeVectorStore();
-  await store.add("diaryA", 11, vec(1, 0, 0, 0));
-  await store.add("diaryA", 12, vec(0, 0, 1, 0));
-  await store.add("diaryB", 21, vec(0, 1, 0, 0));
-  await store.add("diaryB", 22, vec(0, 0, 0, 1));
+  await store.add("spaceA", 11, vec(1, 0, 0, 0));
+  await store.add("spaceA", 12, vec(0, 0, 1, 0));
+  await store.add("spaceB", 21, vec(0, 1, 0, 0));
+  await store.add("spaceB", 22, vec(0, 0, 0, 1));
 
   const ctx = new PipelineContext({ config: {}, vectorStore: store });
   const out = await stage.process(
     {
       queries: [{ text: "q", vector: vec(1, 0, 0, 0) }],
-      diaryNames: ["diaryA", "diaryB"],
+      spaces: ["spaceA", "spaceB"],
       topK: 10,
     },
     ctx,
   );
 
   const ids = out.vectorResults.map((r) => r.chunkId).sort((a, b) => a - b);
-  assert.ok(ids.includes(11), "should hit diaryA top result");
-  assert.ok(ids.includes(21), "should hit diaryB top result");
+  assert.ok(ids.includes(11), "should hit spaceA top result");
+  assert.ok(ids.includes(21), "should hit spaceB top result");
 });
 
-test("VectorSearcherStage supports searchAllIndices via metadata store diary names", async () => {
+test("VectorSearcherStage supports searchAllIndices via metadata store space names", async () => {
   const stage = new VectorSearcherStage();
   const store = makeVectorStore();
-  await store.add("diaryA", 1, vec(1, 0, 0, 0));
-  await store.add("diaryB", 2, vec(0, 1, 0, 0));
+  await store.add("spaceA", 1, vec(1, 0, 0, 0));
+  await store.add("spaceB", 2, vec(0, 1, 0, 0));
 
   const metaStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   await metaStore.upsertFile({
     path: "d1/x.md",
-    diaryName: "diaryA",
+    space: "spaceA",
     checksum: "x",
     mtime: 1,
     size: 1,
   });
   await metaStore.upsertFile({
     path: "d2/y.md",
-    diaryName: "diaryB",
+    space: "spaceB",
     checksum: "y",
     mtime: 1,
     size: 1,
@@ -463,14 +463,14 @@ test("VectorSearcherStage expands tag hits to chunks of tagged files", async () 
   const metaStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const f1 = (await metaStore.upsertFile({
     path: "a.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "a",
     mtime: 1,
     size: 1,
   }))!;
   const f2 = (await metaStore.upsertFile({
     path: "b.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "b",
     mtime: 1,
     size: 1,
@@ -492,18 +492,18 @@ test("VectorSearcherStage expands tag hits to chunks of tagged files", async () 
   // Vector-store keys must use the real SQLite id space. File 1's chunks
   // do not match the query vector at all — they can only be found through
   // the tag expansion path.
-  await vectorStore.add("global_tags", tag7, vec(1, 0, 0, 0));
-  await vectorStore.add("global_tags", tag8, vec(0, 1, 0, 0));
+  await vectorStore.add("tag_vectors", tag7, vec(1, 0, 0, 0));
+  await vectorStore.add("tag_vectors", tag8, vec(0, 1, 0, 0));
 
   const ctx = new PipelineContext({
-    config: { tagSearchEnabled: true, tagK: 1 },
+    config: { tagSearchEnabled: true, tagVectorTopK: 1 },
     vectorStore,
     metadataStore: metaStore,
   });
   const out = await stage.process(
     {
       queries: [{ text: "q", vector: vec(1, 0, 0, 0) }],
-      diaryName: "diary1",
+      space: "space1",
       topK: 10,
     },
     ctx,
@@ -524,7 +524,7 @@ test("VectorSearcherStage does not let tag search escape an explicit empty scope
   const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const file = (await metadataStore.upsertFile({
     path: "tagged.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "tagged",
     mtime: 1,
     size: 1,
@@ -534,7 +534,7 @@ test("VectorSearcherStage does not let tag search escape an explicit empty scope
   ]);
   const [tagId] = await metadataStore.upsertTags([{ name: "tagged", vector: null }]);
   await metadataStore.setFileTags(file, [tagId]);
-  await vectorStore.add("global_tags", tagId, vec(1, 0, 0, 0));
+  await vectorStore.add("tag_vectors", tagId, vec(1, 0, 0, 0));
 
   const out = await stage.process(
     {
@@ -555,13 +555,13 @@ test("VectorSearcherStage does not let tag search escape an explicit empty scope
 test("VectorSearcherStage skips queries with null vectors", async () => {
   const stage = new VectorSearcherStage();
   const store = makeVectorStore();
-  await store.add("diary1", 1, vec(1, 0, 0, 0));
+  await store.add("space1", 1, vec(1, 0, 0, 0));
 
   const ctx = new PipelineContext({ config: {}, vectorStore: store });
   const out = await stage.process(
     {
       queries: [{ text: "q", vector: null } as QueryVector],
-      diaryName: "diary1",
+      space: "space1",
       topK: 5,
     },
     ctx,
@@ -601,21 +601,21 @@ async function seedBm25Corpus() {
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const f1 = (await store.upsertFile({
     path: "a.md",
-    diaryName: "d",
+    space: "d",
     checksum: "a",
     mtime: 1,
     size: 1,
   }))!;
   const f2 = (await store.upsertFile({
     path: "b.md",
-    diaryName: "d",
+    space: "d",
     checksum: "b",
     mtime: 1,
     size: 1,
   }))!;
   const f3 = (await store.upsertFile({
     path: "c.md",
-    diaryName: "d",
+    space: "d",
     checksum: "c",
     mtime: 1,
     size: 1,
@@ -715,14 +715,14 @@ test("retrieval stages honor one resolved scope across vector and BM25", async (
   const vectorStore = makeVectorStore();
   const fileA = (await metadataStore.upsertFile({
     path: "a.md",
-    diaryName: "A",
+    space: "A",
     checksum: "a",
     mtime: 1,
     size: 1,
   }))!;
   const fileB = (await metadataStore.upsertFile({
     path: "b.md",
-    diaryName: "B",
+    space: "B",
     checksum: "b",
     mtime: 1,
     size: 1,
@@ -775,8 +775,8 @@ test("retrieval stages honor one resolved scope across vector and BM25", async (
 
 const makeMergeInput = () => ({
   vectorResults: [
-    { indexName: "diary1", chunkId: 1, score: 0.9 },
-    { indexName: "diary1", chunkId: 2, score: 0.5 },
+    { indexName: "space1", chunkId: 1, score: 0.9 },
+    { indexName: "space1", chunkId: 2, score: 0.5 },
   ],
   bm25Results: [
     { chunkId: 2, score: 0.8 },
@@ -817,10 +817,11 @@ test("CandidateMergerStage honors configurable vector/bm25 weights", async () =>
   const vecOut = await stage.process(makeMergeInput(), vecCtx);
   assert.strictEqual(vecOut.mergedCandidates[0].chunkId, 1);
 
-  // hybridAlpha alias maps to the vector weight.
-  const alphaCtx = new PipelineContext({ config: { hybridAlpha: 0.5 } });
-  const alphaOut = await stage.process(makeMergeInput(), alphaCtx);
-  assert.strictEqual(alphaOut.mergedCandidates[0].chunkId, 2);
+  const balancedCtx = new PipelineContext({
+    config: { vectorWeight: 0.5, bm25Weight: 0.5 },
+  });
+  const balancedOut = await stage.process(makeMergeInput(), balancedCtx);
+  assert.strictEqual(balancedOut.mergedCandidates[0].chunkId, 2);
 });
 
 test("CandidateMergerStage leaves recency unchanged for TimeDecayStage", async () => {
@@ -830,14 +831,14 @@ test("CandidateMergerStage leaves recency unchanged for TimeDecayStage", async (
 
   const oldFile = (await metaStore.upsertFile({
     path: "old.md",
-    diaryName: "d",
+    space: "d",
     checksum: "o",
     mtime: nowSec - 30 * 86400,
     size: 1,
   }))!;
   const newFile = (await metaStore.upsertFile({
     path: "new.md",
-    diaryName: "d",
+    space: "d",
     checksum: "n",
     mtime: nowSec - 3 * 86400,
     size: 1,
@@ -894,14 +895,14 @@ test("full retrieval pipeline: query -> embed -> vector + bm25 -> merged", async
 
   const fA = (await metaStore.upsertFile({
     path: "d1/a.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "a",
     mtime: 1000,
     size: 4,
   }))!;
   const fB = (await metaStore.upsertFile({
     path: "d1/b.md",
-    diaryName: "diary1",
+    space: "space1",
     checksum: "b",
     mtime: 1000,
     size: 4,
@@ -913,8 +914,8 @@ test("full retrieval pipeline: query -> embed -> vector + bm25 -> merged", async
     { chunkIndex: 0, content: "狗的记录" },
   ]);
 
-  await vectorStore.add("diary1", cA, vec(1, 0, 0, 0));
-  await vectorStore.add("diary1", cB, vec(0, 1, 0, 0));
+  await vectorStore.add("space1", cA, vec(1, 0, 0, 0));
+  await vectorStore.add("space1", cB, vec(0, 1, 0, 0));
 
   const ctx = new PipelineContext({
     config: {},
@@ -929,7 +930,7 @@ test("full retrieval pipeline: query -> embed -> vector + bm25 -> merged", async
     new CandidateMergerStage(),
   ]);
 
-  const out = await pipeline.run({ query: "猫", diaryName: "diary1", topK: 2 }, ctx);
+  const out = await pipeline.run({ query: "猫", space: "space1", topK: 2 }, ctx);
 
   assert.strictEqual(out.queries!.length, 1);
   assert.ok(out.vectorResults!.length >= 1);

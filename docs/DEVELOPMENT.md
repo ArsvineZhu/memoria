@@ -7,14 +7,13 @@
 | `src/`                            | TypeScript 源码边界；入口见 [src/README.md](../src/README.md) 和 [src/AGENTS.md](../src/AGENTS.md) |
 | `src/index.ts`                    | ESM 公开入口和导出类型                                                                             |
 | `src/engine.ts`                   | `MemoryEngine` 生命周期、逻辑摄入、搜索和删除                                                      |
-| `src/pipelines/`、`src/stages/`   | 摄入、检索、记忆、后处理、输出和 TDB 阶段                                                          |
+| `src/pipelines/`、`src/stages/`   | 摄入、检索、tag-retrieval、后处理、输出和 TDB 阶段                                                 |
 | `src/providers/`                  | SQLite 元数据、Rust 向量存储和嵌入 Provider                                                        |
 | `src/interfaces/`、`src/types.ts` | Provider 契约和运行时/公开数据结构                                                                 |
-| `src/compat/`                     | `KnowledgeBaseAdapter` 兼容层                                                                      |
-| `src/config/`                     | 默认配置、路径派生和 RAG 参数加载                                                                  |
+| `src/config/`                     | 默认配置和路径派生                                                                                 |
 | `src/utils/`                      | 文本、MDX、向量和数值工具                                                                          |
 | `tests/`                          | 单元、集成、消费者、类型和恢复测试                                                                 |
-| `examples/`                       | 离线演示和真实 Provider 示例                                                                       |
+| `tutorials/`                      | 可运行教程、参考手册、算法说明和教程支持代码                                                       |
 | `rust-vexus-lite/`                | 原生向量索引包，另有专属 `AGENTS.md`                                                               |
 
 ## 扩展点
@@ -24,7 +23,7 @@
 - 实现 `EmbeddingProviderContract` 时提供 `embedBatch` 和 `getDimension`；
 - 只有确实需要替换持久化边界时，才实现 `MetadataStoreContract` 或
   `VectorStoreContract`；
-- 用 `Stage`/`Pipeline` 组合管线行为；
+- 在内部使用 `Stage`/`Pipeline` 组合管线行为；这些 helper 不从根入口公开；
 - 用 `FilesystemIngestionAdapter` 处理文件扫描、读取和监听；
 - 保持 `MemoryEngine` 的逻辑摄入与文件系统职责分离。
 
@@ -36,8 +35,8 @@
 
 ## 数据和生成内容
 
-属于仓库的源文档放在 `data/content/`。`data/memoria/`、`data/tdb/` 下的
-SQLite 和向量索引是生成内容并被忽略；`dist/`、`dist-test/` 和原生构建产物
+示例源文档分别放在对应 example 的 `data/content/`。各 example 的 `data/runtime/`
+下的 SQLite 和向量索引是生成内容并被忽略；`dist/`、`dist-test/` 和原生构建产物
 也不是源码。`eval/` 是 Git 忽略的本地评测资料，不参与开发或文档维护。
 
 ## 文档维护流程

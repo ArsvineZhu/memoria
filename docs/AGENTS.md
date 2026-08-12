@@ -9,7 +9,7 @@ constraints only.
 ## Source and ownership
 
 - Read `README.md` and `INDEX.md` before changing a maintained document.
-- Treat package manifests, source, tests, examples, and CI as the current
+- Treat package manifests, source, tests, tutorials, and CI as the current
   evidence. Do not promote plans or design records into current behavior.
 - Keep one canonical owner for each important fact. Link summaries to the
   owner instead of copying full configuration tables, API inventories, or
@@ -30,7 +30,7 @@ constraints only.
 ## Required workflow
 
 1. Identify the audience and canonical owner before editing.
-2. Verify commands, paths, interfaces, configuration, and examples against the
+2. Verify commands, paths, interfaces, configuration, and tutorials against the
    current repository.
 3. Update `INDEX.md` when adding or retiring a maintained document.
 4. Run `corepack pnpm verify:docs` after documentation or navigation changes.

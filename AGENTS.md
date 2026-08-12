@@ -2,8 +2,8 @@
 
 These instructions apply to the repository root. Deeper `AGENTS.md` files add
 rules for their own scopes; current nested scopes include
-[docs/AGENTS.md](docs/AGENTS.md), [data/AGENTS.md](data/AGENTS.md),
-[examples/AGENTS.md](examples/AGENTS.md), [scripts/AGENTS.md](scripts/AGENTS.md),
+[docs/AGENTS.md](docs/AGENTS.md),
+[tutorials/AGENTS.md](tutorials/AGENTS.md), [scripts/AGENTS.md](scripts/AGENTS.md),
 [tests/AGENTS.md](tests/AGENTS.md), [rust-vexus-lite/AGENTS.md](rust-vexus-lite/AGENTS.md),
 and [docs/superpowers/AGENTS.md](docs/superpowers/AGENTS.md).
 
@@ -19,6 +19,11 @@ read it for documentation work, add it to indexes, change its files, or delete
 it. Generated `dist/`, `dist-test/`, runtime databases, and vector indexes are
 not documentation sources.
 
+The repository does not maintain a root `data/` tree. Controlled tutorial source
+data lives under `tutorials/data/content/` as `.mdx`; each tutorial's
+`data/runtime/` is ignored generated state. The library's `dataPath` option is
+consumer-owned runtime configuration and is not package data.
+
 This repository currently has no project-local `SKILL.md` or `Skills/`
 directory. Do not create a project skill merely to mirror system-level agent
 skills. Put human procedures in `docs/` and repository-wide AI rules here.
@@ -29,7 +34,7 @@ When prose conflicts with implementation, resolve the conflict in this order:
 
 1. `package.json`, `pnpm-lock.yaml`, and TypeScript/Rust compiler metadata;
 2. `src/`, `rust-vexus-lite/`, and public type declarations;
-3. tests, fixtures, examples, and `.github/workflows/ci.yml`;
+3. tests, fixtures, tutorials, and `.github/workflows/ci.yml`;
 4. existing documentation and historical plans/specifications.
 
 Generated `dist/` output may be inspected to verify packaging, but it is never
@@ -42,7 +47,7 @@ Before editing:
 
 1. Run `git status --short --branch` and preserve unrelated changes.
 2. Read `package.json`, relevant `tsconfig` files, and the CI workflow.
-3. Locate the implementation, tests, and examples for the behavior being
+3. Locate the implementation, tests, and tutorials for the behavior being
    documented.
 4. Search all maintained Markdown files for duplicate terminology, commands,
    paths, and links.

@@ -34,7 +34,7 @@ test("public import and custom-provider initialization do not load native defaul
       async countFiles() { return 0; },
       async getLastIndexedAt() { return null; },
       async getFileByPath() { return null; },
-      async getDistinctDiaryNames() { return []; },
+      async getDistinctSpaces() { return []; },
       async getFileByChunkId() { return null; },
       async deleteFile() {},
       async insertChunks() { return []; },

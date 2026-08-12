@@ -6,7 +6,7 @@ import { extractTags } from "../../utils/text-preprocessor.js";
 /**
  * Extracts tags from document content (Tag: lines at the end of the file).
  * Uses config.tagBlacklist / config.tagBlacklistSuper and limits the count
- * via config.maxTagsPerFile, mirroring KnowledgeBaseManager._extractTags.
+ * via config.maxTagsPerFile.
  */
 class TagExtractorStage extends Stage {
   constructor() {

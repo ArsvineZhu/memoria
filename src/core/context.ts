@@ -13,14 +13,13 @@ class PipelineContext {
   readonly embeddingProvider?: EmbeddingProviderContract | null;
   readonly vectorStore?: VectorStoreContract | null;
   readonly metadataStore?: MetadataStoreContract | null;
-  /** @deprecated Compatibility escape hatch; native backend types stay internal. */
-  readonly vexusIndex?: unknown;
-  epa?: PipelineContextOptions["epa"];
-  readonly riverStateStore?: PipelineContextOptions["riverStateStore"];
-  readonly tagGraph?: Map<number, Map<number, number>>;
+  readonly tagRetrievalRuntime?: unknown;
+  tagBasisProjection?: PipelineContextOptions["tagBasisProjection"];
+  readonly propagationHistoryStore?: PipelineContextOptions["propagationHistoryStore"];
+  readonly tagAssociationGraph?: Map<number, Map<number, number>>;
   reranker?: PipelineContextOptions["reranker"];
   readonly queryInterpreter?: PipelineContextOptions["queryInterpreter"];
-  checkpointState?: { fileCount: number; diaries: Set<string> };
+  checkpointState?: { fileCount: number; spaces: Set<string> };
   /**
    * @param {object} opts
    * @param {object} opts.config - RAG parameters
@@ -28,20 +27,20 @@ class PipelineContext {
    * @param {import('../interfaces/vector-store.js')} [opts.vectorStore]
    * @param {import('../interfaces/metadata-store.js')} [opts.metadataStore]
    * @param {import('../interfaces/metadata-store.js')} [opts.metadataStore]
-   * @param {object} [opts.vexusIndex] - Raw Rust N-API handle for algorithm layer
-   * @param {import('../algorithms/epa.js').EPA} [opts.epa] - Pre-built EPA basis for the memo pipeline
-   * @param {object} [opts.riverStateStore] - KV store for persistent RiverMemo state
-   * @param {Map} [opts.tagGraph] - tag co-occurrence graph for TagMemo stages
+   * @param {object} [opts.tagRetrievalRuntime] - Internal native tag retrieval handle
+   * @param {object} [opts.tagBasisProjection] - Prepared tag basis projection
+   * @param {object} [opts.propagationHistoryStore] - Persistent propagation history store
+   * @param {Map} [opts.tagAssociationGraph] - tag co-occurrence graph for tag retrieval stages
    */
   constructor({
     config,
     embeddingProvider,
     vectorStore,
     metadataStore,
-    vexusIndex,
-    epa,
-    riverStateStore,
-    tagGraph,
+    tagRetrievalRuntime,
+    tagBasisProjection,
+    propagationHistoryStore,
+    tagAssociationGraph,
     reranker,
     queryInterpreter,
   }: PipelineContextOptions) {
@@ -49,10 +48,10 @@ class PipelineContext {
     this.embeddingProvider = embeddingProvider;
     this.vectorStore = vectorStore;
     this.metadataStore = metadataStore;
-    this.vexusIndex = vexusIndex;
-    this.epa = epa;
-    this.riverStateStore = riverStateStore;
-    this.tagGraph = tagGraph;
+    this.tagRetrievalRuntime = tagRetrievalRuntime;
+    this.tagBasisProjection = tagBasisProjection;
+    this.propagationHistoryStore = propagationHistoryStore;
+    this.tagAssociationGraph = tagAssociationGraph;
     this.reranker = reranker;
     this.queryInterpreter = queryInterpreter;
   }

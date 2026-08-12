@@ -9,7 +9,8 @@
 
 import { clusterTags, computeWeightedPCA, selectBasisDimension } from "./svd.js";
 import type { VexusIndex } from "../native/vexus-lite.js";
-import type { Vector, VectorLike } from "../types.js";
+import type { VectorLike } from "../types/common.js";
+import type { Vector } from "../types/common.js";
 import {
   at,
   assertDimension,

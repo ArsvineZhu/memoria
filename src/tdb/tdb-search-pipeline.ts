@@ -11,14 +11,9 @@ import BM25SearcherStage from "../stages/retrieval/bm25-searcher.js";
 import CandidateMergerStage from "../stages/retrieval/candidate-merger.js";
 import TimeDecayStage from "../stages/postprocess/time-decay.js";
 import TDBResultFormatterStage from "../stages/tdb/result-formatter.js";
-import type {
-  MemoryConfig,
-  MemoryConfigOverrides,
-  PipelineContextLike,
-  PipelineData,
-  TdbSearchEnvelope,
-  TdbSearchOptions,
-} from "../types.js";
+import type { MemoryConfig, MemoryConfigOverrides } from "../types/config.js";
+import type { PipelineContextLike, PipelineData } from "../types/pipeline.js";
+import type { TdbSearchEnvelope, TdbSearchOptions } from "../types/tdb.js";
 
 /**
  * Default gates for the TDB search chain.

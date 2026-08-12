@@ -1,4 +1,4 @@
-import type { PipelineContextLike, PipelineData } from "../../types.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 
 import Stage from "../../core/stage.js";
 import { chunkText } from "../../utils/text-chunker.js";

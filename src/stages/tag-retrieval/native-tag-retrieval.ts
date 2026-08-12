@@ -3,8 +3,8 @@
 import type {
   PipelineContextLike,
   PipelineData,
-  TagGraphPropagationData,
-} from "../../types.js";
+} from "../../types/pipeline.js";
+import type { TagGraphPropagationData } from "../../types/retrieval.js";
 import Stage from "../../core/stage.js";
 import {
   ensureTagRetrievalArtifact,

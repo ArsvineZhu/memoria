@@ -1,255 +1,50 @@
 "use strict";
 
 import type { MemoryEngine } from "../engine.js";
-import type { SearchEnvelope, SearchOptions } from "../types.js";
+import type { SearchOptions } from "../types/config.js";
+import type { SearchEnvelope } from "../types/documents.js";
 import {
   assertValidRetrievalPlanInput,
   mergeRetrievalPlan,
   normalizeRetrievalPlan,
   type RetrievalPlan,
-  type RetrievalPlanInput,
-  type RetrievalStrategy,
 } from "./retrieval-plan.js";
+import {
+  ExpansionBuilder,
+  PostprocessBuilder,
+  RerankBuilder,
+  ScopeBuilder,
+  requireGroupBuilder,
+  requireGroupInput,
+} from "./query-group-builders.js";
+import {
+  hasPlanInput,
+  mergePlanInputs,
+} from "./query-builder-values.js";
+import {
+  type ExpansionInput,
+  type ExternalRerankInput,
+  type GroupCallback,
+  type PostprocessInput,
+  type QueryRunOptions,
+  type RetrievalFilterInput,
+  type RetrievalPlanInput,
+  type CoreStrategy,
+} from "./query-builder-types.js";
 
-export type RetrievalFilterInput = NonNullable<RetrievalPlanInput["filters"]>;
-export type ExpansionInput = NonNullable<RetrievalPlanInput["expansion"]>;
-export type PostprocessInput = NonNullable<RetrievalPlanInput["postprocess"]>;
-export type ExternalRerankInput = NonNullable<RetrievalPlanInput["externalRerank"]>;
-
-type CoreStrategy = Exclude<RetrievalStrategy, "auto"> | "auto";
-
-function mergeSection<T extends object>(
-  left: T | undefined,
-  right: Partial<T> | undefined,
-): T | undefined {
-  if (left === undefined && right === undefined) return undefined;
-  return { ...(left || {}), ...(right || {}) } as T;
-}
-
-function mergeFilters(
-  left: RetrievalFilterInput | undefined,
-  right: RetrievalFilterInput | undefined,
-): RetrievalFilterInput | undefined {
-  if (left === undefined && right === undefined) return undefined;
-  return {
-    ...(left || {}),
-    ...(right || {}),
-    ...(right?.spaces !== undefined
-      ? { spaces: [...right.spaces] }
-      : left?.spaces !== undefined
-        ? { spaces: [...left.spaces] }
-        : {}),
-    ...(right?.documentIds !== undefined
-      ? { documentIds: [...right.documentIds] }
-      : left?.documentIds !== undefined
-        ? { documentIds: [...left.documentIds] }
-        : {}),
-    ...(right?.metadata !== undefined
-      ? { metadata: { ...right.metadata } }
-      : left?.metadata !== undefined
-        ? { metadata: { ...left.metadata } }
-        : {}),
-  };
-}
-
-function mergePlanInputs(
-  left: RetrievalPlanInput,
-  right: RetrievalPlanInput,
-): RetrievalPlanInput {
-  return {
-    ...left,
-    ...right,
-    associative: mergeSection(left.associative, right.associative),
-    structural: mergeSection(left.structural, right.structural),
-    propagationHistory: mergeSection(left.propagationHistory, right.propagationHistory),
-    filters: mergeFilters(left.filters, right.filters),
-    externalRerank: mergeSection(left.externalRerank, right.externalRerank),
-    expansion: mergeSection(left.expansion, right.expansion),
-    postprocess: mergeSection(left.postprocess, right.postprocess),
-  };
-}
-
-function hasPlanInput(input: RetrievalPlanInput): boolean {
-  return Object.values(input).some((value) => value !== undefined);
-}
-
-function appendUnique(values: readonly string[] | undefined, value: string): string[] {
-  return [...new Set([...(values || []), value])];
-}
-
-export class ScopeBuilder {
-  private readonly value: RetrievalFilterInput;
-
-  constructor(value: RetrievalFilterInput = {}) {
-    this.value = {
-      ...value,
-      ...(value.spaces ? { spaces: [...value.spaces] } : {}),
-      ...(value.documentIds ? { documentIds: [...value.documentIds] } : {}),
-      ...(value.metadata ? { metadata: { ...value.metadata } } : {}),
-    };
-  }
-
-  space(name: string): ScopeBuilder {
-    return new ScopeBuilder({
-      ...this.value,
-      spaces: appendUnique(this.value.spaces, String(name)),
-    });
-  }
-
-  spaces(names: readonly string[]): ScopeBuilder {
-    return new ScopeBuilder({ ...this.value, spaces: names.map(String) });
-  }
-
-  document(id: string): ScopeBuilder {
-    return new ScopeBuilder({
-      ...this.value,
-      documentIds: appendUnique(this.value.documentIds, String(id)),
-    });
-  }
-
-  documents(ids: readonly string[]): ScopeBuilder {
-    return new ScopeBuilder({ ...this.value, documentIds: ids.map(String) });
-  }
-
-  recordedAfter(value: number | string): ScopeBuilder {
-    return new ScopeBuilder({ ...this.value, recordedAfter: value });
-  }
-
-  recordedBefore(value: number | string): ScopeBuilder {
-    return new ScopeBuilder({ ...this.value, recordedBefore: value });
-  }
-
-  metadata(value: Record<string, unknown>): ScopeBuilder {
-    return new ScopeBuilder({ ...this.value, metadata: { ...value } });
-  }
-
-  build(): RetrievalFilterInput {
-    return new ScopeBuilder(this.value).value;
-  }
-}
-
-export class ExpansionBuilder {
-  private readonly value: ExpansionInput;
-
-  constructor(value: ExpansionInput = {}) {
-    this.value = { ...value };
-  }
-
-  related(
-    options: Pick<ExpansionInput, "maxHops" | "maxAdded"> = {},
-  ): ExpansionBuilder {
-    return new ExpansionBuilder({ ...this.value, ...options, related: true });
-  }
-
-  sameDocument(enabled = true): ExpansionBuilder {
-    return new ExpansionBuilder({ ...this.value, sameDocument: enabled });
-  }
-
-  fullDocument(enabled = true): ExpansionBuilder {
-    return new ExpansionBuilder({ ...this.value, fullDocument: enabled });
-  }
-
-  associate(enabled = true): ExpansionBuilder {
-    return new ExpansionBuilder({ ...this.value, associate: enabled });
-  }
-
-  maxHops(value: number): ExpansionBuilder {
-    return new ExpansionBuilder({ ...this.value, maxHops: value });
-  }
-
-  maxAdded(value: number): ExpansionBuilder {
-    return new ExpansionBuilder({ ...this.value, maxAdded: value });
-  }
-
-  build(): ExpansionInput {
-    return { ...this.value };
-  }
-}
-
-export class PostprocessBuilder {
-  private readonly value: PostprocessInput;
-
-  constructor(value: PostprocessInput = {}) {
-    this.value = { ...value };
-  }
-
-  timeDecay(enabled = true): PostprocessBuilder {
-    return new PostprocessBuilder({ ...this.value, timeDecay: enabled });
-  }
-
-  dedupe(enabled = true): PostprocessBuilder {
-    return new PostprocessBuilder({ ...this.value, dedupe: enabled });
-  }
-
-  truncate(enabled = true): PostprocessBuilder {
-    return new PostprocessBuilder({ ...this.value, truncate: enabled });
-  }
-
-  minScore(value: number): PostprocessBuilder {
-    return new PostprocessBuilder({ ...this.value, minScore: value });
-  }
-
-  limit(value: number): PostprocessBuilder {
-    return new PostprocessBuilder({ ...this.value, maxResults: value });
-  }
-
-  maxContentLength(value: number): PostprocessBuilder {
-    return new PostprocessBuilder({ ...this.value, maxContentLength: value });
-  }
-
-  build(): PostprocessInput {
-    return { ...this.value };
-  }
-}
-
-export class RerankBuilder {
-  private readonly value: ExternalRerankInput;
-
-  constructor(value: ExternalRerankInput = {}) {
-    this.value = { ...value };
-  }
-
-  ordered(): RerankBuilder {
-    return new RerankBuilder({ ...this.value, enabled: true, mode: "ordered" });
-  }
-
-  rrf(options: Pick<ExternalRerankInput, "alpha"> = {}): RerankBuilder {
-    return new RerankBuilder({
-      ...this.value,
-      ...options,
-      enabled: true,
-      mode: "rrf",
-    });
-  }
-
-  build(): ExternalRerankInput {
-    return { ...this.value };
-  }
-}
-
-type GroupCallback<T> = (builder: T) => T;
-type QueryRunOptions = Omit<
-  SearchOptions,
-  "retrievalPlan" | "inheritRetrievalDefaults"
->;
-
-function requireGroupBuilder<T extends { build(): object }>(value: T, name: string): T {
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    typeof value.build !== "function"
-  ) {
-    throw new TypeError(`${name} callback must return its group builder`);
-  }
-  return value;
-}
-
-function requireGroupInput<T>(value: T, name: string): T {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError(`${name} input must be an object or callback`);
-  }
-  return value;
-}
+export {
+  ExpansionBuilder,
+  PostprocessBuilder,
+  RerankBuilder,
+  ScopeBuilder,
+} from "./query-group-builders.js";
+export type {
+  ExpansionInput,
+  ExternalRerankInput,
+  PostprocessInput,
+  RetrievalFilterInput,
+  RetrievalPlanInput,
+} from "./query-builder-types.js";
 
 /** Immutable fluent syntax over the canonical RetrievalPlan input. */
 export class QueryBuilder {
@@ -275,10 +70,7 @@ export class QueryBuilder {
 
   private next(
     patch: RetrievalPlanInput = {},
-    options: {
-      inheritDefaults?: boolean;
-      core?: CoreStrategy;
-    } = {},
+    options: { inheritDefaults?: boolean; core?: CoreStrategy } = {},
   ): QueryBuilder {
     const coreSelections = options.core
       ? [...this.coreSelections, options.core]
@@ -318,10 +110,7 @@ export class QueryBuilder {
 
   tagBasisProjection(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "associative",
-        associative: { enabled: true, tagBasisProjection: enabled },
-      },
+      { strategy: "associative", associative: { enabled: true, tagBasisProjection: enabled } },
       { core: "associative" },
     );
   }
@@ -338,40 +127,28 @@ export class QueryBuilder {
 
   activationPropagation(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "associative",
-        associative: { enabled: true, tagGraphPropagation: enabled },
-      },
+      { strategy: "associative", associative: { enabled: true, tagGraphPropagation: enabled } },
       { core: "associative" },
     );
   }
 
   graphDiffusion(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "associative",
-        associative: { enabled: true, tagGraphPropagation: enabled },
-      },
+      { strategy: "associative", associative: { enabled: true, tagGraphPropagation: enabled } },
       { core: "associative" },
     );
   }
 
   propagationSupport(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "associative",
-        associative: { enabled: true, propagationSupport: enabled },
-      },
+      { strategy: "associative", associative: { enabled: true, propagationSupport: enabled } },
       { core: "associative" },
     );
   }
 
   propagationStructure(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "structural",
-        structural: { enabled: true, propagationStructure: enabled },
-      },
+      { strategy: "structural", structural: { enabled: true, propagationStructure: enabled } },
       { core: "structural" },
     );
   }
@@ -382,40 +159,28 @@ export class QueryBuilder {
 
   embeddingRerank(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "associative",
-        associative: { enabled: true, embeddingRerank: enabled },
-      },
+      { strategy: "associative", associative: { enabled: true, embeddingRerank: enabled } },
       { core: "associative" },
     );
   }
 
   tagExpansion(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "associative",
-        associative: { enabled: true, tagExpansion: enabled },
-      },
+      { strategy: "associative", associative: { enabled: true, tagExpansion: enabled } },
       { core: "associative" },
     );
   }
 
   nativeTagRetrieval(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "associative",
-        associative: { enabled: true, nativeTagRetrieval: enabled },
-      },
+      { strategy: "associative", associative: { enabled: true, nativeTagRetrieval: enabled } },
       { core: "associative" },
     );
   }
 
   structuralRelations(enabled = true): QueryBuilder {
     return this.next(
-      {
-        strategy: "structural",
-        structural: { enabled: true, relationExpansion: enabled },
-      },
+      { strategy: "structural", structural: { enabled: true, relationExpansion: enabled } },
       { core: "structural" },
     );
   }
@@ -431,8 +196,7 @@ export class QueryBuilder {
   }
 
   expand(input: ExpansionInput | GroupCallback<ExpansionBuilder>): QueryBuilder {
-    if (typeof input !== "function")
-      assertValidRetrievalPlanInput({ expansion: input });
+    if (typeof input !== "function") assertValidRetrievalPlanInput({ expansion: input });
     const builder =
       typeof input === "function"
         ? requireGroupBuilder(input(new ExpansionBuilder()), "expand")
@@ -501,9 +265,7 @@ export class QueryBuilder {
       ...options,
       inheritRetrievalDefaults: this.inheritDefaults,
     };
-    if (hasPlanInput(this.override)) {
-      searchOptions.retrievalPlan = this.override;
-    }
+    if (hasPlanInput(this.override)) searchOptions.retrievalPlan = this.override;
     return this.engine.search(this.queryText, searchOptions);
   }
 

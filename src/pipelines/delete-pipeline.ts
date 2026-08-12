@@ -5,9 +5,9 @@ import FileDeleterStage from "../stages/ingestion/file-deleter.js";
 import Stage from "../core/stage.js";
 import type {
   DeleteEnvelope,
-  MemoryConfigOverrides,
-  PipelineContextLike,
-} from "../types.js";
+} from "../types/documents.js";
+import type { MemoryConfigOverrides } from "../types/config.js";
+import type { PipelineContextLike } from "../types/pipeline.js";
 
 interface PipelineOptions {
   stages?: Stage[];

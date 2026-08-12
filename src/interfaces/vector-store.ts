@@ -1,4 +1,6 @@
-import type { VectorHit, VectorLike, VectorStoreContract } from "../types.js";
+import type { VectorStoreContract } from "../types/vector.js";
+import type { VectorLike } from "../types/common.js";
+import type { VectorHit } from "../types/documents.js";
 import { at } from "../utils/numerical.js";
 
 /**

@@ -1,11 +1,10 @@
 import type {
   EmbeddingVector,
-  MemoryConfigOverrides,
-  TagResidualDecompositionData,
-  PipelineContextLike,
-  PipelineData,
-  TagRow,
-} from "../../types.js";
+} from "../../types/common.js";
+import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { TagRow } from "../../types/metadata.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type { TagResidualDecompositionData } from "../../types/retrieval.js";
 
 import Stage from "../../core/stage.js";
 import { TagResidualDecomposition } from "../../algorithms/tag-residual-decomposition.js";

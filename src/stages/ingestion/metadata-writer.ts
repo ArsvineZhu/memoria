@@ -1,46 +1,28 @@
-import type {
-  ChunkEntry,
-  PipelineContextLike,
-  PipelineData,
-  TagEntry,
-} from "../../types.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 
 import Stage from "../../core/stage.js";
 import { MemoriaError } from "../../errors.js";
-import { relationDocumentAliases } from "../../retrieval/relation-graph.js";
-import { encodeVectorBlob } from "../../utils/vector-codec.js";
-import { serializeDocumentJson } from "../../utils/logical-document.js";
+import MetadataCheckpointWriter from "./metadata-writer-checkpoint.js";
+import {
+  createAuthority,
+  readEntries,
+  replaceDocumentAuthority,
+  replaceDocumentTags,
+  serializeEntries,
+} from "./metadata-writer-authority.js";
+import {
+  assertRelationAuthoritySupport,
+  hasRelationAuthority,
+  readMetadataWriterSnapshot,
+  shouldRefreshTextRelations,
+} from "./metadata-writer-input.js";
+import type {
+  MetadataWriterOutput,
+} from "./metadata-writer-types.js";
+import type { DocumentStateReplacementResult } from "../../types/metadata.js";
+import { toFileMetadata } from "./metadata-writer-types.js";
 
-// kv_store checkpoint keys used by the MemoryEngine
-// naming convention; only written when the pipeline opts in via config).
-const CHECKPOINT_KEYS = {
-  memoryCheckpoint: "memory_checkpoint",
-  lastFileIndexed: "last_file_indexed",
-  chunkCount: "chunk_count",
-  tagCount: "tag_count",
-  spaceCount: "space_count",
-};
-
-/**
- * Persists a single file's ingestion result into the metadata store:
- *  - upserts the file row (files table) and returns its id
- *  - collects ids of the previous chunk rows so the caller can clean the
- *    vector index before re-adding (mirrors ingestionPipeline._flushBatch)
- *  - inserts chunk rows (provider replaces the old ones)
- *  - upserts tag rows and rebuilds the file_tags association
- *
- * Writes the MemoryEngine metadata checkpoint section:
- * tags already stored with a vector are re-associated even when this file
- * provided no fresh embedding for them; tags without an embedding and
- * without a previously stored vector are skipped entirely.
- *
- * Config (ctx.config):
- *   - checkpoint: { enabled: true, interval: N } or `true`
- *   - checkpointInterval: bare interval (implies enabled)
- *   - when enabled, every `interval`-th file refreshes the kv_store
- *     checkpoint keys (memory_checkpoint, last_file_indexed, chunk_count,
- *     tag_count, space_count).
- */
+/** Persist one ingestion snapshot while keeping checkpointing out of authority commits. */
 class MetadataWriterStage extends Stage {
   constructor() {
     super();
@@ -50,216 +32,35 @@ class MetadataWriterStage extends Stage {
   override async process(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<
-    Omit<PipelineData, "fileId" | "chunkIds" | "tagIds" | "removedChunkIds"> & {
-      fileId: number | null;
-      chunkIds: number[];
-      tagIds: number[];
-      removedChunkIds: number[];
-      previousIndexName?: string | null;
-      currentIndexName?: string;
-      metadataOnly?: boolean;
-    }
-  > {
-    const fileInfo = input || {};
+  ): Promise<MetadataWriterOutput> {
     const metadataStore = ctx.metadataStore;
     if (!metadataStore) throw new Error("MetadataWriterStage requires metadataStore");
-    const relPath = fileInfo.relPath;
-    const space = fileInfo.space;
-    const checksum = fileInfo.checksum;
-    const mtime = fileInfo.mtime;
-    const size = fileInfo.size;
-    if (
-      typeof relPath !== "string" ||
-      typeof space !== "string" ||
-      typeof checksum !== "string" ||
-      typeof mtime !== "number" ||
-      typeof size !== "number"
-    )
-      throw new TypeError("MetadataWriterStage requires a complete file snapshot");
 
+    const snapshot = readMetadataWriterSnapshot(input || {});
+    const relationAuthority = hasRelationAuthority(snapshot);
+    assertRelationAuthoritySupport(snapshot, ctx, metadataStore);
+    const authority = createAuthority(metadataStore, snapshot, relationAuthority);
+    const checkpoint = new MetadataCheckpointWriter(ctx);
+    const fileInfo = snapshot.input;
     const needsChunkEmbedding = fileInfo.needsChunkEmbedding ?? fileInfo.needsEmbedding;
     const needsTagUpdate = fileInfo.needsTagUpdate === true;
-    const sourceJson = serializeDocumentJson(fileInfo.documentSource, "source");
-    const metadataJson = serializeDocumentJson(fileInfo.documentMetadata, "metadata");
-    const hasRelationAuthority =
-      typeof fileInfo.relationSourceKey === "string" &&
-      typeof fileInfo.relationSourceRevision === "string";
-    const explicitRelations = Array.isArray(fileInfo.explicitRelations)
-      ? fileInfo.explicitRelations
-      : [];
-    if (
-      ctx.config.relationGraphEnabled === true &&
-      (!hasRelationAuthority ||
-        typeof metadataStore.replaceDocumentAuthority !== "function")
-    ) {
-      throw new MemoriaError(
-        "configuration",
-        "Relation-enabled ingestion requires relation extraction and atomic document authority support.",
-      );
-    }
-
-    const authorityReplacement = async (options: {
-      preserveChunks?: boolean;
-      preserveTags?: boolean;
-      chunks?: readonly {
-        chunkIndex: number;
-        content: string;
-        vector: Buffer | null;
-      }[];
-      tags?: readonly { name: string; vector: Buffer | null }[];
-      orderedTagNames?: readonly string[];
-    }) => {
-      if (
-        !hasRelationAuthority ||
-        typeof metadataStore.replaceDocumentAuthority !== "function"
-      ) {
-        throw new MemoriaError(
-          "configuration",
-          "Relation-enabled ingestion requires metadataStore.replaceDocumentAuthority for an atomic document and relation commit.",
-        );
-      }
-      return metadataStore.replaceDocumentAuthority({
-        file: {
-          path: relPath,
-          space,
-          checksum,
-          mtime,
-          size,
-          documentId: fileInfo.documentId,
-          revision: fileInfo.revision,
-          sourceJson,
-          metadataJson,
-        },
-        chunks: options.chunks || [],
-        tags: options.tags || [],
-        orderedTagNames: options.orderedTagNames || [],
-        explicitRelations,
-        relationSourceKey: fileInfo.relationSourceKey!,
-        relationSourceRevision: fileInfo.relationSourceRevision!,
-        ...options,
-      });
-    };
-
-    // A logical document has no persisted format column. When an incoming
-    // text snapshot is otherwise unchanged, inspect active source edges so a
-    // previous structured ingest is still replaced by the empty text
-    // authority instead of being silently skipped.
-    let refreshTextRelations = false;
-    if (
-      fileInfo.format === "text" &&
-      ctx.config.relationGraphEnabled === true &&
-      hasRelationAuthority
-    ) {
-      const relationKeys = relationDocumentAliases({
-        documentId: fileInfo.documentId,
-        path: relPath,
-      });
-      if (typeof metadataStore.listRelations !== "function") {
-        refreshTextRelations = true;
-      } else {
-        for (const relationKey of relationKeys) {
-          const activeRelations = await metadataStore.listRelations({
-            from: relationKey,
-            origins: ["source"],
-          });
-          if (activeRelations.length > 0) {
-            refreshTextRelations = true;
-            break;
-          }
-        }
-      }
-    }
+    const refreshTextRelations = await shouldRefreshTextRelations(
+      snapshot,
+      ctx,
+      metadataStore,
+    );
 
     if (needsChunkEmbedding === false && needsTagUpdate) {
-      if (hasRelationAuthority) {
-        const tagEntries: TagEntry[] = Array.isArray(fileInfo.tagEntries)
-          ? fileInfo.tagEntries
-          : [];
-        const tagNames: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
-        if (typeof metadataStore.replaceDocumentAuthority !== "function") {
-          throw new MemoriaError(
-            "configuration",
-            "Relation-enabled tag updates require metadataStore.replaceDocumentAuthority.",
-          );
-        }
-        const replacement = await metadataStore.replaceDocumentAuthority({
-          file: {
-            path: relPath,
-            space,
-            checksum,
-            mtime,
-            size,
-            documentId: fileInfo.documentId,
-            revision: fileInfo.revision,
-            sourceJson,
-            metadataJson,
-          },
-          chunks: [],
-          tags: tagEntries.map((entry) => ({
-            name: entry.name,
-            vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
-          })),
-          orderedTagNames: tagNames,
-          explicitRelations,
-          relationSourceKey: fileInfo.relationSourceKey!,
-          relationSourceRevision: fileInfo.relationSourceRevision!,
-          preserveChunks: true,
-        });
-
-        await this._maybeWriteCheckpoint(
-          fileInfo,
-          { chunkIds: replacement.chunkIds, tagIds: replacement.tagIds },
-          ctx,
-        );
-        return {
-          ...fileInfo,
-          fileId: replacement.fileId,
-          chunkIds: [],
-          tagIds: replacement.tagIds,
-          removedChunkIds: [],
-          orphanedTagIds: replacement.orphanedTagIds,
-          skipped: false,
-          previousIndexName: replacement.previousIndexName,
-          currentIndexName: replacement.currentIndexName,
-        };
-      }
-      if (typeof metadataStore.replaceDocumentTags !== "function") {
-        throw new MemoriaError(
-          "configuration",
-          "Tag-only ingestion requires metadataStore.replaceDocumentTags for atomic metadata and tag updates.",
-        );
-      }
-
-      const tagEntries: TagEntry[] = Array.isArray(fileInfo.tagEntries)
-        ? fileInfo.tagEntries
-        : [];
-      const tagNames: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
-      const replacement = await metadataStore.replaceDocumentTags({
-        file: {
-          path: relPath,
-          space,
-          checksum,
-          mtime,
-          size,
-          documentId: fileInfo.documentId,
-          revision: fileInfo.revision,
-          sourceJson,
-          metadataJson,
-        },
-        tags: tagEntries.map((entry) => ({
-          name: entry.name,
-          vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
-        })),
-        orderedTagNames: tagNames,
-      });
-
-      await this._maybeWriteCheckpoint(
-        fileInfo,
-        { chunkIds: [], tagIds: replacement.tagIds },
-        ctx,
+      const entries = readEntries(fileInfo);
+      const replacement = await replaceDocumentTags(
+        authority,
+        entries.tagEntries,
+        entries.tagNames,
       );
-
+      await checkpoint.write(fileInfo, {
+        chunkIds: "chunkIds" in replacement ? replacement.chunkIds : [],
+        tagIds: replacement.tagIds,
+      });
       return {
         ...fileInfo,
         fileId: replacement.fileId,
@@ -273,11 +74,10 @@ class MetadataWriterStage extends Stage {
       };
     }
 
-    // Caller-supplied skip: neither content nor persisted file metadata changed.
     const needsMetadataOnlyCommit =
       fileInfo.needsMetadataWrite === true || refreshTextRelations;
     if (needsChunkEmbedding === false && !needsMetadataOnlyCommit) {
-      const existing = await metadataStore.getFileByPath(relPath);
+      const existing = await metadataStore.getFileByPath(snapshot.relPath);
       return {
         ...fileInfo,
         fileId: existing ? existing.id : null,
@@ -289,139 +89,25 @@ class MetadataWriterStage extends Stage {
     }
 
     if (needsChunkEmbedding === false && needsMetadataOnlyCommit) {
-      if (hasRelationAuthority) {
-        const replacement = await authorityReplacement({
+      if (relationAuthority) {
+        const replacement = await replaceDocumentAuthority(authority, {
           preserveChunks: true,
           preserveTags: true,
         });
-        return {
-          ...fileInfo,
-          fileId: replacement.fileId,
-          chunkIds: [],
-          tagIds: [],
-          removedChunkIds: [],
-          orphanedTagIds: replacement.orphanedTagIds,
-          skipped: false,
-          metadataOnly: true,
-          previousIndexName: replacement.previousIndexName,
-          currentIndexName: replacement.currentIndexName,
-        };
+        return metadataOnlyResult(fileInfo, replacement);
       }
-      const existing = await metadataStore.getFileByPath(relPath);
-      const previousIndexName = existing?.space || space;
-      let fileId: number | null = existing?.id ?? null;
-      if (typeof metadataStore.updateDocumentMetadata === "function") {
-        const updated = await metadataStore.updateDocumentMetadata({
-          path: relPath,
-          space,
-          checksum,
-          mtime,
-          size,
-          documentId: fileInfo.documentId,
-          revision: fileInfo.revision,
-          sourceJson,
-          metadataJson,
-        });
-        fileId = updated.fileId;
-      } else {
-        fileId = await metadataStore.upsertFile({
-          path: relPath,
-          space,
-          checksum,
-          mtime,
-          size,
-          documentId: fileInfo.documentId,
-          revision: fileInfo.revision,
-          sourceJson,
-          metadataJson,
-        });
-      }
-      if (fileId == null) {
-        throw new Error(`Unable to persist file metadata for ${relPath}`);
-      }
-      return {
-        ...fileInfo,
-        fileId,
-        chunkIds: [],
-        tagIds: [],
-        removedChunkIds: [],
-        skipped: false,
-        metadataOnly: true,
-        previousIndexName,
-        currentIndexName: space,
-      };
+      return this.persistMetadataOnly(fileInfo, snapshot, metadataStore, ctx);
     }
 
-    const chunkEntries: ChunkEntry[] = Array.isArray(fileInfo.chunkEntries)
-      ? fileInfo.chunkEntries
-      : [];
-    const tagEntries: TagEntry[] = Array.isArray(fileInfo.tagEntries)
-      ? fileInfo.tagEntries
-      : [];
-    const tagNames: string[] = Array.isArray(fileInfo.tags) ? fileInfo.tags : [];
-
-    // Prepare serialized rows once for the atomic metadata replacement.
-    const chunkRows = chunkEntries.map((entry) => ({
-      chunkIndex: entry.chunkIndex,
-      content: entry.content,
-      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
-    }));
-    const tagRows = tagEntries.map((entry) => ({
-      name: entry.name,
-      vector: entry.vector == null ? null : encodeVectorBlob(entry.vector),
-    }));
-    if (hasRelationAuthority) {
-      const replacement = await authorityReplacement({
-        chunks: chunkRows,
-        tags: tagRows,
-        orderedTagNames: tagNames,
-      });
-
-      await this._maybeWriteCheckpoint(
-        fileInfo,
-        { chunkIds: replacement.chunkIds, tagIds: replacement.tagIds },
-        ctx,
-      );
-
-      return {
-        ...fileInfo,
-        fileId: replacement.fileId,
-        chunkIds: replacement.chunkIds,
-        tagIds: replacement.tagIds,
-        removedChunkIds: replacement.removedChunkIds,
-        orphanedTagIds: replacement.orphanedTagIds,
-        previousIndexName: replacement.previousIndexName,
-        currentIndexName: replacement.currentIndexName,
-      };
-    }
-    if (typeof metadataStore.replaceDocumentState !== "function") {
-      throw new MemoriaError(
-        "configuration",
-        "Metadata ingestion requires replaceDocumentState for an atomic document commit.",
-      );
-    }
-    const replacement = await metadataStore.replaceDocumentState({
-      file: {
-        path: relPath,
-        space,
-        checksum,
-        mtime,
-        size,
-        documentId: fileInfo.documentId,
-        revision: fileInfo.revision,
-        sourceJson,
-        metadataJson,
-      },
-      chunks: chunkRows,
-      tags: tagRows,
-      orderedTagNames: tagNames,
+    const entries = readEntries(fileInfo);
+    const rows = serializeEntries(entries);
+    const replacement = relationAuthority
+      ? await replaceDocumentAuthority(authority, rows)
+      : await this.replaceDocumentState(fileInfo, snapshot, metadataStore, rows);
+    await checkpoint.write(fileInfo, {
+      chunkIds: replacement.chunkIds,
+      tagIds: replacement.tagIds,
     });
-
-    await this._maybeWriteCheckpoint(
-      fileInfo,
-      { chunkIds: replacement.chunkIds, tagIds: replacement.tagIds },
-      ctx,
-    );
 
     return {
       ...fileInfo,
@@ -435,37 +121,76 @@ class MetadataWriterStage extends Stage {
     };
   }
 
-  async _maybeWriteCheckpoint(
+  private async replaceDocumentState(
     fileInfo: PipelineData,
-    counts: { chunkIds: number[]; tagIds: number[] },
-    ctx: PipelineContextLike,
-  ): Promise<void> {
-    const config = ctx.config || {};
-    const cp = config.checkpoint;
-    const explicitEnabled =
-      cp === true || (typeof cp === "object" && cp.enabled !== false);
-    const bareInterval = Number.isFinite(config.checkpointInterval);
-    if (!explicitEnabled && !bareInterval) return;
-
-    const interval =
-      typeof cp === "object" && cp.interval != null
-        ? cp.interval
-        : config.checkpointInterval || 1;
-
-    ctx.checkpointState = ctx.checkpointState || { fileCount: 0, spaces: new Set() };
-    const state = ctx.checkpointState;
-    state.fileCount += 1;
-    if (fileInfo.space) state.spaces.add(fileInfo.space);
-    if (state.fileCount % interval !== 0) return;
-
-    const kv = ctx.metadataStore;
-    if (!kv?.setKv) return;
-    await kv.setKv(CHECKPOINT_KEYS.memoryCheckpoint, String(Date.now()));
-    await kv.setKv(CHECKPOINT_KEYS.lastFileIndexed, fileInfo.relPath || "");
-    await kv.setKv(CHECKPOINT_KEYS.chunkCount, String(counts.chunkIds.length));
-    await kv.setKv(CHECKPOINT_KEYS.tagCount, String(counts.tagIds.length));
-    await kv.setKv(CHECKPOINT_KEYS.spaceCount, String(state.spaces.size));
+    snapshot: ReturnType<typeof readMetadataWriterSnapshot>,
+    metadataStore: NonNullable<PipelineContextLike["metadataStore"]>,
+    rows: ReturnType<typeof serializeEntries>,
+  ) {
+    if (typeof metadataStore.replaceDocumentState !== "function") {
+      throw new MemoriaError(
+        "configuration",
+        "Metadata ingestion requires replaceDocumentState for an atomic document commit.",
+      );
+    }
+    return metadataStore.replaceDocumentState({
+      file: toFileMetadata(snapshot),
+      chunks: rows.chunks || [],
+      tags: rows.tags || [],
+      orderedTagNames: rows.orderedTagNames,
+    });
   }
+
+  private async persistMetadataOnly(
+    fileInfo: PipelineData,
+    snapshot: ReturnType<typeof readMetadataWriterSnapshot>,
+    metadataStore: NonNullable<PipelineContextLike["metadataStore"]>,
+    _ctx: PipelineContextLike,
+  ): Promise<MetadataWriterOutput> {
+    const existing = await metadataStore.getFileByPath(snapshot.relPath);
+    const previousIndexName = existing?.space || snapshot.space;
+    let fileId: number | null = existing?.id ?? null;
+    if (typeof metadataStore.updateDocumentMetadata === "function") {
+      const updated = await metadataStore.updateDocumentMetadata(toFileMetadata(snapshot));
+      fileId = updated.fileId;
+    } else {
+      fileId = await metadataStore.upsertFile(toFileMetadata(snapshot));
+    }
+    if (fileId == null) {
+      throw new Error(`Unable to persist file metadata for ${snapshot.relPath}`);
+    }
+    return {
+      ...fileInfo,
+      fileId,
+      chunkIds: [],
+      tagIds: [],
+      removedChunkIds: [],
+      skipped: false,
+      metadataOnly: true,
+      previousIndexName,
+      currentIndexName: snapshot.space,
+    };
+  }
+}
+
+function metadataOnlyResult(
+  fileInfo: PipelineData,
+  replacement: DocumentStateReplacementResult & {
+    removedChunkIds?: number[];
+  },
+): MetadataWriterOutput {
+  return {
+    ...fileInfo,
+    fileId: replacement.fileId,
+    chunkIds: [],
+    tagIds: [],
+    removedChunkIds: [],
+    orphanedTagIds: replacement.orphanedTagIds,
+    skipped: false,
+    metadataOnly: true,
+    previousIndexName: replacement.previousIndexName,
+    currentIndexName: replacement.currentIndexName,
+  };
 }
 
 export default MetadataWriterStage;

@@ -1,11 +1,10 @@
 import type {
   ChunkCandidate,
-  EmbeddingVector,
-  TagExpansionData,
-  PipelineContextLike,
-  PipelineData,
-  TagRow,
-} from "../../types.js";
+} from "../../types/documents.js";
+import type { EmbeddingVector } from "../../types/common.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type { TagExpansionData } from "../../types/retrieval.js";
+import type { TagRow } from "../../types/metadata.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

@@ -1,9 +1,8 @@
 import type {
   ChunkCandidate,
-  PipelineContextLike,
-  PipelineData,
-  TagGraphPropagationData,
-} from "../../types.js";
+} from "../../types/documents.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type { TagGraphPropagationData } from "../../types/retrieval.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

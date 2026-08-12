@@ -1,4 +1,4 @@
-import type { Vector } from "../types.js";
+import type { Vector } from "../types/common.js";
 import { at, assertFiniteVector, assertVectorDimension } from "../utils/numerical.js";
 
 /**

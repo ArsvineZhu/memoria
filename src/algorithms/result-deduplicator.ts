@@ -1,49 +1,42 @@
-/**
- * ResultDeduplicator.js
- *
- * Memoria 通用结果去重器。
- *
- * 去重分为两层：
- * 1. 硬去重：按 chunkId、规范化正文和稳定路径身份消除完全重复项；
- * 2. 语义去重：对有向量的候选执行余弦近重复抑制，无向量候选始终安全保留。
- *
- * 本组件不属于 TagGraphPropagation/PropagationStructure 的 Rust 查询主链。它只处理各召回引擎已经返回的候选，
- * 为霰弹枪查询、多路 BM25/Time 合并和最终输出提供统一的后处理能力。
- */
+import type { UnknownRecord, Vector } from "../types/common.js";
+import {
+  candidateCompleteness,
+  getChunkId,
+  getExactIdentities,
+  getScore,
+  getSourcePriority,
+  isPreferredCandidate,
+  normalizeText,
+} from "./result-deduplicator-identities.js";
+import {
+  compareCandidates,
+  compareOutputOrder,
+  semanticDeduplicate,
+} from "./result-deduplicator-ranking.js";
+import {
+  cosineSimilarity,
+  getCandidateVector,
+  hydrateMissingVectors,
+  toValidVector,
+} from "./result-deduplicator-vectors.js";
+import {
+  DEFAULT_DEDUPLICATOR_CONFIG,
+  type Candidate,
+  type ChunkVectorLoader,
+  type DeduplicateOptions,
+  type DeduplicatorConfig,
+  type RankedCandidate,
+} from "./result-deduplicator-types.js";
 
-import type {
-  SearchResult,
-  SourcePriority,
-  UnknownRecord,
-  Vector,
-  VectorLike,
-} from "../types.js";
-import { at } from "../utils/numerical.js";
+export type {
+  Candidate,
+  ChunkVectorLoader,
+  DeduplicateOptions,
+  DeduplicatorConfig,
+  RankedCandidate,
+} from "./result-deduplicator-types.js";
 
-type Candidate = SearchResult & UnknownRecord;
-export type ChunkVectorLoader = (chunkId: number) => Promise<VectorLike | null>;
-
-interface DeduplicatorConfig {
-  dimension: number;
-  semanticThreshold: number;
-  maxResults: number;
-  minSemanticCandidates: number;
-  sourcePriority: SourcePriority;
-}
-
-interface DeduplicateOptions {
-  semantic?: boolean;
-  semanticThreshold?: number;
-  maxResults?: number;
-  stage?: string;
-}
-
-interface RankedCandidate {
-  candidate: Candidate;
-  index: number;
-  vector: Vector | null;
-}
-
+/** Stable facade over exact-identity and semantic candidate deduplication. */
 class ResultDeduplicator {
   loadVector?: ChunkVectorLoader;
   config: DeduplicatorConfig;
@@ -54,35 +47,23 @@ class ResultDeduplicator {
   ) {
     this.loadVector = loadVector;
     this.config = {
-      dimension: 3072,
-      semanticThreshold: 0.92,
-      maxResults: 1000,
-      minSemanticCandidates: 2,
-      sourcePriority: {
-        semantic: 50,
-        time: 45,
-        bm25Body: 40,
-        bm25Tag: 40,
-        continuity: 35,
-        associate: 10,
-        unknown: 0,
-      },
+      ...DEFAULT_DEDUPLICATOR_CONFIG,
       ...config,
+      sourcePriority: {
+        ...DEFAULT_DEDUPLICATOR_CONFIG.sourcePriority,
+        ...config.sourcePriority,
+      },
     };
   }
 
   updateConfig(config: Partial<DeduplicatorConfig> & UnknownRecord = {}): void {
     if (!config || typeof config !== "object" || Array.isArray(config)) return;
     const next = { ...this.config };
-
     if (Number.isFinite(Number(config.dimension)) && Number(config.dimension) > 0) {
       next.dimension = Math.floor(Number(config.dimension));
     }
     if (Number.isFinite(Number(config.semanticThreshold))) {
-      next.semanticThreshold = Math.max(
-        -1,
-        Math.min(1, Number(config.semanticThreshold)),
-      );
+      next.semanticThreshold = Math.max(-1, Math.min(1, Number(config.semanticThreshold)));
     }
     if (Number.isFinite(Number(config.maxResults)) && Number(config.maxResults) > 0) {
       next.maxResults = Math.floor(Number(config.maxResults));
@@ -98,39 +79,21 @@ class ResultDeduplicator {
       typeof config.sourcePriority === "object" &&
       !Array.isArray(config.sourcePriority)
     ) {
-      next.sourcePriority = {
-        ...next.sourcePriority,
-        ...config.sourcePriority,
-      };
+      next.sourcePriority = { ...next.sourcePriority, ...config.sourcePriority };
     }
-
     this.config = next;
   }
 
-  /**
-   * 对候选结果执行硬去重和可选的语义去重。
-   *
-   * @param {Array<object>} candidates
-   * @param {Float32Array|Array<number>|null} queryVector
-   * @param {object} options
-   * @param {boolean} [options.semantic=true] 是否执行向量语义去重
-   * @param {number} [options.semanticThreshold] 语义近重复阈值
-   * @param {number} [options.maxResults] 最大保留数
-   * @param {string} [options.stage='candidate'] 日志阶段名
-   * @returns {Promise<Array<object>>}
-   */
   async deduplicate(
     candidates: readonly Candidate[],
     queryVector: Vector | readonly number[] | null = null,
     options: DeduplicateOptions = {},
   ): Promise<Candidate[]> {
     if (!Array.isArray(candidates) || candidates.length === 0) return [];
-
     const stage = String(options.stage || "candidate");
     const hardDeduplicated = this.hardDeduplicate(candidates);
     const semanticEnabled = options.semantic !== false;
     const maxResults = this._resolveMaxResults(options.maxResults);
-
     if (
       !semanticEnabled ||
       hardDeduplicated.length < this.config.minSemanticCandidates
@@ -149,7 +112,6 @@ class ResultDeduplicator {
         semanticThreshold,
         maxResults,
       );
-
       console.log(
         `[ResultDeduplicator] stage=${stage}: ` +
           `${candidates.length} input -> ${hardDeduplicated.length} exact -> ` +
@@ -165,23 +127,14 @@ class ResultDeduplicator {
     }
   }
 
-  /**
-   * 无副作用的确定性硬去重。
-   * 同一身份出现多个版本时，优先保留来源等级高、分数高、信息更完整的结果。
-   */
   hardDeduplicate(candidates: readonly Candidate[]): Candidate[] {
     if (!Array.isArray(candidates) || candidates.length === 0) return [];
-
     const selected: Candidate[] = [];
     const identityOwner = new Map<string, number>();
-
     for (let index = 0; index < candidates.length; index++) {
       const candidate = candidates[index];
       if (!candidate || typeof candidate !== "object") continue;
-
       const identities = this._getExactIdentities(candidate);
-
-      // 没有稳定身份的候选无法证明相同，必须各自保留。
       if (identities.length === 0) {
         selected.push(candidate);
         continue;
@@ -194,7 +147,6 @@ class ResultDeduplicator {
           break;
         }
       }
-
       if (existingIndex === -1) {
         const nextIndex = selected.length;
         selected.push(candidate);
@@ -202,17 +154,16 @@ class ResultDeduplicator {
         continue;
       }
 
-      const existing = at(selected, existingIndex, "selected candidates");
-      if (this._isPreferredCandidate(candidate, existing)) {
+      const existing = selected[existingIndex];
+      if (existing && this._isPreferredCandidate(candidate, existing)) {
         selected[existingIndex] = candidate;
       }
-
-      // 将两个版本暴露的全部身份都归并到同一槽位，防止传递性重复漏网。
-      const mergedIdentities = [...this._getExactIdentities(existing), ...identities];
-      for (const identity of mergedIdentities)
-        identityOwner.set(identity, existingIndex);
+      const mergedIdentities = [
+        ...this._getExactIdentities(existing || candidate),
+        ...identities,
+      ];
+      for (const identity of mergedIdentities) identityOwner.set(identity, existingIndex);
     }
-
     return selected;
   }
 
@@ -222,123 +173,25 @@ class ResultDeduplicator {
     threshold: number,
     maxResults: number,
   ): Candidate[] {
-    const query = this._toValidVector(queryVector);
-    const ranked = candidates
-      .map((candidate: Candidate, index: number): RankedCandidate => ({
-        candidate,
-        index,
-        vector: this._getCandidateVector(candidate),
-      }))
-      .sort((a, b) => this._compareCandidates(a, b, query));
-
-    const selected: RankedCandidate[] = [];
-    const selectedVectors: Array<Vector | null> = [];
-
-    for (const entry of ranked) {
-      if (selected.length >= maxResults) break;
-
-      // 无向量项无法可靠做语义判断，必须保留，不能静默丢失 BM25/外部候选。
-      if (!entry.vector) {
-        selected.push(entry);
-        selectedVectors.push(null);
-        continue;
-      }
-
-      let redundant = false;
-      for (const selectedVector of selectedVectors) {
-        if (!selectedVector) continue;
-        if (this._cosineSimilarity(entry.vector, selectedVector) >= threshold) {
-          redundant = true;
-          break;
-        }
-      }
-
-      if (!redundant) {
-        selected.push(entry);
-        selectedVectors.push(entry.vector);
-      }
-    }
-
-    // 语义比较时可能为挑选代表项调整次序；最终恢复来源优先、分数和原始次序的稳定排序。
-    return selected
-      .sort((a, b) => this._compareOutputOrder(a, b))
-      .map((entry) => entry.candidate);
+    return semanticDeduplicate(
+      candidates,
+      queryVector,
+      threshold,
+      maxResults,
+      this.config,
+    );
   }
 
-  async _hydrateMissingVectors(candidates: readonly Candidate[]): Promise<Candidate[]> {
-    if (!this.loadVector) return [...candidates];
-
-    const hydrated: Candidate[] = [];
-    for (const candidate of candidates) {
-      if (this._getCandidateVector(candidate)) {
-        hydrated.push(candidate);
-        continue;
-      }
-
-      const chunkId = this._getChunkId(candidate);
-      if (chunkId === null) {
-        hydrated.push(candidate);
-        continue;
-      }
-
-      try {
-        const loaded = await this.loadVector(chunkId);
-        const vector = this._toValidVector(loaded);
-        hydrated.push(vector ? { ...candidate, _vector: vector } : candidate);
-      } catch {
-        // Semantic hydration is optional; sparse-only candidates remain safe.
-        hydrated.push(candidate);
-      }
-    }
-    return hydrated;
+  _hydrateMissingVectors(candidates: readonly Candidate[]): Promise<Candidate[]> {
+    return hydrateMissingVectors(candidates, this.loadVector, this.config.dimension);
   }
 
   _getExactIdentities(candidate: Candidate): string[] {
-    const identities: string[] = [];
-    const chunkId = this._getChunkId(candidate);
-    if (chunkId !== null) identities.push(`chunk:${chunkId}`);
-
-    const normalizedText = this._normalizeText(candidate.text ?? candidate.content);
-    if (normalizedText) identities.push(`text:${normalizedText}`);
-
-    const fullPath = (
-      typeof candidate.fullPath === "string"
-        ? candidate.fullPath
-        : typeof candidate.sourceFile === "string"
-          ? candidate.sourceFile
-          : typeof candidate._expandedFilePath === "string"
-            ? candidate._expandedFilePath
-            : ""
-    )
-      .trim()
-      .replace(/\\/g, "/")
-      .toLowerCase();
-    const chunkIndex =
-      candidate.chunkIndex ?? candidate.chunk_index ?? candidate.offset;
-    const chunkIndexText =
-      typeof chunkIndex === "string" || typeof chunkIndex === "number"
-        ? String(chunkIndex)
-        : "";
-    if (fullPath && chunkIndexText) {
-      identities.push(`path-chunk:${fullPath}:${chunkIndexText}`);
-    }
-
-    return identities;
+    return getExactIdentities(candidate);
   }
 
   _isPreferredCandidate(candidate: Candidate, existing: Candidate): boolean {
-    const candidatePriority = this._getSourcePriority(candidate);
-    const existingPriority = this._getSourcePriority(existing);
-    if (candidatePriority !== existingPriority)
-      return candidatePriority > existingPriority;
-
-    const candidateScore = this._getScore(candidate);
-    const existingScore = this._getScore(existing);
-    if (candidateScore !== existingScore) return candidateScore > existingScore;
-
-    return (
-      this._candidateCompleteness(candidate) > this._candidateCompleteness(existing)
-    );
+    return isPreferredCandidate(candidate, existing, this.config);
   }
 
   _compareCandidates(
@@ -346,123 +199,39 @@ class ResultDeduplicator {
     b: RankedCandidate,
     queryVector: Vector | null,
   ): number {
-    const aQuerySimilarity =
-      queryVector && a.vector ? this._cosineSimilarity(a.vector, queryVector) : null;
-    const bQuerySimilarity =
-      queryVector && b.vector ? this._cosineSimilarity(b.vector, queryVector) : null;
-
-    if (aQuerySimilarity !== null || bQuerySimilarity !== null) {
-      const safeA = aQuerySimilarity ?? -Infinity;
-      const safeB = bQuerySimilarity ?? -Infinity;
-      if (safeA !== safeB) return safeB - safeA;
-    }
-
-    const scoreDiff = this._getScore(b.candidate) - this._getScore(a.candidate);
-    if (scoreDiff !== 0) return scoreDiff;
-
-    const priorityDiff =
-      this._getSourcePriority(b.candidate) - this._getSourcePriority(a.candidate);
-    if (priorityDiff !== 0) return priorityDiff;
-    return a.index - b.index;
+    return compareCandidates(a, b, queryVector, this.config);
   }
 
   _compareOutputOrder(a: RankedCandidate, b: RankedCandidate): number {
-    const priorityDiff =
-      this._getSourcePriority(b.candidate) - this._getSourcePriority(a.candidate);
-    if (priorityDiff !== 0) return priorityDiff;
-
-    const scoreDiff = this._getScore(b.candidate) - this._getScore(a.candidate);
-    if (scoreDiff !== 0) return scoreDiff;
-    return a.index - b.index;
+    return compareOutputOrder(a, b, this.config);
   }
 
   _getSourcePriority(candidate: Candidate): number {
-    const source = String(candidate?.source || "unknown").toLowerCase();
-    const canonicalSource =
-      source === "vector" || source === "hybrid"
-        ? "semantic"
-        : source === "expansion"
-          ? "associate"
-          : source;
-    const configured = Number(
-      this.config.sourcePriority?.[
-        canonicalSource as keyof typeof this.config.sourcePriority
-      ],
-    );
-    if (Number.isFinite(configured)) return configured;
-    if (source.startsWith("bm25")) {
-      const bm25Priority = Number(this.config.sourcePriority?.bm25Body);
-      return Number.isFinite(bm25Priority) ? bm25Priority : 40;
-    }
-    return Number(this.config.sourcePriority?.unknown) || 0;
+    return getSourcePriority(candidate, this.config);
   }
 
   _getScore(candidate: Candidate): number {
-    const score = Number(
-      candidate?.rerank_score ??
-        candidate?.rrf_score ??
-        candidate?.score ??
-        candidate?.original_score ??
-        0,
-    );
-    return Number.isFinite(score) ? score : 0;
+    return getScore(candidate);
   }
 
   _candidateCompleteness(candidate: Candidate): number {
-    let score = 0;
-    if (this._getChunkId(candidate) !== null) score += 4;
-    if (candidate.fullPath || candidate.sourceFile) score += 2;
-    if (candidate.text || candidate.content) score += 2;
-    if (candidate.vector || candidate._vector) score += 1;
-    if (candidate.matchedTags) score += 1;
-    return score;
+    return candidateCompleteness(candidate);
   }
 
   _getChunkId(candidate: Candidate): number | null {
-    const value = candidate?.chunkId ?? candidate?.id ?? candidate?.label;
-    if (typeof value === "bigint") {
-      const converted = Number(value);
-      return Number.isSafeInteger(converted) && converted > 0 ? converted : null;
-    }
-    const numeric = Number(value);
-    return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : null;
+    return getChunkId(candidate);
   }
 
   _getCandidateVector(candidate: Candidate): Vector | null {
-    return this._toValidVector(candidate?.vector || candidate?._vector);
+    return getCandidateVector(candidate, this.config.dimension);
   }
 
   _toValidVector(value: unknown): Vector | null {
-    if (
-      !value ||
-      typeof value !== "object" ||
-      !("length" in value) ||
-      typeof value.length !== "number"
-    )
-      return null;
-    if (value.length !== this.config.dimension) return null;
-
-    const vector =
-      value instanceof Float32Array
-        ? value
-        : new Float32Array(value as ArrayLike<number>);
-    let magnitudeSquared = 0;
-    for (let i = 0; i < vector.length; i++) {
-      const component = at(vector, i, "candidate vector");
-      if (!Number.isFinite(component)) return null;
-      magnitudeSquared += component * component;
-    }
-    return magnitudeSquared > 1e-12 ? vector : null;
+    return toValidVector(value, this.config.dimension);
   }
 
   _normalizeText(value: unknown): string {
-    return (typeof value === "string" ? value : "")
-      .normalize("NFKC")
-      .replace(/\r\n?/g, "\n")
-      .replace(/[ \t]+/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim()
-      .toLowerCase();
+    return normalizeText(value);
   }
 
   _resolveSemanticThreshold(value: unknown): number {
@@ -481,19 +250,7 @@ class ResultDeduplicator {
   }
 
   _cosineSimilarity(v1: Vector | null, v2: Vector | null): number {
-    if (!v1 || !v2 || v1.length !== v2.length) return -1;
-    let dot = 0;
-    let mag1 = 0;
-    let mag2 = 0;
-    for (let i = 0; i < v1.length; i++) {
-      const left = at(v1, i, "left vector");
-      const right = at(v2, i, "right vector");
-      dot += left * right;
-      mag1 += left * left;
-      mag2 += right * right;
-    }
-    if (mag1 <= 1e-12 || mag2 <= 1e-12) return -1;
-    return dot / Math.sqrt(mag1 * mag2);
+    return cosineSimilarity(v1, v2);
   }
 }
 

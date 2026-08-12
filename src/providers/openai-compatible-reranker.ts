@@ -1,4 +1,5 @@
-import type { ChunkCandidate, ExternalReranker } from "../types.js";
+import type { ExternalReranker } from "../types/common.js";
+import type { ChunkCandidate } from "../types/documents.js";
 
 export interface OpenAICompatibleRerankerOptions {
   apiUrl: string;

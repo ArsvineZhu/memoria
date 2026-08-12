@@ -1,9 +1,8 @@
 import type {
   ChunkCandidate,
-  DedupeStats,
-  PipelineContextLike,
-  PipelineData,
-} from "../../types.js";
+} from "../../types/documents.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type { DedupeStats } from "../../types/retrieval.js";
 
 import Stage from "../../core/stage.js";
 import ResultDeduplicator from "../../algorithms/result-deduplicator.js";
@@ -100,7 +99,7 @@ class ResultDeduplicatorStage extends Stage {
       semanticThreshold: config.semanticThreshold,
       maxResults: config.dedupeMaxResults,
       stage: "postprocess",
-    })) as unknown as import("../../types.js").ChunkCandidate[];
+    })) as unknown as ChunkCandidate[];
 
     const keptIds = new Set(
       deduped.map((c) => Number(c && c.chunkId)).filter((id) => Number.isFinite(id)),

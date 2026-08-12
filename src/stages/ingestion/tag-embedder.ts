@@ -1,9 +1,6 @@
-import type {
-  EmbeddingVector,
-  PipelineContextLike,
-  PipelineData,
-  TagEntry,
-} from "../../types.js";
+import type { EmbeddingVector } from "../../types/common.js";
+import type { TagEntry } from "../../types/documents.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

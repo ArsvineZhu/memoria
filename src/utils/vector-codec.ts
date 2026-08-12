@@ -1,4 +1,4 @@
-import type { VectorLike } from "../types.js";
+import type { VectorLike } from "../types/common.js";
 
 type VectorBlob = Buffer | Float32Array | Uint8Array;
 

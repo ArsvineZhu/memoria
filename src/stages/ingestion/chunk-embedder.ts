@@ -1,9 +1,6 @@
-import type {
-  EmbeddingVector,
-  PipelineContextLike,
-  PipelineData,
-  ChunkEntry,
-} from "../../types.js";
+import type { EmbeddingVector } from "../../types/common.js";
+import type { ChunkEntry } from "../../types/documents.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

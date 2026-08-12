@@ -1,0 +1,412 @@
+import type PipelineContext from "../core/context.js";
+import type DerivedStateCoordinator from "../core/derived-state-coordinator.js";
+import DeletePipeline from "../pipelines/delete-pipeline.js";
+import IngestPipeline from "../pipelines/ingest-pipeline.js";
+import SearchPipeline from "../pipelines/search-pipeline.js";
+import type { FileRow, MetadataStoreContract } from "../types/metadata.js";
+import type { ReconciliationReport } from "../types/vector.js";
+import type { MemoryConfig, SearchOptions } from "../types/config.js";
+import type {
+  DeleteEnvelope,
+  FileInput,
+  IngestEnvelope,
+  MemoryDocumentDeleteResult,
+  MemoryDocumentIngestResult,
+  MemoryDocumentInput,
+  SearchEnvelope,
+} from "../types/documents.js";
+import type { PipelineData } from "../types/pipeline.js";
+import { asMemoriaError, MemoriaError } from "../errors.js";
+import { isRecord, normalizeFiles } from "./input-normalization.js";
+import type { RuntimeMetadataStore, RuntimeVectorStore } from "./runtime-types.js";
+import { logicalDocumentPath, normalizeDocumentId } from "../utils/logical-document.js";
+
+type ReadyOperation = <T>(name: string, operation: () => Promise<T>) => Promise<T>;
+type AuthorityInput = { path: string; relPath?: string; documentId?: string };
+type AuthorityMutation = <T>(
+  input: AuthorityInput,
+  operation: () => Promise<T>,
+) => Promise<T>;
+
+export interface MemoryEngineOperationsOptions {
+  config: MemoryConfig;
+  ingestPipeline: IngestPipeline;
+  deletePipeline: DeletePipeline;
+  searchPipeline: SearchPipeline;
+  vectorCoordinator: DerivedStateCoordinator;
+  getContext: () => PipelineContext;
+  getMetadataStore: () => RuntimeMetadataStore;
+  getVectorStore: () => RuntimeVectorStore;
+  getLastIndexedAt: () => number | null;
+  setLastIndexedAt: (value: number | null) => void;
+  getLastReconciliation: () => ReconciliationReport | null;
+  isInitialized: () => boolean;
+  runReadyOperation: ReadyOperation;
+  runAuthorityMutation: AuthorityMutation;
+}
+
+/**
+ * Public MemoryEngine operations that touch pipelines or providers.
+ *
+ * The engine facade owns lifecycle and compatibility hooks; this service owns
+ * the operation-specific data shaping and provider error boundaries. This is
+ * the same facade/service split used by mature client libraries: the public
+ * object stays discoverable while the use-case code is independently testable.
+ */
+export default class MemoryEngineOperations {
+  constructor(private readonly options: MemoryEngineOperationsOptions) {}
+
+  reconcile(): Promise<ReconciliationReport> {
+    return this.options.runReadyOperation("reconcile", async () => {
+      try {
+        await this.options.vectorCoordinator.reconcile();
+        return this.options.getLastReconciliation()!;
+      } catch (error) {
+        throw asMemoriaError(
+          error,
+          "integrity",
+          "MemoryEngine reconciliation failed.",
+          {
+            retryable: true,
+          },
+        );
+      }
+    });
+  }
+
+  flushBatch(
+    files?: FileInput | readonly FileInput[] | string,
+  ): Promise<IngestEnvelope[]> {
+    return this.options.runReadyOperation("flushBatch", () =>
+      this.flushBatchInternal(files),
+    );
+  }
+
+  flush(files?: FileInput | readonly FileInput[] | string): Promise<IngestEnvelope[]> {
+    return this.options.runReadyOperation("flush", () =>
+      this.flushBatchInternal(files),
+    );
+  }
+
+  ingest(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+    return this.options.runReadyOperation("ingest", () =>
+      this.ingestInternal(document),
+    );
+  }
+
+  upsert(document: MemoryDocumentInput): Promise<MemoryDocumentIngestResult> {
+    return this.options.runReadyOperation("upsert", () =>
+      this.ingestInternal(document),
+    );
+  }
+
+  ingestBatch(
+    documents: readonly MemoryDocumentInput[],
+  ): Promise<MemoryDocumentIngestResult[]> {
+    return this.options.runReadyOperation("ingestBatch", async () => {
+      if (!Array.isArray(documents)) {
+        throw new MemoriaError("ingestion", "Logical document batch must be an array.");
+      }
+      const results: MemoryDocumentIngestResult[] = [];
+      for (const document of documents)
+        results.push(await this.ingestInternal(document));
+      return results;
+    });
+  }
+
+  remove(documentId: string): Promise<MemoryDocumentDeleteResult> {
+    return this.options.runReadyOperation("remove", () =>
+      this.removeInternal(documentId),
+    );
+  }
+
+  search(
+    query: string | PipelineData,
+    options: SearchOptions = {},
+  ): Promise<SearchEnvelope> {
+    return this.options.runReadyOperation("search", () =>
+      this.searchInternal(query, options),
+    );
+  }
+
+  explain(query: string, options: SearchOptions = {}) {
+    return this.options.runReadyOperation("explain", () =>
+      this.options.vectorCoordinator.runStableRead(() =>
+        this.options.searchPipeline.explain(query, options, this.options.getContext()),
+      ),
+    );
+  }
+
+  handleDelete(input: string | FileInput): Promise<DeleteEnvelope> {
+    return this.options.runReadyOperation("handleDelete", () =>
+      this.handleDeleteInternal(input),
+    );
+  }
+
+  deleteFile(filePath: string): Promise<DeleteEnvelope> {
+    return this.options.runReadyOperation("deleteFile", () =>
+      this.handleDeleteInternal({ path: filePath }),
+    );
+  }
+
+  listFiles(): Promise<FileRow[]> {
+    return this.options.runReadyOperation("listFiles", async () => {
+      const store = this.options.getMetadataStore();
+      return typeof store.getAllFiles === "function" ? store.getAllFiles() : [];
+    });
+  }
+
+  getStats() {
+    return this.options.runReadyOperation("getStats", () => this.getStatsInternal());
+  }
+
+  private async flushBatchInternal(
+    files?: FileInput | readonly FileInput[] | string,
+  ): Promise<IngestEnvelope[]> {
+    try {
+      const results: IngestEnvelope[] = [];
+      for (const entry of normalizeFiles(files)) {
+        const result = await this.options.runAuthorityMutation(entry, () =>
+          this.options.ingestPipeline.run(
+            {
+              path: entry.path,
+              relPath: entry.relPath,
+              content: entry.content,
+              format: entry.format,
+              sourceContent: entry.sourceContent,
+              mtime: entry.mtime,
+              size: entry.size,
+              documentId: entry.documentId,
+              revision: entry.revision,
+              documentSource: entry.documentSource,
+              documentMetadata: entry.documentMetadata,
+              space: entry.space,
+            },
+            this.options.getContext(),
+          ),
+        );
+        results.push(result as IngestEnvelope);
+        if (result && !result.skipped && result.fileId != null) {
+          this.options.setLastIndexedAt(Date.now());
+        }
+      }
+      return results;
+    } catch (error) {
+      throw asMemoriaError(error, "ingestion", "MemoryEngine flush failed.", {
+        retryable: true,
+      });
+    }
+  }
+
+  private async ingestInternal(
+    document: MemoryDocumentInput,
+  ): Promise<MemoryDocumentIngestResult> {
+    if (!document || typeof document !== "object") {
+      throw new MemoriaError("ingestion", "A logical document object is required.");
+    }
+    const documentId = normalizeDocumentId(document.id);
+    if (typeof document.content !== "string") {
+      throw new MemoriaError(
+        "ingestion",
+        `Logical document "${documentId}" content must be a string.`,
+      );
+    }
+
+    try {
+      const storagePath = logicalDocumentPath(documentId);
+      return await this.options.runAuthorityMutation(
+        { path: storagePath, relPath: storagePath, documentId },
+        async () => {
+          const revision =
+            document.revision === undefined ? undefined : String(document.revision);
+          const mtime = Number.isFinite(document.updatedAt)
+            ? Number(document.updatedAt)
+            : 0;
+          const result = (await this.options.ingestPipeline.run(
+            {
+              path: storagePath,
+              relPath: storagePath,
+              content: document.content,
+              format: document.format ?? "text",
+              sourceContent: document.sourceContent ?? document.content,
+              mtime,
+              size: Buffer.byteLength(document.content, "utf8"),
+              space: "Logical",
+              documentId,
+              revision,
+              documentSource: document.source,
+              documentMetadata: document.metadata,
+            },
+            this.options.getContext(),
+          )) as IngestEnvelope;
+
+          if (!result.skipped && result.fileId != null) {
+            this.options.setLastIndexedAt(Date.now());
+          }
+          return {
+            ...result,
+            documentId,
+            revision,
+            source: document.source,
+            metadata: document.metadata,
+            documentSource: document.source,
+            documentMetadata: document.metadata,
+          };
+        },
+      );
+    } catch (error) {
+      throw asMemoriaError(error, "ingestion", "MemoryEngine ingestion failed.", {
+        retryable: true,
+      });
+    }
+  }
+
+  private async removeInternal(
+    documentId: string,
+  ): Promise<MemoryDocumentDeleteResult> {
+    try {
+      const normalizedId = normalizeDocumentId(documentId);
+      const storagePath = logicalDocumentPath(normalizedId);
+      return await this.options.runAuthorityMutation(
+        { path: storagePath, relPath: storagePath, documentId: normalizedId },
+        async () => {
+          const store = this.options.getMetadataStore();
+          const row =
+            typeof store.getFileByDocumentId === "function"
+              ? await store.getFileByDocumentId(normalizedId)
+              : await store.getFileByPath(storagePath);
+          const result = (await this.options.deletePipeline.run(
+            {
+              path: row?.path || storagePath,
+              relPath: row?.path || storagePath,
+              documentId: normalizedId,
+              space: row?.space || "Logical",
+            },
+            this.options.getContext(),
+          )) as DeleteEnvelope;
+          return { ...result, documentId: normalizedId };
+        },
+      );
+    } catch (error) {
+      throw asMemoriaError(error, "persistence", "MemoryEngine remove failed.", {
+        retryable: true,
+      });
+    }
+  }
+
+  private async searchInternal(
+    query: string | PipelineData,
+    options: SearchOptions,
+  ): Promise<SearchEnvelope> {
+    const input: PipelineData = { ...(isRecord(query) ? query : { query }) };
+    if (!input.query && typeof query === "string") input.query = query;
+    input.options = { ...options, ...(input.options || {}) };
+    try {
+      return await this.options.vectorCoordinator.runStableRead(
+        async () =>
+          (await this.options.searchPipeline.run(
+            input,
+            this.options.getContext(),
+          )) as SearchEnvelope,
+      );
+    } catch (error) {
+      throw asMemoriaError(error, "retrieval", "MemoryEngine search failed.", {
+        retryable: true,
+      });
+    }
+  }
+
+  private async handleDeleteInternal(
+    input: string | FileInput,
+  ): Promise<DeleteEnvelope> {
+    try {
+      const source: FileInput = typeof input === "string" ? { path: input } : input;
+      return (await this.options.runAuthorityMutation(source, async () =>
+        this.options.deletePipeline.run(
+          {
+            path: source.path,
+            relPath: source.relPath,
+            documentId: source.documentId,
+            space: source.space,
+          },
+          this.options.getContext(),
+        ),
+      )) as DeleteEnvelope;
+    } catch (error) {
+      throw asMemoriaError(error, "persistence", "MemoryEngine delete failed.", {
+        retryable: true,
+      });
+    }
+  }
+
+  private async getStatsInternal() {
+    const store = this.options.getMetadataStore();
+    let chunks: Awaited<ReturnType<MetadataStoreContract["getAllChunks"]>>;
+    let tags: Awaited<ReturnType<MetadataStoreContract["getAllTags"]>>;
+    let spaces: string[];
+    let files: number;
+    let lastIndexed: number | null;
+    let healthy = { healthy: true, issues: [] as string[] };
+    try {
+      chunks = (await store.getAllChunks()) || [];
+      tags = (await store.getAllTags()) || [];
+      spaces = await store.getDistinctSpaces();
+      files = await store.countFiles();
+      lastIndexed =
+        typeof store.getLastIndexedAt === "function"
+          ? await store.getLastIndexedAt()
+          : this.options.getLastIndexedAt();
+      if (typeof store.healthCheck === "function") healthy = await store.healthCheck();
+    } catch (error) {
+      throw asMemoriaError(
+        error,
+        "persistence",
+        "MemoryEngine statistics persistence failed.",
+        {
+          retryable: true,
+        },
+      );
+    }
+
+    let vectorStats = {
+      totalVectors: 0,
+      indices: 0,
+      dimension: this.options.config.dimension,
+    };
+    try {
+      const vectorStore = this.options.getVectorStore();
+      if (typeof vectorStore.getIndexStats === "function") {
+        let total = 0;
+        let count = 0;
+        if (vectorStore.indices instanceof Map) {
+          for (const name of vectorStore.indices.keys()) {
+            const stats = await vectorStore.getIndexStats(name);
+            total += Number(stats?.size) || 0;
+            count += 1;
+          }
+        }
+        vectorStats = { ...vectorStats, totalVectors: total, indices: count };
+      }
+    } catch (error) {
+      throw asMemoriaError(
+        error,
+        "vector_backend",
+        "MemoryEngine vector statistics failed.",
+        {
+          retryable: true,
+        },
+      );
+    }
+
+    return {
+      files,
+      chunks: chunks.length,
+      tags: tags.length,
+      spaces: Array.isArray(spaces) ? spaces : [],
+      lastIndexed,
+      vectorStats,
+      healthy,
+      initialized: this.options.isInitialized(),
+    };
+  }
+}

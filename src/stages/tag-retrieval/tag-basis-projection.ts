@@ -1,16 +1,19 @@
 import type {
   ChunkCandidate,
-  TagBasisProjectionLike,
-  EmbeddingVector,
-  TagBasisProjectionEnvelope,
-  TagBasisQueryAnalysis,
-  MemoryConfigOverrides,
+} from "../../types/documents.js";
+import type {
   PipelineContextLike,
   PipelineData,
+  TagBasisProjectionLike,
+} from "../../types/pipeline.js";
+import type { EmbeddingVector, UnknownRecord } from "../../types/common.js";
+import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { TagRow } from "../../types/metadata.js";
+import type {
+  TagBasisProjectionEnvelope,
+  TagBasisQueryAnalysis,
   TagExpansionData,
-  TagRow,
-  UnknownRecord,
-} from "../../types.js";
+} from "../../types/retrieval.js";
 
 import Stage from "../../core/stage.js";
 import { TagBasisProjection } from "../../algorithms/tag-basis-projection.js";

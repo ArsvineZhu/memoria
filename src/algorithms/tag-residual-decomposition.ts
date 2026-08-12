@@ -9,7 +9,9 @@
 
 import { orthogonalProjection, dotProduct, magnitude } from "./gram-schmidt.js";
 import type { VexusIndex } from "../native/vexus-lite.js";
-import type { TagResidualDecompositionFeatures, Vector, VectorHit } from "../types.js";
+import type { Vector } from "../types/common.js";
+import type { TagResidualDecompositionFeatures } from "../types/retrieval.js";
+import type { VectorHit } from "../types/documents.js";
 import {
   at,
   assertDimension,

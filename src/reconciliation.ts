@@ -1,12 +1,11 @@
 import { MemoriaError } from "./errors.js";
+import type { IndexableChunkRow, MetadataStoreContract } from "./types/metadata.js";
 import type {
-  IndexableChunkRow,
-  MetadataStoreContract,
   ReconciliationReport,
   VectorIndexEntry,
   VectorReconciliationPlan,
   VectorStoreContract,
-} from "./types.js";
+} from "./types/vector.js";
 import { decodeVectorBlob } from "./utils/vector-codec.js";
 
 const TAG_INDEX_NAME = "tag_vectors";
@@ -17,7 +16,7 @@ async function loadActiveTags(metadataStore: MetadataStoreContract) {
     : metadataStore.getAllTags();
 }
 
-export type { VectorReconciliationPlan } from "./types.js";
+export type { VectorReconciliationPlan } from "./types/vector.js";
 
 async function loadIndexableChunks(
   metadataStore: MetadataStoreContract,

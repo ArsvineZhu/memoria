@@ -1,4 +1,5 @@
-import type { PropagationSpreadResult, UnknownRecord } from "../../types.js";
+import type { UnknownRecord } from "../../types/common.js";
+import type { PropagationSpreadResult } from "../../types/retrieval.js";
 
 interface PropagationNode extends UnknownRecord {
   hop?: number;

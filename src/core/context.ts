@@ -1,9 +1,7 @@
-import type {
-  EmbeddingProviderContract,
-  MetadataStoreContract,
-  PipelineContextOptions,
-  VectorStoreContract,
-} from "../types.js";
+import type { EmbeddingProviderContract } from "../types/embedding.js";
+import type { MetadataStoreContract } from "../types/metadata.js";
+import type { VectorStoreContract } from "../types/vector.js";
+import type { PipelineContextOptions } from "../types/pipeline.js";
 
 /**
  * Dependency injection container shared across all stages in a pipeline.

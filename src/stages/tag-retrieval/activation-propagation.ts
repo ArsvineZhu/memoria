@@ -1,11 +1,12 @@
 import type {
   ChunkCandidate,
-  MemoryConfigOverrides,
-  PipelineContextLike,
-  PipelineData,
+} from "../../types/documents.js";
+import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type {
   PropagationTrace,
   TagGraphPropagationData,
-} from "../../types.js";
+} from "../../types/retrieval.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

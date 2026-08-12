@@ -2,12 +2,15 @@
 
 import { get_encoding } from "@dqbd/tiktoken";
 import EmbeddingProvider from "../interfaces/embedding-provider.js";
-import type { EmbeddingOptions, EmbeddingVector } from "../types.js";
-import { at } from "../utils/numerical.js";
-
-interface TokenEncoding {
-  encode(text: string): ArrayLike<number>;
-}
+import type { EmbeddingOptions } from "../types/embedding.js";
+import type { EmbeddingVector } from "../types/common.js";
+import OpenAIEmbeddingClient from "./openai-embedding-client.js";
+import {
+  mergeEmbeddingBatchResults,
+  planEmbeddingBatches,
+  runEmbeddingWorkers,
+} from "./openai-embedding-batcher.js";
+import { normalizeFallbackModels, uniqueModelCandidates } from "./openai-embedding-models.js";
 
 interface OpenAICompatibleConfig {
   apiUrl?: string;
@@ -21,34 +24,15 @@ interface OpenAICompatibleConfig {
   concurrency?: number;
 }
 
-interface OpenAICompatibleResponseItem {
-  index?: number;
-  embedding?: readonly number[];
+interface TokenEncoding {
+  encode(text: string): ArrayLike<number>;
 }
 
-interface OpenAICompatibleResponse {
-  error?: { message?: unknown; code?: unknown };
-  data?: OpenAICompatibleResponseItem[];
-}
-
-interface EmbeddingBatch {
-  texts: string[];
-  originalIndices: number[];
-}
-
-interface BatchResult {
-  vectors: number[][] | null;
-  originalIndices: number[];
-  error?: string;
-}
-
-let _encoding: TokenEncoding | null = null;
+let encoding: TokenEncoding | null = null;
 
 function getEncoding(): TokenEncoding {
-  if (!_encoding) {
-    _encoding = get_encoding("cl100k_base");
-  }
-  return _encoding;
+  encoding ??= get_encoding("cl100k_base");
+  return encoding;
 }
 
 /**
@@ -68,6 +52,7 @@ class OpenAICompatibleEmbeddingProvider extends EmbeddingProvider {
   concurrency: number;
   fallbackModels: string[];
   safeMaxTokens: number;
+  private readonly embeddingClient: OpenAIEmbeddingClient;
   /**
    * @param {object} config
    * @param {string} config.apiUrl       - Base API URL (e.g. "https://provider.example")
@@ -91,17 +76,13 @@ class OpenAICompatibleEmbeddingProvider extends EmbeddingProvider {
     this.maxToken = config.maxToken || 8000;
     this.concurrency = config.concurrency || 5;
 
-    if (Array.isArray(config.fallbackModels)) {
-      this.fallbackModels = [...config.fallbackModels];
-    } else if (config.fallbackModels) {
-      this.fallbackModels = String(config.fallbackModels)
-        .split(/[,，]/)
-        .map((m) => m.trim())
-        .filter(Boolean);
-    } else {
-      this.fallbackModels = [];
-    }
+    this.fallbackModels = normalizeFallbackModels(config.fallbackModels);
     this.safeMaxTokens = Math.floor(this.maxToken * 0.85);
+    this.embeddingClient = new OpenAIEmbeddingClient({
+      apiUrl: this.apiUrl,
+      apiKey: this.apiKey,
+      getModelCandidates: () => this._getModelCandidates(),
+    });
   }
 
   override getDimension(): number {
@@ -114,16 +95,7 @@ class OpenAICompatibleEmbeddingProvider extends EmbeddingProvider {
    * @private
    */
   _getModelCandidates(): string[] {
-    const candidates: string[] = [];
-    const addModel = (model: unknown): void => {
-      const normalized = (typeof model === "string" ? model : "").trim();
-      if (normalized && !candidates.includes(normalized)) {
-        candidates.push(normalized);
-      }
-    };
-    addModel(this.model);
-    this.fallbackModels.forEach(addModel);
-    return candidates;
+    return uniqueModelCandidates({ primary: this.model, fallbacks: this.fallbackModels });
   }
 
   /**
@@ -133,118 +105,6 @@ class OpenAICompatibleEmbeddingProvider extends EmbeddingProvider {
    * @returns {Promise<number[][]>} Array of embedding arrays
    * @private
    */
-  async _sendBatch(
-    batchTexts: readonly string[],
-    batchNumber: number,
-  ): Promise<number[][]> {
-    const modelCandidates = this._getModelCandidates();
-    const baseDelay = 1000;
-
-    for (let attempt = 1; attempt <= modelCandidates.length; attempt++) {
-      const model = modelCandidates[attempt - 1];
-      try {
-        const requestUrl = `${this.apiUrl}/v1/embeddings`;
-        const requestBody = { model, input: batchTexts };
-        const requestHeaders = {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        };
-
-        const response = await fetch(requestUrl, {
-          method: "POST",
-          headers: requestHeaders,
-          body: JSON.stringify(requestBody),
-        });
-
-        const responseBodyText = await response.text();
-
-        if (!response.ok) {
-          if (response.status === 429) {
-            const waitTime = Math.min(5000 * attempt, 15000);
-            console.warn(
-              `[OpenAICompatibleEmbedding] Batch ${batchNumber} model "${model}" ` +
-                `rate limited (429). Switching fallback in ${waitTime / 1000}s...`,
-            );
-            await new Promise((r) => setTimeout(r, waitTime));
-            continue;
-          }
-          throw new Error(
-            `API Error ${response.status}: ${responseBodyText.substring(0, 500)}`,
-          );
-        }
-
-        let data: OpenAICompatibleResponse;
-        try {
-          const parsed: unknown = JSON.parse(responseBodyText);
-          if (parsed === null || typeof parsed !== "object") {
-            throw new Error("response root is not an object");
-          }
-          const record = parsed as Record<string, unknown>;
-          const dataItems = Array.isArray(record.data)
-            ? record.data.filter(
-                (item): item is OpenAICompatibleResponseItem =>
-                  item !== null && typeof item === "object",
-              )
-            : undefined;
-          data = {
-            error:
-              record.error && typeof record.error === "object"
-                ? (record.error as OpenAICompatibleResponse["error"])
-                : undefined,
-            data: dataItems,
-          };
-        } catch (parseError) {
-          throw new Error(
-            `Failed to parse API response as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-            { cause: parseError },
-          );
-        }
-
-        if (!data) {
-          throw new Error("API returned empty/null response");
-        }
-
-        if (data.error) {
-          const errorMsg =
-            typeof data.error.message === "string"
-              ? data.error.message
-              : "provider_error";
-          const errorCode =
-            typeof data.error.code === "string" || typeof data.error.code === "number"
-              ? String(data.error.code)
-              : response.status;
-          throw new Error(`API Error ${errorCode}: ${errorMsg}`);
-        }
-
-        if (!data.data || !Array.isArray(data.data)) {
-          throw new Error(
-            "Invalid API response structure: missing or invalid data field",
-          );
-        }
-
-        return data.data
-          .filter(
-            (
-              item,
-            ): item is OpenAICompatibleResponseItem & {
-              index: number;
-              embedding: readonly number[];
-            } => typeof item.index === "number" && Array.isArray(item.embedding),
-          )
-          .sort((a, b) => a.index - b.index)
-          .map((item) => [...item.embedding]);
-      } catch (e) {
-        console.warn(
-          `[OpenAICompatibleEmbedding] Batch ${batchNumber}, Model "${model}" failed ` +
-            `(${attempt}/${modelCandidates.length}): ${e instanceof Error ? e.message : String(e)}`,
-        );
-        if (attempt === modelCandidates.length) throw e;
-        await new Promise((r) => setTimeout(r, baseDelay * attempt));
-      }
-    }
-    throw new Error("No embedding model candidates configured");
-  }
-
   /**
    * Embed a batch of texts.
    *
@@ -260,53 +120,12 @@ class OpenAICompatibleEmbeddingProvider extends EmbeddingProvider {
   ): Promise<(EmbeddingVector | null)[]> {
     if (!texts || texts.length === 0) return [];
 
-    const encoding = getEncoding();
-
-    // 1. Split into batches, recording original indices and skipping oversize texts
-    const batches: EmbeddingBatch[] = [];
-    let currentBatchTexts: string[] = [];
-    let currentBatchIndices: number[] = [];
-    let currentBatchTokens = 0;
-    const oversizeIndices = new Set();
-
-    for (let i = 0; i < texts.length; i++) {
-      const text = at(texts, i, "embedding texts");
-      const textTokens = encoding.encode(text).length;
-
-      if (textTokens > this.safeMaxTokens) {
-        console.warn(
-          `[OpenAICompatibleEmbedding] Text at index ${i} exceeds token limit ` +
-            `(${textTokens} > ${this.safeMaxTokens}), skipping.`,
-        );
-        oversizeIndices.add(i);
-        continue;
-      }
-
-      const isTokenFull =
-        currentBatchTexts.length > 0 &&
-        currentBatchTokens + textTokens > this.safeMaxTokens;
-      const isItemFull = currentBatchTexts.length >= this.maxBatchItems;
-
-      if (isTokenFull || isItemFull) {
-        batches.push({
-          texts: currentBatchTexts,
-          originalIndices: currentBatchIndices,
-        });
-        currentBatchTexts = [text];
-        currentBatchIndices = [i];
-        currentBatchTokens = textTokens;
-      } else {
-        currentBatchTexts.push(text);
-        currentBatchIndices.push(i);
-        currentBatchTokens += textTokens;
-      }
-    }
-    if (currentBatchTexts.length > 0) {
-      batches.push({
-        texts: currentBatchTexts,
-        originalIndices: currentBatchIndices,
-      });
-    }
+    const { batches, oversizeIndices } = planEmbeddingBatches(
+      texts,
+      getEncoding(),
+      this.maxBatchItems,
+      this.safeMaxTokens,
+    );
 
     if (oversizeIndices.size > 0) {
       console.warn(
@@ -314,58 +133,15 @@ class OpenAICompatibleEmbeddingProvider extends EmbeddingProvider {
       );
     }
 
-    // 2. Concurrent batch execution with worker pool
-    const batchResults: Array<BatchResult | undefined> = new Array(batches.length);
-    let cursor = 0;
-
-    const worker = async () => {
-      while (true) {
-        const batchIndex = cursor++;
-        if (batchIndex >= batches.length) break;
-
-        const batch = at(batches, batchIndex, "embedding batches");
-        try {
-          batchResults[batchIndex] = {
-            vectors: await this._sendBatch(batch.texts, batchIndex + 1),
-            originalIndices: batch.originalIndices,
-          };
-        } catch (e) {
-          console.error(
-            `[OpenAICompatibleEmbedding] Batch ${batchIndex + 1} failed permanently: ${e instanceof Error ? e.message : String(e)}`,
-          );
-          batchResults[batchIndex] = {
-            vectors: null,
-            originalIndices: batch.originalIndices,
-            error: e instanceof Error ? e.message : String(e),
-          };
-        }
-      }
-    };
-
-    const workers = [];
-    for (let i = 0; i < this.concurrency; i++) {
-      workers.push(worker());
-    }
-    await Promise.all(workers);
-
-    // 3. Backfill results by original index
-    const finalResults: Array<number[] | null> = new Array(texts.length).fill(null);
-    let successCount = 0;
-    let failCount = oversizeIndices.size;
-
-    for (const result of batchResults) {
-      if (!result || !result.vectors) {
-        if (result) failCount += result.originalIndices.length;
-        continue;
-      }
-      const vectors = result.vectors;
-      if (!vectors) continue;
-      result.originalIndices.forEach((origIdx, vecIdx) => {
-        finalResults[origIdx] = vectors[vecIdx] || null;
-        if (vectors[vecIdx]) successCount++;
-        else failCount++;
-      });
-    }
+    const batchResults = await runEmbeddingWorkers(
+      batches,
+      this.concurrency,
+      (batch, batchNumber) => this.embeddingClient.sendBatch(batch.texts, batchNumber),
+    );
+    const merged = mergeEmbeddingBatchResults(batchResults, texts.length);
+    const finalResults = merged.vectors;
+    const successCount = merged.successCount;
+    const failCount = merged.failCount + oversizeIndices.size;
 
     if (failCount > 0) {
       console.warn(

@@ -1,467 +1,31 @@
-import type { UnknownRecord } from "../../types.js";
 import { at } from "../../utils/numerical.js";
-
-type OperatorDiagnostics = Record<string, number>;
-
-interface RowEdge {
-  targetIndex: number;
-  targetId: number;
-  weight: number;
-}
-
-interface OperatorRow {
-  sourceId: number;
-  sourceIndex: number;
-  edges: RowEdge[];
-  rowSum: number;
-}
-
-export interface DistributionOperator {
-  nodeCount: number;
-  nodeIndexOf(id: unknown): number | undefined;
-  nodeIdAt(index: number): number;
-  operatorSig: string;
-  apply(
-    input: Float64Array,
-    output?: Float64Array,
-    diagnostics?: OperatorDiagnostics,
-  ): Float64Array;
-  forEachEdge(
-    sourceId: number,
-    callback: (targetId: number, weight: number, meta: UnknownRecord) => void,
-  ): void;
-}
-
-export interface DualOperator {
-  applyDual(
-    local: Float64Array,
-    transfer: Float64Array,
-    localOutput: Float64Array,
-    transferOutput: Float64Array,
-    localDiagnostics: OperatorDiagnostics,
-    transferDiagnostics: OperatorDiagnostics,
-  ): void;
-}
-
-export interface SolverScaleOptions extends UnknownRecord {
-  alpha?: number;
-  maxIterations?: number;
-  tolerance?: number;
-}
-
-export interface SupportOptions extends UnknownRecord {
-  method?: string;
-  massRatio?: number;
-  localSupportMassRatio?: number;
-  extendedSupportMassRatio?: number;
-}
-
-export interface SolverOptions extends UnknownRecord {
-  operator?: DistributionOperator;
-  localOperator?: DistributionOperator;
-  transferOperator?: DistributionOperator;
-  dualOperator?: DualOperator;
-  seedDistribution:
-    Map<number, number> | readonly (readonly unknown[])[] | Float64Array;
-  local?: SolverScaleOptions;
-  transfer?: SolverScaleOptions;
-  support?: SupportOptions;
-  localSupport?: SupportOptions;
-  transferSupport?: SupportOptions;
-}
+import { clamp, l1Distance, vectorMass } from "./graph-diffusion-math.js";
+import {
+  buildRowOperator,
+  normalizeSource,
+} from "./graph-diffusion-operator.js";
+import {
+  distributionToEntries,
+  effectiveSupport,
+} from "./graph-diffusion-support.js";
+import type {
+  DistributionOperator,
+  DualOperator,
+  GraphDiffusionDiagnostics,
+  GraphDiffusionResult,
+  OperatorDiagnostics,
+  SolverOptions,
+  SolverScaleOptions,
+  SupportDomain,
+  SupportOptions,
+} from "./graph-diffusion-types.js";
 
 /**
- * Dual graph-diffusion solver — pure fixed-point implementation.
+ * Dual graph-diffusion fixed-point solver.
  *
- * The query seed distribution (tag activation mass) is diffused over a graph operator with the
- * scaled-resolvent fixed point u = (1-α)S + α·T(u), in two scales
- * (local 0.15 / transfer 0.55 by default), then reduced to effective
- * support domains (mass-ratio / shannon / participation-ratio / largest-mass-gap
- * methods).
- *
- * The production engine conditions its operators per agent scope
- * (identity / ranking eligibility, provenance edge mass); in this library
- * the conditioning is abstracted — the stage builds a plain row-normalized
- * operator from the co-occurrence adjacency unless an injected operator
- * builder is supplied via ctx.
- */
-
-function clamp(value: unknown, min: number, max: number): number {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return min;
-  return Math.max(min, Math.min(max, numeric));
-}
-
-function l1Distance(left: ArrayLike<number>, right: ArrayLike<number>): number {
-  let distance = 0;
-  for (let index = 0; index < left.length; index++) {
-    distance += Math.abs((Number(left[index]) || 0) - (Number(right[index]) || 0));
-  }
-  return distance;
-}
-
-function vectorMass(vector: ArrayLike<number>): number {
-  let mass = 0;
-  for (let index = 0; index < vector.length; index++) {
-    mass += Math.max(0, Number(vector[index]) || 0);
-  }
-  return mass;
-}
-
-/**
- * Build a deterministic row-normalized linear operator from a co-occurrence
- * adjacency: each row's association weights are divided by the row sum, so the
- * operator spreads mass deterministically along the graph.
- *
- * @param {Map<number, Map<number, number>>} adjacency
- * @param {object} [options]
- * @param {function} [options.weightFn] - optional per-edge transform (weight) => number
- * @returns {object} operator with apply/applyDual and id mapping
- */
-function buildRowOperator(
-  adjacency: Map<number, Map<number, number>>,
-  options: { weight?: (weight: number) => number } = {},
-): DistributionOperator {
-  const seen = new Set<number>();
-  if (adjacency instanceof Map) {
-    for (const [id, row] of adjacency.entries()) {
-      const numericId = Number(id);
-      if (Number.isFinite(numericId)) seen.add(numericId);
-      if (row instanceof Map) {
-        for (const neighborId of row.keys()) {
-          const numericNeighbor = Number(neighborId);
-          if (Number.isFinite(numericNeighbor)) seen.add(numericNeighbor);
-        }
-      }
-    }
-  }
-  const sortedIds = [...seen].sort((a, b) => a - b);
-  const nodeCount = sortedIds.length;
-  const indexById = new Map(sortedIds.map((id, index) => [id, index]));
-
-  // Row edges, pre-normalized.
-  const rows: OperatorRow[] = [];
-  for (const sourceId of sortedIds) {
-    const rawRow = adjacency.get(sourceId);
-    const rawEdges = rawRow instanceof Map ? [...rawRow.entries()] : [];
-    const rowEntries: RowEdge[] = [];
-    let rowSum = 0;
-    for (const [targetId, rawWeight] of rawEdges) {
-      const targetIndex = indexById.get(Number(targetId));
-      if (targetIndex === undefined) continue;
-      let weight = Number(rawWeight) || 0;
-      if (typeof options.weight === "function") weight = options.weight(weight);
-      if (!Number.isFinite(weight) || weight <= 0) continue;
-      rowEntries.push({ targetIndex, targetId: Number(targetId), weight });
-      rowSum += weight;
-    }
-    rowEntries.sort((a, b) => a.targetIndex - b.targetIndex);
-    const sourceIndex = indexById.get(sourceId);
-    if (sourceIndex === undefined) continue;
-    rows.push({
-      sourceId,
-      sourceIndex,
-      edges: rowEntries,
-      rowSum,
-    });
-  }
-
-  const operatorSig = `rows:${nodeCount}:${rows.length}:${sortedIds.join(",")}`;
-
-  const apply = (
-    input: Float64Array,
-    output = new Float64Array(nodeCount),
-    diagnostics?: OperatorDiagnostics,
-  ): Float64Array => {
-    if (!input || input.length !== nodeCount) {
-      throw new RangeError(`Operator input length must be ${nodeCount}`);
-    }
-    output.fill(0);
-    let visitedEdges = 0;
-    let propagatedMass = 0;
-    for (const row of rows) {
-      const sourceMass = Number(input[row.sourceIndex]) || 0;
-      if (!(sourceMass > 0) || !(row.rowSum > 0)) continue;
-      const inverseRowSum = row.rowSum > 0 ? 1 / row.rowSum : 0;
-      for (const edge of row.edges) {
-        if (edge.weight <= 0) continue;
-        visitedEdges += 1;
-        const mass = sourceMass * edge.weight * inverseRowSum;
-        output[edge.targetIndex] =
-          at(output, edge.targetIndex, "operator output") + mass;
-        propagatedMass += mass;
-      }
-    }
-    if (diagnostics && typeof diagnostics === "object") {
-      diagnostics.visitedEdges = visitedEdges;
-      diagnostics.propagatedMass = propagatedMass;
-    }
-    return output;
-  };
-
-  return {
-    nodeCount,
-    nodeIndexOf: (id) => indexById.get(Number(id)),
-    nodeIdAt: (index) => at(sortedIds, index, "sorted ids"),
-    operatorSig,
-    apply: apply,
-    forEachEdge(sourceId, callback) {
-      const row = rows.find((r) => r.sourceId === Number(sourceId));
-      if (!row) return;
-      for (const edge of row.edges) {
-        callback(edge.targetId, edge.weight, {});
-      }
-    },
-  };
-}
-
-/**
- * Scatter the seed distribution into a normalized unit-mass Float64 vector over
- * the operator's node space.
- *
- * @param {object} operator
- * @param {Map|Array} seedDistribution - Map<id, mass> or [[id, mass], ...]
- * @returns {Float64Array}
- */
-function normalizeSource(
-  operator: DistributionOperator,
-  seedDistribution: SolverOptions["seedDistribution"],
-): Float64Array {
-  const source = new Float64Array(operator.nodeCount);
-  if (seedDistribution instanceof Map) {
-    for (const [rawId, rawMass] of seedDistribution.entries()) {
-      const index = operator.nodeIndexOf(rawId);
-      const mass = Math.max(0, Number(rawMass) || 0);
-      if (index !== undefined && mass > 0) {
-        source[index] = at(source, index, "seed distribution") + mass;
-      }
-    }
-  } else if (Array.isArray(seedDistribution)) {
-    for (const entry of seedDistribution as readonly (readonly unknown[])[]) {
-      if (!Array.isArray(entry) || entry.length < 2) continue;
-      const index = operator.nodeIndexOf(entry[0]);
-      const mass = Math.max(0, Number(entry[1]) || 0);
-      if (index !== undefined && mass > 0) {
-        source[index] = at(source, index, "seed distribution") + mass;
-      }
-    }
-  } else if (seedDistribution && typeof seedDistribution.length === "number") {
-    if (seedDistribution.length !== operator.nodeCount) {
-      throw new RangeError(`Source distribution length must be ${operator.nodeCount}`);
-    }
-    const values = seedDistribution as ArrayLike<number>;
-    for (let index = 0; index < source.length; index++) {
-      source[index] = Math.max(0, Number(at(values, index, "seed distribution")) || 0);
-    }
-  }
-
-  const mass = vectorMass(source);
-  if (mass <= 0) {
-    const error = new Error(
-      "Graph diffusion seed distribution contains no positive mass",
-    );
-    Object.assign(error, { code: "TAG_RETRIEVAL_EMPTY_SOURCE" });
-    throw error;
-  }
-  for (let index = 0; index < source.length; index++) {
-    source[index] = at(source, index, "seed distribution") / mass;
-  }
-  return source;
-}
-
-/**
- * Extract the effective support domain of a solved distribution.
- *
- * @param {Float64Array} vector
- * @param {object} operator
- * @param {object} [options]
- * @returns {Readonly<{method, ids, size, totalMass, retainedMass, retainedMassRatio}>}
- */
-export interface SupportDomain extends UnknownRecord {
-  method: string;
-  ids: readonly number[];
-  size: number;
-  totalMass: number;
-  retainedMass: number;
-  retainedMassRatio: number;
-  tailMass: number;
-  shannonEffectiveSize: number;
-  participationRatio: number;
-  entries?: ReadonlyArray<{
-    id: number;
-    mass: number;
-    normalizedMass: number;
-  }>;
-  [key: string]: unknown;
-}
-
-export interface GraphDiffusionDiagnostics extends UnknownRecord {
-  iterations: number;
-  converged: boolean;
-  localConverged: boolean;
-  transferConverged: boolean;
-  localResidual: number;
-  transferResidual: number;
-  sourceMass: number;
-  localMass: number;
-  transferMass: number;
-  localMassDelta: number;
-  transferMassDelta: number;
-  localOperatorSig: string | null;
-  transferOperatorSig: string | null;
-  operatorShared: boolean;
-  packedDualApply: boolean;
-  localApply: OperatorDiagnostics;
-  transferApply: OperatorDiagnostics;
-  iterationTrace: ReadonlyArray<{
-    iteration: number;
-    localResidual: number;
-    transferResidual: number;
-    localMass: number;
-    transferMass: number;
-  }>;
-}
-
-export interface GraphDiffusionResult {
-  sourceVector: readonly number[];
-  localVector: readonly number[];
-  transferVector: readonly number[];
-  localDistribution: ReadonlyArray<readonly [number, number]>;
-  extendedDistribution: ReadonlyArray<readonly [number, number]>;
-  localSupport: SupportDomain;
-  extendedSupport: SupportDomain;
-  diagnostics: GraphDiffusionDiagnostics;
-}
-
-function effectiveSupport(
-  vector: Float64Array,
-  operator: DistributionOperator,
-  options: SupportOptions = {},
-): SupportDomain {
-  const method = String(options.method || "mass_ratio").toLowerCase();
-  const massRatio = clamp(options.massRatio ?? 0.9, 0.01, 1);
-  const positive: Array<{ id: number; index: number; mass: number }> = [];
-  let totalMass = 0;
-  let squareMass = 0;
-  let entropy = 0;
-
-  for (let index = 0; index < vector.length; index++) {
-    const mass = Math.max(0, Number(vector[index]) || 0);
-    if (mass <= 0) continue;
-    positive.push({
-      id: operator.nodeIdAt(index),
-      index,
-      mass,
-    });
-    totalMass += mass;
-    squareMass += mass * mass;
-  }
-  positive.sort((left, right) => right.mass - left.mass || left.id - right.id);
-
-  if (totalMass <= 0) {
-    return Object.freeze({
-      method,
-      ids: Object.freeze([]),
-      size: 0,
-      totalMass: 0,
-      retainedMass: 0,
-      retainedMassRatio: 0,
-      tailMass: 0,
-      shannonEffectiveSize: 0,
-      participationRatio: 0,
-    });
-  }
-
-  for (const item of positive) {
-    const probability = item.mass / totalMass;
-    entropy -= probability * Math.log(probability);
-  }
-  const shannonEffectiveSize = Math.exp(entropy);
-  const participationRatio = squareMass > 0 ? (totalMass * totalMass) / squareMass : 0;
-
-  let targetCount = positive.length;
-  if (method === "shannon") {
-    targetCount = Math.max(1, Math.ceil(shannonEffectiveSize));
-  } else if (method === "participation_ratio") {
-    targetCount = Math.max(1, Math.ceil(participationRatio));
-  } else if (method === "largest_mass_gap" && positive.length > 1) {
-    let largestGap = -Infinity;
-    let largestGapIndex = 0;
-    for (let index = 0; index + 1 < positive.length; index++) {
-      const gap =
-        at(positive, index, "positive distribution").mass -
-        at(positive, index + 1, "positive distribution").mass;
-      if (gap > largestGap) {
-        largestGap = gap;
-        largestGapIndex = index;
-      }
-    }
-    targetCount = largestGapIndex + 1;
-  }
-
-  const retained: Array<{ id: number; index: number; mass: number }> = [];
-  let retainedMass = 0;
-  if (method === "mass_ratio" || method === "tail_budget") {
-    for (const item of positive) {
-      retained.push(item);
-      retainedMass += item.mass;
-      if (retainedMass / totalMass >= massRatio) break;
-    }
-  } else {
-    retained.push(...positive.slice(0, targetCount));
-    retainedMass = retained.reduce((sum, item) => sum + item.mass, 0);
-  }
-
-  return Object.freeze({
-    method,
-    ids: Object.freeze(retained.map((item) => item.id)),
-    entries: Object.freeze(
-      retained.map((item) =>
-        Object.freeze({
-          id: item.id,
-          mass: item.mass,
-          normalizedMass: item.mass / totalMass,
-        }),
-      ),
-    ),
-    size: retained.length,
-    totalMass,
-    retainedMass,
-    retainedMassRatio: retainedMass / totalMass,
-    tailMass: Math.max(0, totalMass - retainedMass),
-    shannonEffectiveSize,
-    participationRatio,
-  });
-}
-
-function distributionToEntries(
-  vector: ArrayLike<number>,
-  operator: DistributionOperator,
-): ReadonlyArray<readonly [number, number]> {
-  const entries: Array<readonly [number, number]> = [];
-  for (let index = 0; index < vector.length; index++) {
-    const mass = Math.max(0, Number(vector[index]) || 0);
-    if (mass > 0) entries.push(Object.freeze([operator.nodeIdAt(index), mass]));
-  }
-  entries.sort((left, right) => right[1] - left[1] || left[0] - right[0]);
-  return Object.freeze(entries);
-}
-
-/**
- * Solve local and transfer graph-diffusion distributions in the same iteration frame:
- * u = (1-α)S + α·T(u) per scale, until both converge or maxIterations.
- *
- * @param {object} options
- * @param {object} options.localOperator
- * @param {object} options.transferOperator
- * @param {object} [options.dualOperator] - packed dual apply (optional)
- * @param {Map|Array|Float64Array} options.seedDistribution
- * @param {object} [options.local] - { alpha=0.15, maxIterations=80, tolerance=1e-9 }
- * @param {object} [options.transfer] - { alpha=0.55, maxIterations=80, tolerance=1e-9 }
- * @param {object} [options.support] - effective support options
- * @param {object} [options.localSupport]
- * @param {object} [options.transferSupport]
- * @returns {Readonly<object>}
+ * Operator construction, source normalization, support selection, and result
+ * readout live in sibling modules. This module owns only the two-scale
+ * iteration and its diagnostics.
  */
 function solveGraphDiffusion(options: SolverOptions): Readonly<GraphDiffusionResult> {
   const operator = options.operator || options.localOperator;
@@ -504,7 +68,13 @@ function solveGraphDiffusion(options: SolverOptions): Readonly<GraphDiffusionRes
   let localConverged = false;
   let transferConverged = false;
   let iterations = 0;
-  const iterationTrace = [];
+  const iterationTrace: Array<{
+    iteration: number;
+    localResidual: number;
+    transferResidual: number;
+    localMass: number;
+    transferMass: number;
+  }> = [];
   const aggregateDiagnostics: {
     local: OperatorDiagnostics;
     transfer: OperatorDiagnostics;
@@ -579,27 +149,25 @@ function solveGraphDiffusion(options: SolverOptions): Readonly<GraphDiffusionRes
         (Number(transferApplyDiagnostics[key]) || 0);
     }
 
-    iterationTrace.push(
-      Object.freeze({
-        iteration,
-        localResidual,
-        transferResidual,
-        localMass: vectorMass(nextLocal),
-        transferMass: vectorMass(nextTransfer),
-      }),
-    );
+    iterationTrace.push({
+      iteration,
+      localResidual,
+      transferResidual,
+      localMass: vectorMass(nextLocal),
+      transferMass: vectorMass(nextTransfer),
+    });
 
     [local, nextLocal] = [nextLocal, local];
     [transfer, nextTransfer] = [nextTransfer, transfer];
     if (localConverged && transferConverged) break;
   }
 
-  const localSupportOptions = {
+  const localSupportOptions: SupportOptions = {
     method: options.localSupport?.method || options.support?.method || "mass_ratio",
     massRatio:
       options.localSupport?.massRatio ?? options.support?.localSupportMassRatio ?? 0.8,
   };
-  const transferSupportOptions = {
+  const transferSupportOptions: SupportOptions = {
     method: options.transferSupport?.method || options.support?.method || "mass_ratio",
     massRatio:
       options.transferSupport?.massRatio ??
@@ -616,7 +184,7 @@ function solveGraphDiffusion(options: SolverOptions): Readonly<GraphDiffusionRes
   const sourceMass = vectorMass(source);
   const localMass = vectorMass(local);
   const transferMass = vectorMass(transfer);
-  const diagnostics = {
+  const diagnostics: GraphDiffusionDiagnostics = {
     iterations,
     converged: localConverged && transferConverged,
     localConverged,
@@ -654,11 +222,21 @@ function solveGraphDiffusion(options: SolverOptions): Readonly<GraphDiffusionRes
 }
 
 export {
-  clamp,
-  vectorMass,
-  normalizeSource,
-  effectiveSupport,
-  distributionToEntries,
   buildRowOperator,
+  clamp,
+  distributionToEntries,
+  effectiveSupport,
+  normalizeSource,
   solveGraphDiffusion,
+  vectorMass,
+};
+export type {
+  DistributionOperator,
+  DualOperator,
+  GraphDiffusionDiagnostics,
+  GraphDiffusionResult,
+  SolverOptions,
+  SolverScaleOptions,
+  SupportDomain,
+  SupportOptions,
 };

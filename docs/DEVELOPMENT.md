@@ -2,19 +2,19 @@
 
 ## 源码布局
 
-| 目录                              | 职责                                                                                               |
-| --------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `src/`                            | TypeScript 源码边界；入口见 [src/README.md](../src/README.md) 和 [src/AGENTS.md](../src/AGENTS.md) |
-| `src/index.ts`                    | ESM 公开入口和导出类型                                                                             |
-| `src/engine.ts`                   | `MemoryEngine` 生命周期、逻辑摄入、搜索和删除                                                      |
-| `src/pipelines/`、`src/stages/`   | 摄入、检索、tag-retrieval、后处理、输出和 TDB 阶段                                                 |
-| `src/providers/`                  | SQLite 元数据、Rust 向量存储和嵌入 Provider                                                        |
-| `src/interfaces/`、`src/types.ts` | Provider 契约和运行时/公开数据结构                                                                 |
-| `src/config/`                     | 默认配置和路径派生                                                                                 |
-| `src/utils/`                      | 文本、MDX、向量和数值工具                                                                          |
-| `tests/`                          | 单元、集成、消费者、类型和恢复测试                                                                 |
-| `tutorials/`                      | 可运行教程、参考手册、算法说明和教程支持代码                                                       |
-| `rust-vexus-lite/`                | 原生向量索引包，另有专属 `AGENTS.md`                                                               |
+| 目录                                            | 职责                                                                                               |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `src/`                                          | TypeScript 源码边界；入口见 [src/README.md](../src/README.md) 和 [src/AGENTS.md](../src/AGENTS.md) |
+| `src/index.ts`                                  | ESM 公开入口和导出类型                                                                             |
+| `src/engine.ts`                                 | `MemoryEngine` 生命周期、逻辑摄入、搜索和删除                                                      |
+| `src/pipelines/`、`src/stages/`                 | 摄入、检索、tag-retrieval、后处理、输出和 TDB 阶段                                                 |
+| `src/providers/`                                | SQLite 元数据、Rust 向量存储和嵌入 Provider                                                        |
+| `src/interfaces/`、`src/types/`、`src/types.ts` | Provider 契约和按领域组织的运行时/公开数据结构；`types.ts` 为聚合入口                              |
+| `src/config/`                                   | 默认配置和路径派生                                                                                 |
+| `src/utils/`                                    | 文本、MDX、向量和数值工具                                                                          |
+| `tests/`                                        | 单元、集成、消费者、类型和恢复测试                                                                 |
+| `tutorials/`                                    | 可运行教程、参考手册、算法说明和教程支持代码                                                       |
+| `rust-vexus-lite/`                              | 原生向量索引包，另有专属 `AGENTS.md`                                                               |
 
 ## 扩展点
 

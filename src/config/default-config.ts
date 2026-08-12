@@ -1,7 +1,7 @@
 "use strict";
 
 import * as path from "node:path";
-import type { MemoryConfig, MemoryConfigOverrides } from "../types.js";
+import type { MemoryConfig, MemoryConfigOverrides } from "../types/config.js";
 
 const DEFAULT_DATA_PATH = path.join(process.cwd(), "data");
 const DEFAULT_MEMORIA_DATA_PATH = path.join(DEFAULT_DATA_PATH, "memoria");

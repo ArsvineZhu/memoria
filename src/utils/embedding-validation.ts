@@ -1,4 +1,4 @@
-import type { EmbeddingVector } from "../types.js";
+import type { EmbeddingVector } from "../types/common.js";
 import { MemoriaError } from "../errors.js";
 import { assertFiniteVector, assertVectorDimension } from "./numerical.js";
 

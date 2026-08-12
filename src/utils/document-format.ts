@@ -1,6 +1,6 @@
 import { extname } from "node:path";
 
-import type { MemoryDocumentFormat } from "../types.js";
+import type { MemoryDocumentFormat } from "../types/documents.js";
 
 /** Resolve the content boundary without guessing from the document body. */
 export function resolveDocumentFormat(

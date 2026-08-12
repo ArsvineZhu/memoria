@@ -1,10 +1,6 @@
-import type {
-  ChunkCandidate,
-  PipelineContextLike,
-  PipelineData,
-  TdbSearchResult,
-  TdbStoreContract,
-} from "../../types.js";
+import type { ChunkCandidate } from "../../types/documents.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type { TdbSearchResult, TdbStoreContract } from "../../types/tdb.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

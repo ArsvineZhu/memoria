@@ -10,7 +10,7 @@ import type {
   MetadataStoreContract,
   TagMetadataInput,
   TagRow,
-} from "../types.js";
+} from "../types/metadata.js";
 
 /**
  * @abstract

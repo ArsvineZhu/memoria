@@ -1,8 +1,8 @@
 import type {
   EmbeddingOptions,
   EmbeddingProviderContract,
-  EmbeddingVector,
-} from "../types.js";
+} from "../types/embedding.js";
+import type { EmbeddingVector } from "../types/common.js";
 
 /**
  * @abstract

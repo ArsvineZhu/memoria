@@ -1,9 +1,8 @@
 import type {
   EmbeddingVector,
-  PipelineContextLike,
-  PipelineData,
-  VectorStoreContract,
-} from "../../types.js";
+} from "../../types/common.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type { VectorStoreContract } from "../../types/vector.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

@@ -1,17 +1,6 @@
-import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { isAbsolute, extname, relative, resolve, sep } from "node:path";
-
-import * as chokidar from "chokidar";
-import type { FSWatcher } from "chokidar";
+import { resolve } from "node:path";
 
 import { MemoriaError } from "../errors.js";
-import { parseMdxDocument } from "../utils/mdx-document.js";
-import {
-  isStructuredDocumentFormat,
-  resolveDocumentFormat,
-} from "../utils/document-format.js";
-import { isRealPathContained } from "../utils/path-containment.js";
 import type {
   DeleteEnvelope,
   FileInput,
@@ -19,9 +8,12 @@ import type {
   MemoryDocumentDeleteResult,
   MemoryDocumentFormat,
   MemoryDocumentIngestResult,
-  FileRow,
-  UnknownRecord,
-} from "../types.js";
+} from "../types/documents.js";
+import type { UnknownRecord } from "../types/common.js";
+import type { FileRow } from "../types/metadata.js";
+import FilesystemPathResolver from "./filesystem-paths.js";
+import FilesystemSnapshotReader from "./filesystem-snapshot-reader.js";
+import FilesystemWatcher from "./filesystem-watcher.js";
 
 export interface FilesystemIngestionTarget {
   ingest?(document: {
@@ -55,17 +47,19 @@ export interface FilesystemIngestionAdapterOptions {
 }
 
 /**
- * Filesystem source adapter. It owns filesystem reads and chokidar lifecycle;
- * the engine only receives complete content snapshots through its file-ingestion
- * contract.
+ * Maps a filesystem source into the host ingestion contract.
+ *
+ * Path safety, snapshot parsing and watcher lifecycle live in focused
+ * collaborators; this facade owns only target selection and sync orchestration.
  */
 class FilesystemIngestionAdapter {
   readonly rootPath: string;
   readonly extensions: ReadonlySet<string> | null;
   private readonly target: FilesystemIngestionTarget;
+  private readonly paths: FilesystemPathResolver;
+  private readonly snapshots: FilesystemSnapshotReader;
   private readonly onError: (error: unknown) => void | Promise<void>;
-  private watcher: FSWatcher | null = null;
-  private queue: Promise<void> = Promise.resolve();
+  private watcher: FilesystemWatcher | null = null;
   lastError: unknown = null;
 
   constructor(
@@ -87,17 +81,10 @@ class FilesystemIngestionAdapter {
       );
     }
     this.target = target;
-    this.rootPath = resolve(options.rootPath);
-    this.extensions =
-      options.extensions && options.extensions.length > 0
-        ? new Set(
-            options.extensions.map((extension) =>
-              extension.toLowerCase().startsWith(".")
-                ? extension.toLowerCase()
-                : `.${extension.toLowerCase()}`,
-            ),
-          )
-        : null;
+    this.paths = new FilesystemPathResolver(options);
+    this.rootPath = this.paths.rootPath;
+    this.extensions = this.paths.extensions;
+    this.snapshots = new FilesystemSnapshotReader(this.paths);
     this.onError =
       options.onError ??
       ((error) => {
@@ -106,19 +93,19 @@ class FilesystemIngestionAdapter {
   }
 
   get isWatching(): boolean {
-    return this.watcher !== null;
+    return this.watcher !== null && this.watcher.isWatching;
   }
 
   async ingestFile(filePath: string): Promise<IngestEnvelope[]> {
-    const absolutePath = this.assertFilePath(filePath);
-    if (!this.accepts(absolutePath)) return [];
-    const snapshot = await this.readSnapshot(absolutePath);
+    const absolutePath = this.paths.assertFilePath(filePath);
+    if (!this.paths.accepts(absolutePath)) return [];
+    const snapshot = await this.snapshots.read(absolutePath);
     if (
       !this.target.flushBatch &&
       this.target.ingest &&
       snapshot.content !== undefined
     ) {
-      const relativePath = snapshot.relPath ?? this.relativePath(absolutePath);
+      const relativePath = snapshot.relPath ?? this.paths.relativePath(absolutePath);
       const metadata = {
         ...(snapshot.documentMetadata ?? {}),
         path: relativePath,
@@ -147,8 +134,8 @@ class FilesystemIngestionAdapter {
   }
 
   async removeFile(filePath: string): Promise<DeleteEnvelope> {
-    const absolutePath = this.assertFilePath(filePath);
-    const relPath = this.relativePath(absolutePath);
+    const absolutePath = this.paths.assertFilePath(filePath);
+    const relPath = this.paths.relativePath(absolutePath);
     if (!this.target.handleDelete && this.target.remove) {
       return this.target.remove(`filesystem:${relPath}`);
     }
@@ -162,7 +149,7 @@ class FilesystemIngestionAdapter {
   }
 
   async scan(): Promise<IngestEnvelope[]> {
-    const files = await this.collectFiles(this.rootPath);
+    const files = await this.paths.collectFiles();
     const results: IngestEnvelope[] = [];
     for (const filePath of files) {
       results.push(...(await this.ingestFile(filePath)));
@@ -170,14 +157,8 @@ class FilesystemIngestionAdapter {
     return results;
   }
 
-  /**
-   * Reconcile the managed source root with the authoritative metadata rows.
-   * Only files under this adapter's root and without a logical document id
-   * are eligible for removal; logical/application documents cannot be
-   * deleted by a filesystem sync. Source bytes are read but never written.
-   */
   async sync(): Promise<SourceSyncResult> {
-    const files = await this.collectFiles(this.rootPath);
+    const files = await this.paths.collectFiles();
     const result: SourceSyncResult = {
       scanned: files.length,
       ingested: 0,
@@ -188,7 +169,7 @@ class FilesystemIngestionAdapter {
     const current = new Set<string>();
 
     for (const filePath of files) {
-      const relativePath = this.relativePath(filePath);
+      const relativePath = this.paths.relativePath(filePath);
       current.add(relativePath);
       try {
         const envelopes = await this.ingestFile(filePath);
@@ -215,9 +196,10 @@ class FilesystemIngestionAdapter {
     const existing = await this.target.listFiles();
     for (const row of existing) {
       if (row.document_id) continue;
-      const relativePath = this.relativeStoredPath(row.path);
-      if (!relativePath || !this.accepts(resolve(this.rootPath, relativePath)))
+      const relativePath = this.paths.relativeStoredPath(row.path);
+      if (!relativePath || !this.paths.accepts(resolve(this.rootPath, relativePath))) {
         continue;
+      }
       if (current.has(relativePath)) continue;
       try {
         const deleted = await this.target.handleDelete({
@@ -236,174 +218,25 @@ class FilesystemIngestionAdapter {
 
   async start(): Promise<void> {
     if (this.watcher) return;
-    const rootStats = await stat(this.rootPath);
-    if (!rootStats.isDirectory()) {
-      throw new MemoriaError(
-        "configuration",
-        `Filesystem root is not a directory: ${this.rootPath}`,
-      );
-    }
-
-    const watcher = chokidar.watch(this.rootPath, {
-      ignoreInitial: true,
-      persistent: true,
+    const watcher = new FilesystemWatcher(this.rootPath, {
+      onAdd: (filePath) => this.ingestFile(filePath),
+      onChange: (filePath) => this.ingestFile(filePath),
+      onUnlink: (filePath) => this.removeFile(filePath),
+      onError: (error) => this.reportError(error),
     });
     this.watcher = watcher;
-    watcher.on("add", (filePath) => this.enqueue(() => this.ingestFile(filePath)));
-    watcher.on("change", (filePath) => this.enqueue(() => this.ingestFile(filePath)));
-    watcher.on("unlink", (filePath) => this.enqueue(() => this.removeFile(filePath)));
-    watcher.on("error", (error) => this.reportError(error));
-
-    await new Promise<void>((resolveReady, rejectReady) => {
-      const onReady = () => {
-        watcher.off("error", onError);
-        resolveReady();
-      };
-      const onError = (error: unknown) => {
-        watcher.off("ready", onReady);
-        rejectReady(error);
-      };
-      watcher.once("ready", onReady);
-      watcher.once("error", onError);
-    });
+    await watcher.start();
   }
 
   async close(): Promise<void> {
     const watcher = this.watcher;
     this.watcher = null;
     if (watcher) await watcher.close();
-    await this.queue;
-  }
-
-  private enqueue(task: () => Promise<unknown>): void {
-    this.queue = this.queue.then(async () => {
-      try {
-        await task();
-      } catch (error) {
-        await this.reportError(error);
-      }
-    });
   }
 
   private async reportError(error: unknown): Promise<void> {
     this.lastError = error;
     await this.onError(error);
-  }
-
-  private async readSnapshot(filePath: string): Promise<FileInput> {
-    const before = await stat(filePath);
-    if (!before.isFile()) {
-      throw new MemoriaError(
-        "ingestion",
-        `Filesystem path is not a regular file: ${filePath}`,
-      );
-    }
-    const rawContent = await readFile(filePath, "utf8");
-    const after = await stat(filePath);
-    if (
-      before.size !== after.size ||
-      Math.trunc(before.mtimeMs) !== Math.trunc(after.mtimeMs)
-    ) {
-      throw new MemoriaError(
-        "ingestion",
-        `File changed while it was being read: ${this.relativePath(filePath)}`,
-        { retryable: true },
-      );
-    }
-    let content = rawContent;
-    let documentMetadata: UnknownRecord | undefined;
-    const format = resolveDocumentFormat(undefined, filePath);
-    if (isStructuredDocumentFormat(format)) {
-      try {
-        const parsed = parseMdxDocument(rawContent);
-        content = parsed.body;
-        documentMetadata = parsed.frontmatter;
-      } catch (error) {
-        throw new MemoriaError(
-          "ingestion",
-          `Failed to parse MDX front matter: ${this.relativePath(filePath)}`,
-          { cause: error },
-        );
-      }
-    }
-
-    return {
-      path: filePath,
-      relPath: this.relativePath(filePath),
-      content,
-      format,
-      sourceContent: rawContent,
-      mtime: Math.trunc(after.mtimeMs),
-      size: after.size,
-      revision: createHash("sha256").update(rawContent).digest("hex"),
-      documentMetadata,
-    };
-  }
-
-  private async collectFiles(directory: string): Promise<string[]> {
-    const entries = await readdir(directory, { withFileTypes: true });
-    const files: string[] = [];
-    for (const entry of entries) {
-      const filePath = resolve(directory, entry.name);
-      if (entry.isDirectory()) {
-        this.assertFilePath(filePath);
-        files.push(...(await this.collectFiles(filePath)));
-      } else if (entry.isFile() && this.accepts(filePath)) {
-        files.push(this.assertFilePath(filePath));
-      }
-    }
-    return files.sort();
-  }
-
-  private accepts(filePath: string): boolean {
-    return (
-      this.extensions === null || this.extensions.has(extname(filePath).toLowerCase())
-    );
-  }
-
-  private assertFilePath(filePath: string): string {
-    if (typeof filePath !== "string" || filePath.length === 0) {
-      throw new MemoriaError("ingestion", "A filesystem path is required.");
-    }
-    const absolutePath = resolve(filePath);
-    const relativePath = relative(this.rootPath, absolutePath);
-    if (
-      relativePath === ".." ||
-      relativePath.startsWith(`..${sep}`) ||
-      isAbsolute(relativePath)
-    ) {
-      throw new MemoriaError(
-        "configuration",
-        `Path is outside filesystem root: ${filePath}`,
-      );
-    }
-    if (!isRealPathContained(this.rootPath, absolutePath)) {
-      throw new MemoriaError(
-        "configuration",
-        `Path resolves outside filesystem root: ${filePath}`,
-      );
-    }
-    return absolutePath;
-  }
-
-  private relativePath(filePath: string): string {
-    return relative(this.rootPath, filePath).split(sep).join("/");
-  }
-
-  private relativeStoredPath(storedPath: string): string | null {
-    if (typeof storedPath !== "string" || storedPath.length === 0) return null;
-    const absolute = isAbsolute(storedPath)
-      ? resolve(storedPath)
-      : resolve(this.rootPath, storedPath);
-    const relativePath = relative(this.rootPath, absolute);
-    if (
-      relativePath === ".." ||
-      relativePath.startsWith(`..${sep}`) ||
-      isAbsolute(relativePath)
-    ) {
-      return null;
-    }
-    return relativePath.split(sep).join("/");
   }
 }
 

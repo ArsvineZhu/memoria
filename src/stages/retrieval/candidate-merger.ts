@@ -1,10 +1,9 @@
 import type {
   ChunkCandidate,
-  MemoryConfigOverrides,
-  PipelineContextLike,
-  PipelineData,
   VectorResult,
-} from "../../types.js";
+} from "../../types/documents.js";
+import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 
 import Stage from "../../core/stage.js";
 

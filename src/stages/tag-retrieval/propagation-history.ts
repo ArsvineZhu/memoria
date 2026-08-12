@@ -1,10 +1,12 @@
 import type {
   PipelineContextLike,
   PipelineData,
+} from "../../types/pipeline.js";
+import type {
   PropagationHistoryData,
   PropagationHistoryStore,
   PropagationTrace,
-} from "../../types.js";
+} from "../../types/retrieval.js";
 
 import Stage from "../../core/stage.js";
 import { computePropagationSpread } from "../../algorithms/tag-graph/propagation-spread.js";

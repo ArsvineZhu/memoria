@@ -1,10 +1,7 @@
-import type {
-  FileRow,
-  MemoryConfigOverrides,
-  PipelineContextLike,
-  PipelineData,
-  UnknownRecord,
-} from "../../types.js";
+import type { FileRow } from "../../types/metadata.js";
+import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type { UnknownRecord } from "../../types/common.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

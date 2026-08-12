@@ -10,7 +10,7 @@ import RelationExtractorStage from "../stages/ingestion/relation-extractor.js";
 import MetadataWriterStage from "../stages/ingestion/metadata-writer.js";
 import VectorIndexerStage from "../stages/ingestion/vector-indexer.js";
 import CooccurrenceBuilderStage from "../stages/ingestion/co-occurrence-builder.js";
-import type { MemoryConfigOverrides } from "../types.js";
+import type { MemoryConfigOverrides } from "../types/config.js";
 import Stage from "../core/stage.js";
 
 interface PipelineOptions {

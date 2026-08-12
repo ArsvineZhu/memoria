@@ -1,10 +1,9 @@
 import type {
-  EmbeddingVector,
-  MemoryConfigOverrides,
-  PipelineContextLike,
-  PipelineData,
   QueryVector,
-} from "../../types.js";
+} from "../../types/documents.js";
+import type { EmbeddingVector } from "../../types/common.js";
+import type { MemoryConfigOverrides } from "../../types/config.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

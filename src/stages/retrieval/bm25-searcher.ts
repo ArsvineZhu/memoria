@@ -1,11 +1,10 @@
 import type {
   ChunkCandidate,
-  ChunkRow,
-  PipelineContextLike,
-  PipelineData,
-  SearchCorpusChunk,
-  Tokenizer,
-} from "../../types.js";
+} from "../../types/documents.js";
+import type { ChunkRow } from "../../types/metadata.js";
+import type { SearchCorpusChunk } from "../../types/vector.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
+import type { Tokenizer } from "../../types/common.js";
 
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";

@@ -1,8 +1,8 @@
 import type {
   PipelineContextLike,
   PipelineData,
-  VectorStoreContract,
-} from "../../types.js";
+} from "../../types/pipeline.js";
+import type { VectorStoreContract } from "../../types/vector.js";
 
 import * as path from "node:path";
 

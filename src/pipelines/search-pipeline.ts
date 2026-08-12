@@ -2,56 +2,26 @@
 
 import Pipeline from "../core/pipeline.js";
 import Stage from "../core/stage.js";
-import { at } from "../utils/numerical.js";
-
-import QueryEmbedderStage from "../stages/retrieval/query-embedder.js";
-import SearchScopeResolverStage from "../stages/retrieval/search-scope-resolver.js";
-import RetrievalFilterResolverStage from "../stages/retrieval/retrieval-filter.js";
-import CandidateFilterStage from "../stages/retrieval/candidate-filter.js";
-import VectorSearcherStage from "../stages/retrieval/vector-searcher.js";
-import BM25SearcherStage from "../stages/retrieval/bm25-searcher.js";
-import CandidateMergerStage from "../stages/retrieval/candidate-merger.js";
-
-import TagBasisProjectionStage from "../stages/tag-retrieval/tag-basis-projection.js";
-import TagResidualDecompositionStage from "../stages/tag-retrieval/tag-residual-decomposition.js";
-import TagExpanderStage from "../stages/tag-retrieval/tag-expander.js";
-import EmbeddingRerankStage from "../stages/tag-retrieval/embedding-reranker.js";
-import PropagationSupportRerankerStage from "../stages/tag-retrieval/propagation-support-reranker.js";
-import ActivationPropagationStage from "../stages/tag-retrieval/activation-propagation.js";
-import GraphDiffusionStage from "../stages/tag-retrieval/graph-diffusion.js";
-import PropagationHistoryStage from "../stages/tag-retrieval/propagation-history.js";
-import PropagationStructureRerankerStage from "../stages/tag-retrieval/propagation-structure-reranker.js";
-import NativeTagRetrievalStage from "../stages/tag-retrieval/native-tag-retrieval.js";
-
-import ResultDeduplicatorStage from "../stages/postprocess/result-deduplicator.js";
-import ExternalRerankerStage from "../stages/postprocess/external-reranker.js";
-import TimeDecayStage from "../stages/postprocess/time-decay.js";
-import TruncatorStage from "../stages/postprocess/truncator.js";
-import ExpanderStage from "../stages/postprocess/expander.js";
-import AssociatorStage from "../stages/postprocess/associator.js";
-import RelationExpansionStage from "../stages/postprocess/relation-expansion.js";
-
-import ResultFormatterStage from "../stages/output/result-formatter.js";
-import type {
-  MemoryConfigOverrides,
-  PipelineContextLike,
-  PipelineData,
-  SearchOptions,
-} from "../types.js";
+import type { MemoryConfigOverrides, SearchOptions } from "../types/config.js";
+import type { PipelineContextLike, PipelineData } from "../types/pipeline.js";
 import {
-  applyRetrievalPlan,
-  assertValidRetrievalPlanInput,
   freezeRetrievalPlan,
-  mergeRetrievalPlan,
   normalizeRetrievalPlan,
+  assertValidRetrievalPlanInput,
   type RetrievalPlan,
   type RetrievalPlanInput,
 } from "../retrieval/retrieval-plan.js";
+import type { RetrievalExplanation } from "../retrieval/query-planner.js";
 import {
-  planRetrievalAsync,
-  readGraphReadiness,
-  type RetrievalExplanation,
-} from "../retrieval/query-planner.js";
+  DEFAULT_SEARCH_GATES,
+  buildDefaultSearchStages,
+} from "./search-pipeline-stages.js";
+import SearchPlanResolver from "./search-plan-resolver.js";
+import {
+  mergeRunOptions,
+  prepareSearchRun,
+} from "./search-run-preparation.js";
+import { withRetrievalTrace } from "./search-pipeline-trace.js";
 
 export interface SearchPipelineOptions {
   stages?: Stage[];
@@ -59,236 +29,16 @@ export interface SearchPipelineOptions {
 }
 
 /**
- * Default gate values for the search chain.
- *
- * The basis and residual tag-retrieval stages are ON by default; every
- * expansion, propagation, and rerank stage is opt-in.
- */
-const DEFAULT_SEARCH_GATES = {
-  tagBasisProjectionEnabled: true,
-  tagResidualDecompositionEnabled: true,
-  dedupeEnabled: true,
-  propagationSupportRerankEnabled: false,
-  associatorEnabled: false,
-};
-
-/**
- * QueryVectorBridgeStage — internal adapter between the retrieval and
- * tag-retrieval layers.
- *
- * QueryEmbedderStage emits `queries: [{ text, vector }]`; every tag-retrieval
- * or postprocess stage consumes a single `queryVector`.
- * This bridge publishes the primary query vector so the tag-retrieval chain
- * does not need to recompute it.
- *
- * @private
- */
-class QueryVectorBridgeStage extends Stage {
-  constructor() {
-    super();
-    this.name = "queryVectorBridge";
-  }
-
-  override async process(
-    input: PipelineData,
-    _ctx: PipelineContextLike,
-  ): Promise<PipelineData> {
-    const info = input || {};
-    const queries = Array.isArray(info.queries) ? info.queries : [];
-    const primaryVector =
-      info.queryVector ||
-      (queries.length > 0 ? at(queries, 0, "queries").vector : undefined);
-    if (primaryVector == null) return info;
-    return { ...info, queryVector: primaryVector };
-  }
-}
-
-/**
- * Merge two config objects without letting explicit `undefined` keys from
- * the run-time context clobber the pipeline defaults.
- * @param {object} base
- * @param {object} extra
- * @returns {object}
- */
-function mergeConfig(
-  base: MemoryConfigOverrides,
-  extra: MemoryConfigOverrides = {},
-): MemoryConfigOverrides {
-  const result = { ...base };
-  const target = result as Record<string, unknown>;
-  for (const [key, value] of Object.entries(extra)) {
-    if (value !== undefined) target[key] = value;
-  }
-  return result;
-}
-
-/**
- * Automatic planning is additive for configured callers. A pre-existing config
- * gate that was deliberately enabled must not be switched off merely because
- * the current natural-language query has no cue for that stage. Explicit
- * retrievalPlan input remains authoritative and can disable every gate.
- */
-function mergeAutomaticPlan(
-  base: MemoryConfigOverrides,
-  planned: MemoryConfigOverrides,
-  requestedPlan?: RetrievalPlanInput | null,
-): MemoryConfigOverrides {
-  const result = mergeConfig(base, planned);
-  const target = result as Record<string, unknown>;
-  const autoPlan =
-    requestedPlan && requestedPlan.strategy === "auto" ? requestedPlan : null;
-  const overrides = new Set<string>();
-  const hasOwn = (value: unknown, key: string): boolean =>
-    value !== null &&
-    typeof value === "object" &&
-    Object.prototype.hasOwnProperty.call(value, key);
-
-  if (autoPlan?.postprocess) {
-    if (hasOwn(autoPlan.postprocess, "dedupe")) overrides.add("dedupeEnabled");
-    if (hasOwn(autoPlan.postprocess, "truncate")) overrides.add("truncateEnabled");
-    if (hasOwn(autoPlan.postprocess, "minScore")) overrides.add("truncateMinScore");
-    if (hasOwn(autoPlan.postprocess, "maxResults")) {
-      overrides.add("topK");
-      overrides.add("maxResults");
-    }
-    if (hasOwn(autoPlan.postprocess, "maxContentLength")) {
-      overrides.add("maxContentLength");
-    }
-    if (hasOwn(autoPlan.postprocess, "timeDecay")) overrides.add("timeDecayEnabled");
-  }
-  if (autoPlan?.externalRerank) {
-    if (hasOwn(autoPlan.externalRerank, "enabled")) {
-      overrides.add("externalRerankEnabled");
-    }
-    if (hasOwn(autoPlan.externalRerank, "mode")) overrides.add("externalRerankMode");
-    if (hasOwn(autoPlan.externalRerank, "alpha")) overrides.add("externalRerankAlpha");
-  }
-  if (autoPlan?.expansion) {
-    if (hasOwn(autoPlan.expansion, "associate")) overrides.add("associatorEnabled");
-    if (
-      hasOwn(autoPlan.expansion, "sameDocument") ||
-      hasOwn(autoPlan.expansion, "fullDocument")
-    )
-      overrides.add("expansionEnabled");
-    if (hasOwn(autoPlan.expansion, "fullDocument"))
-      overrides.add("fullDocumentExpansionEnabled");
-    if (hasOwn(autoPlan.expansion, "related"))
-      overrides.add("relationExpansionEnabled");
-  }
-  if (autoPlan?.filters) {
-    overrides.add("retrievalFilters");
-  }
-  const preserveKeys = [
-    "topK",
-    "maxResults",
-    "maxContentLength",
-    "dedupeEnabled",
-    "externalRerankEnabled",
-    "externalRerankMode",
-    "externalRerankAlpha",
-    "truncateEnabled",
-    "truncateMinScore",
-    "tagExpansionEnabled",
-    "embeddingRerankEnabled",
-    "associatorEnabled",
-    "retrievalFilters",
-    "fullDocumentExpansionEnabled",
-  ];
-  for (const key of preserveKeys) {
-    if (base[key as keyof MemoryConfigOverrides] !== undefined && !overrides.has(key)) {
-      target[key] = base[key as keyof MemoryConfigOverrides];
-    }
-  }
-  for (const key of [
-    "tagBasisProjectionEnabled",
-    "tagResidualDecompositionEnabled",
-    "tagGraphPropagationEnabled",
-    "propagationSupportRerankEnabled",
-    "propagationStructureRerankEnabled",
-    "propagationHistoryEnabled",
-    "nativeTagRetrievalEnabled",
-    "expansionEnabled",
-    "fullDocumentExpansionEnabled",
-    "relationExpansionEnabled",
-    "timeDecayEnabled",
-    "embeddingRerankEnabled",
-    "associatorEnabled",
-    "truncateEnabled",
-  ]) {
-    if (
-      planned[key as keyof MemoryConfigOverrides] === true ||
-      base[key as keyof MemoryConfigOverrides] === true
-    ) {
-      target[key] = true;
-    }
-  }
-
-  return result;
-}
-
-/**
- * SearchPipeline — the hybrid query flow.
- *
- * Stage chain (defaults marked with ● are ON by default):
- *
- *   1. queryEmbedder      embed the raw query (+ optional expansion)
- *   2. queryVectorBridge   derive queryVector for the tag-retrieval layers
- *   3. searchScopeResolver  resolve one authoritative space scope
- *   4. tagRetrievalRuntime    optional Rust tag-retrieval observation [gate]
- *   5. vectorSearcher       per-space vector retrieval
- *   6. bm25Searcher         sparse keyword retrieval
- *   7. candidateMerger      hybrid fusion (vector + BM25)
- *   8. tagBasisProjection         ● projection concentration analysis of the query
- *   9. tagResidualDecomposition      ● tag-subspace decomposition of the query
- *  10. activationPropagation            activation propagation over the tag association graph [gate]
- *  11. graphDiffusion           graph diffusion                          [gate]
- *  12. nativeTagRetrieval           Rust tag-retrieval stages             [gate]
- *  13. tagExpander          tag-driven candidate expansion       [gate]
- *  14. embeddingReranker       cosine re-ranking of candidates      [gate]
- *  15. propagationSupportReranker     activation-support reranking          [gate]
- *  16. relationExpansion    explicit/derived relation expansion  [gate]
- *  17. expander             same-file sibling expansion          [gate]
- *  18. associator           tag/vector related chunks            [gate]
- *  19. resultDeduplicator   ● exact + semantic dedupe
- *  20. externalReranker     LLM/external rerank                  [gate]
- *  21. timeDecay            recency decay                        [gate]
- *  22. truncator            topK/content caps                    [gate]
- *  23. candidateFilter      final hard candidate scope            [gate]
- *  24. resultFormatter      hydrated result envelope
- *
- * Gates (config keys): tagBasisProjectionEnabled (default true),
- * tagResidualDecompositionEnabled (default true), nativeTagRetrievalEnabled,
- * tagGraphPropagationEnabled, propagationHistoryEnabled, propagationStructureRerankEnabled,
- * nativeTagRetrievalEnabled, tagExpansionEnabled, embeddingRerankEnabled,
- * externalRerankEnabled, propagationSupportRerankEnabled,
- * relationExpansionEnabled, timeDecayEnabled, truncateEnabled,
- * expansionEnabled, associatorEnabled.
- * dedupeEnabled is honored inside the stage itself (it lives in the
- * chain regardless so the envelope stays complete).
- *
- * Usage:
- *   const pipeline = new SearchPipeline(config);
- *   const out = await pipeline.run(
- *     { query: '…', options: { spaces, topK, … } },
- *     ctx
- *   );
- *
- * Result envelope: { … inputs, queries, vectorResults, bm25Results,
- * mergedCandidates, tagBasisProjection?, tagResidualDecomposition?, tagGraphPropagation?, propagationHistory?, propagationSupport?, propagationStructure?,
- * nativeTagRetrieval?, associatorStats?, results: [ …hydrated chunks], resultCount }.
+ * SearchPipeline — stable facade for plan resolution and hybrid stage
+ * execution. Planning, run-context assembly, and trace projection are kept in
+ * focused modules so stage orchestration remains easy to inspect.
  */
 class SearchPipeline extends Pipeline {
   config: MemoryConfigOverrides;
   readonly defaultRetrievalPlan: RetrievalPlan;
-  private readonly hasConfiguredDefaultPlan: boolean;
   private readonly customStages: boolean;
-  /**
-   * @param {object} [config={}] - gates + retrieval knobs (topK, weights …).
-   *                               Non-explicit values fall back to
-   *                               DEFAULT_SEARCH_GATES.
-   * @param {object} [options={}]
-   * @param {import('../core/stage.js').Stage[]} [options.stages] - explicit chain override
-   */
+  private readonly planResolver: SearchPlanResolver;
+
   constructor(config: MemoryConfigOverrides = {}, options: SearchPipelineOptions = {}) {
     const effectiveConfig = { ...DEFAULT_SEARCH_GATES, ...config };
     const stages = Array.isArray(options.stages)
@@ -296,157 +46,36 @@ class SearchPipeline extends Pipeline {
       : SearchPipeline.defaultStages(effectiveConfig);
     super(stages);
     this.name = "searchPipeline";
-    this.hasConfiguredDefaultPlan = options.defaultRetrievalPlan !== undefined;
+    this.customStages = Array.isArray(options.stages);
     assertValidRetrievalPlanInput(options.defaultRetrievalPlan);
     this.defaultRetrievalPlan = freezeRetrievalPlan(
       normalizeRetrievalPlan(options.defaultRetrievalPlan),
     );
     this.config = effectiveConfig;
-    this.customStages = Array.isArray(options.stages);
-  }
-
-  /**
-   * Build the default search chain honoring the config gates.
-   * @param {object} config - effective gate config
-   * @returns {import('../core/stage.js').Stage[]}
-   */
-  static defaultStages(config: MemoryConfigOverrides): Stage[] {
-    const stages: Stage[] = [
-      new QueryEmbedderStage(),
-      new QueryVectorBridgeStage(),
-      new SearchScopeResolverStage(),
-    ];
-
-    if (config.nativeTagRetrievalEnabled === true) {
-      stages.push(new NativeTagRetrievalStage());
-    }
-    stages.push(
-      new VectorSearcherStage(),
-      new BM25SearcherStage(),
-      new CandidateMergerStage(),
-    );
-
-    const filters = config.retrievalFilters;
-    const hasChunkFilters =
-      filters !== null &&
-      typeof filters === "object" &&
-      (Array.isArray((filters as Record<string, unknown>).spaces) ||
-        Array.isArray((filters as Record<string, unknown>).documentIds) ||
-        (filters as Record<string, unknown>).recordedAfter !== undefined ||
-        (filters as Record<string, unknown>).recordedBefore !== undefined ||
-        (filters as Record<string, unknown>).metadata !== undefined);
-    if (hasChunkFilters) stages.splice(3, 0, new RetrievalFilterResolverStage());
-
-    if (config.tagBasisProjectionEnabled !== false)
-      stages.push(new TagBasisProjectionStage());
-    if (config.tagResidualDecompositionEnabled !== false)
-      stages.push(new TagResidualDecompositionStage());
-    if (config.tagGraphPropagationEnabled === true)
-      stages.push(new ActivationPropagationStage());
-    if (config.tagGraphPropagationEnabled === true)
-      stages.push(new GraphDiffusionStage());
-    if (config.propagationHistoryEnabled === true)
-      stages.push(new PropagationHistoryStage());
-    if (config.propagationStructureRerankEnabled === true)
-      stages.push(new PropagationStructureRerankerStage());
-
-    if (config.tagExpansionEnabled === true) stages.push(new TagExpanderStage());
-    if (config.embeddingRerankEnabled === true) stages.push(new EmbeddingRerankStage());
-    if (config.propagationSupportRerankEnabled === true)
-      stages.push(new PropagationSupportRerankerStage());
-
-    // All candidate-producing expansions run before the common postprocess
-    // tail. This keeps dedupe, external rerank, decay, truncation and the
-    // final hard scope equally applicable to direct and expanded memories.
-    if (config.relationExpansionEnabled === true)
-      stages.push(new RelationExpansionStage());
-
-    if (config.expansionEnabled === true) stages.push(new ExpanderStage());
-    if (config.associatorEnabled === true) stages.push(new AssociatorStage());
-
-    stages.push(new ResultDeduplicatorStage());
-
-    if (config.externalRerankEnabled === true) stages.push(new ExternalRerankerStage());
-    if (config.timeDecayEnabled === true) stages.push(new TimeDecayStage());
-    if (config.truncateEnabled === true) stages.push(new TruncatorStage());
-
-    if (hasChunkFilters) stages.push(new CandidateFilterStage());
-
-    stages.push(new ResultFormatterStage());
-    return stages;
-  }
-
-  private async resolvePlan(
-    query: string,
-    options: SearchOptions = {},
-    ctx: Partial<PipelineContextLike> = {},
-  ): Promise<RetrievalExplanation> {
-    const rawPlan = options.retrievalPlan;
-    assertValidRetrievalPlanInput(rawPlan);
-    const queryPlanOverride = rawPlan == null ? undefined : rawPlan;
-    const inheritRetrievalDefaults = options.inheritRetrievalDefaults !== false;
-    const hasQueryPlanOverride =
-      queryPlanOverride !== undefined || options.inheritRetrievalDefaults === false;
-    const planInput =
-      hasQueryPlanOverride || this.hasConfiguredDefaultPlan
-        ? mergeRetrievalPlan(
-            this.defaultRetrievalPlan,
-            queryPlanOverride,
-            inheritRetrievalDefaults,
-          )
-        : undefined;
-    const baseConfig = mergeConfig(this.config, ctx && ctx.config);
-    const planningContext: PipelineContextLike = {
-      ...ctx,
-      config: baseConfig,
-    };
-    const decision = await planRetrievalAsync(query, {
-      plan: planInput,
-      interpreter: ctx.queryInterpreter,
-      readiness: await readGraphReadiness(planningContext),
+    this.planResolver = new SearchPlanResolver({
+      defaultRetrievalPlan: this.defaultRetrievalPlan,
+      hasConfiguredDefaultPlan: options.defaultRetrievalPlan !== undefined,
     });
-    const strategySource: RetrievalExplanation["strategySource"] =
-      hasQueryPlanOverride &&
-      queryPlanOverride !== undefined &&
-      Object.prototype.hasOwnProperty.call(queryPlanOverride, "strategy")
-        ? "query-override"
-        : inheritRetrievalDefaults &&
-            this.hasConfiguredDefaultPlan &&
-            this.defaultRetrievalPlan.strategy !== "auto"
-          ? "engine-default"
-          : "auto";
-
-    return {
-      ...decision,
-      defaultPlan: this.defaultRetrievalPlan,
-      requestedPlan: queryPlanOverride,
-      strategySource,
-      defaultsInherited: inheritRetrievalDefaults,
-      queryOverrideApplied: hasQueryPlanOverride,
-    };
   }
 
-  /** Explain plan/default resolution without running retrieval stages. */
+  /** Build the default search chain honoring the effective config gates. */
+  static defaultStages(config: MemoryConfigOverrides): Stage[] {
+    return buildDefaultSearchStages(config);
+  }
+
   async explain(
     query: string,
     options: SearchOptions = {},
     ctx: Partial<PipelineContextLike> = {},
   ): Promise<RetrievalExplanation> {
-    return this.resolvePlan(String(query ?? ""), options, ctx);
+    return this.planResolver.resolve(
+      String(query ?? ""),
+      options,
+      ctx,
+      this.config,
+    );
   }
 
-  /**
-   * Search entry point.
-   *
-   * The pipeline gates are merged underneath the caller-supplied context
-   * config, so explicit per-run flags always win while unset keys keep
-   * the phase-4.5 defaults. `input.options` is flattened into the payload
-   * (spaces, topK, …) so downstream stages pick it up as-is.
-   *
-   * @param {{ query: string, options?: object }} input
-   * @param {import('../core/context.js').PipelineContext} ctx
-   * @returns {Promise<object>} result envelope
-   */
   override async run(
     input: PipelineData,
     ctx: Partial<PipelineContextLike> = {},
@@ -454,120 +83,34 @@ class SearchPipeline extends Pipeline {
     const source = input || {};
     const options = (source.options || {}) as SearchOptions;
     const query = typeof source.query === "string" ? source.query : "";
-    const planResolution = await this.resolvePlan(
+    const resolution = await this.planResolver.resolve(
       query,
-      {
-        ...options,
-        retrievalPlan: options.retrievalPlan ?? source.retrievalPlan,
-      },
+      mergeRunOptions(source, options),
       ctx,
+      this.config,
     );
-    const queryPlanOverride = planResolution.requestedPlan;
-    const hasQueryPlanOverride = planResolution.queryOverrideApplied;
-    const decision = planResolution;
-    const baseConfig = mergeConfig(this.config, ctx && ctx.config);
-    const plannedConfig = applyRetrievalPlan(decision.plan);
-    const runConfig = decision.explicit
-      ? mergeConfig(baseConfig, plannedConfig)
-      : mergeAutomaticPlan(
-          baseConfig,
-          plannedConfig,
-          hasQueryPlanOverride
-            ? queryPlanOverride || undefined
-            : this.hasConfiguredDefaultPlan
-              ? this.defaultRetrievalPlan
-              : undefined,
-        );
-    const strategySource = decision.strategySource;
-    let tagAssociationGraph = ctx.tagAssociationGraph;
-    let tagAssociationGraphLoadError: string | undefined;
-    if (
-      !(tagAssociationGraph instanceof Map) &&
-      runConfig.tagGraphPropagationEnabled === true &&
-      typeof ctx.metadataStore?.buildCooccurrenceMatrix === "function"
-    ) {
-      try {
-        tagAssociationGraph = await ctx.metadataStore.buildCooccurrenceMatrix();
-      } catch (error) {
-        tagAssociationGraph = new Map();
-        tagAssociationGraphLoadError =
-          error instanceof Error ? error.message : String(error);
-      }
-    }
-    const propagationHistoryStore =
-      ctx.propagationHistoryStore ||
-      (typeof ctx.metadataStore?.getKv === "function" &&
-      typeof ctx.metadataStore?.setKv === "function"
-        ? {
-            getKv: ctx.metadataStore.getKv.bind(ctx.metadataStore),
-            setKv: ctx.metadataStore.setKv.bind(ctx.metadataStore),
-          }
-        : undefined);
-    const runCtx: PipelineContextLike = {
-      ...ctx,
-      config: runConfig as import("../types.js").MemoryConfig,
-      tagAssociationGraph,
-      propagationHistoryStore,
-    };
-
-    const payload = { ...source };
-    Object.assign(payload, options, {
-      query: source.query,
-      retrievalPlan: decision.plan,
+    const runConfig = this.planResolver.resolveRunConfig(
+      resolution,
+      this.config,
+      ctx.config,
+    );
+    const prepared = await prepareSearchRun({
+      source,
+      options,
+      ctx,
+      runConfig,
+      resolution,
       defaultRetrievalPlan: this.defaultRetrievalPlan,
-      requestedRetrievalPlan: queryPlanOverride || undefined,
-      queryProfile: decision.profile,
-      retrievalDecision: {
-        strategy: decision.decision.strategy,
-        scores: decision.decision.scores,
-        reasons: decision.decision.reasons,
-        fallback: decision.decision.fallback,
-        reason: decision.reason,
-        confidence: decision.confidence,
-        explicit: decision.explicit,
-        strategySource,
-        defaultsInherited: decision.defaultsInherited,
-        queryOverrideApplied: decision.queryOverrideApplied,
-      },
     });
-    if (tagAssociationGraphLoadError) {
-      payload.tagAssociationGraphLoadError = tagAssociationGraphLoadError;
-    }
-
     const activePipeline = this.customStages
       ? this
       : new Pipeline(SearchPipeline.defaultStages(runConfig));
     const output = (
       this.customStages
-        ? await super.run(payload, runCtx)
-        : await activePipeline.run(payload, runCtx)
+        ? await super.run(prepared.payload, prepared.context)
+        : await activePipeline.run(prepared.payload, prepared.context)
     ) as PipelineData;
-    const fallbacks: string[] = [];
-    for (const [key, value] of Object.entries(output)) {
-      if (!key.endsWith("Skipped") || value !== true) continue;
-      const reasonKey = `${key.slice(0, -"Skipped".length)}SkipReason`;
-      const reason = output[reasonKey];
-      fallbacks.push(
-        `${key.slice(0, -"Skipped".length)}: ${
-          typeof reason === "string" ? reason : "skipped"
-        }`,
-      );
-    }
-    return {
-      ...output,
-      retrievalTrace: {
-        defaultPlan: this.defaultRetrievalPlan,
-        requestedPlan: queryPlanOverride || undefined,
-        plan: decision.plan,
-        profile: decision.profile,
-        decision: decision.decision,
-        strategySource,
-        defaultsInherited: decision.defaultsInherited,
-        queryOverrideApplied: decision.queryOverrideApplied,
-        stageOrder: activePipeline.stages.map((stage) => stage.name || "anonymous"),
-        fallbacks,
-      },
-    };
+    return withRetrievalTrace(output, activePipeline, resolution);
   }
 }
 

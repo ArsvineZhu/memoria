@@ -25,7 +25,8 @@ export interface MetadataWriterSnapshot {
   relPath: string;
   space: string;
   checksum: string;
-  mtime: number;
+  sourceUpdatedAt: number;
+  recordedAt: number;
   size: number;
   sourceJson: string | null;
   metadataJson: string | null;
@@ -68,7 +69,9 @@ export function toFileMetadata(snapshot: MetadataWriterSnapshot): FileMetadataIn
     path: snapshot.relPath,
     space: snapshot.space,
     checksum: snapshot.checksum,
-    mtime: snapshot.mtime,
+    sourceUpdatedAt: snapshot.sourceUpdatedAt,
+    recordedAt: snapshot.recordedAt,
+    indexedAt: Date.now(),
     size: snapshot.size,
     documentId: snapshot.documentId,
     revision: snapshot.revision,

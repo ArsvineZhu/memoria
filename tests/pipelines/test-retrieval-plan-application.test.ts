@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import Stage from "../../src/core/stage.js";
 import SearchPipeline from "../../src/pipelines/search-pipeline.js";
 import type { PipelineContextLike, PipelineData } from "../../src/types.js";
+import type { RetrievalDiagnostics } from "../../src/types/documents.js";
 import type { QueryProfile } from "../../src/retrieval/query-planner.js";
 import type { RetrievalPlan } from "../../src/retrieval/retrieval-plan.js";
 import { applyRetrievalPlan } from "../../src/retrieval/retrieval-plan.js";
@@ -31,15 +32,7 @@ interface PlannedOutput extends PipelineData {
     timeDecayEnabled?: boolean;
     indexNames?: unknown;
   };
-  retrievalTrace?: {
-    stageOrder: string[];
-    fallbacks: string[];
-    decision: { strategy: string };
-    plan: { strategy: string };
-    strategySource?: string;
-    defaultsInherited?: boolean;
-    queryOverrideApplied?: boolean;
-  };
+  retrieval?: RetrievalDiagnostics;
 }
 
 class CaptureRetrievalPlanStage extends Stage {
@@ -196,16 +189,16 @@ test("native tag retrieval uses one runtime stage per search", () => {
   assert.equal(stages.filter((stage) => stage.name === "nativeTagRetrieval").length, 1);
 });
 
-test("SearchPipeline exposes the selected strategy, stage order and fallbacks", async () => {
+test("SearchPipeline exposes stable strategy diagnostics without raw stage names", async () => {
   const pipeline = new SearchPipeline({}, { stages: [new TraceStage()] });
   const out = (await pipeline.run(
     { query: "普通查询" },
     { config: {} },
   )) as PlannedOutput;
 
-  assert.equal(out.retrievalTrace?.decision.strategy, "semantic");
-  assert.deepEqual(out.retrievalTrace?.stageOrder, ["traceStage"]);
-  assert.deepEqual(out.retrievalTrace?.fallbacks, ["tagRetrieval: test fallback"]);
+  assert.equal(out.retrieval?.strategy, "semantic");
+  assert.deepEqual(out.retrieval?.fallbacks, ["disabled-by-plan"]);
+  assert.equal("retrievalTrace" in out, false);
 });
 
 test("SearchPipeline preserves explicit config gates when no typed default plan is configured", async () => {
@@ -218,8 +211,8 @@ test("SearchPipeline preserves explicit config gates when no typed default plan 
     { config: {} },
   )) as PlannedOutput;
 
-  assert.equal(out.retrievalTrace?.plan.strategy, "semantic");
-  assert.equal(out.retrievalTrace?.strategySource, "auto");
+  assert.equal(out.retrieval?.plan.strategy, "semantic");
+  assert.equal(out.retrieval?.strategySource, "auto");
   assert.equal(out.captured?.propagationStructureRerankEnabled, true);
 });
 
@@ -244,9 +237,7 @@ test("SearchPipeline applies a fixed default plan and traces its source", async 
   assert.equal(out.retrievalPlan?.associative?.propagationSupport, true);
   assert.equal(out.captured?.strategy, "associative");
   assert.equal(out.captured?.timeDecayEnabled, true);
-  assert.equal(out.retrievalTrace?.strategySource, "engine-default");
-  assert.equal(out.retrievalTrace?.defaultsInherited, true);
-  assert.equal(out.retrievalTrace?.queryOverrideApplied, false);
+  assert.equal(out.retrieval?.strategySource, "engine-default");
 });
 
 test("SearchPipeline lets one query replace the core default and inherit outer defaults", async () => {
@@ -283,9 +274,7 @@ test("SearchPipeline lets one query replace the core default and inherit outer d
   assert.equal(out.captured?.strategy, "structural");
   assert.equal(out.captured?.relationExpansionEnabled, true);
   assert.equal(out.captured?.timeDecayEnabled, false);
-  assert.equal(out.retrievalTrace?.strategySource, "query-override");
-  assert.equal(out.retrievalTrace?.defaultsInherited, true);
-  assert.equal(out.retrievalTrace?.queryOverrideApplied, true);
+  assert.equal(out.retrieval?.strategySource, "query-override");
 });
 
 test("SearchPipeline can isolate a query from the default plan", async () => {
@@ -314,8 +303,7 @@ test("SearchPipeline can isolate a query from the default plan", async () => {
   assert.equal(out.retrievalPlan?.strategy, "semantic");
   assert.equal(out.retrievalPlan?.associative?.enabled, false);
   assert.equal(out.retrievalPlan?.postprocess?.timeDecay, false);
-  assert.equal(out.retrievalTrace?.defaultsInherited, false);
-  assert.equal(out.retrievalTrace?.strategySource, "query-override");
+  assert.equal(out.retrieval?.strategySource, "query-override");
 });
 
 test("isolated queries report auto when no replacement strategy is supplied", async () => {
@@ -331,6 +319,5 @@ test("isolated queries report auto when no replacement strategy is supplied", as
     { config: {} },
   )) as PlannedOutput;
 
-  assert.equal(out.retrievalTrace?.strategySource, "auto");
-  assert.equal(out.retrievalTrace?.defaultsInherited, false);
+  assert.equal(out.retrieval?.strategySource, "auto");
 });

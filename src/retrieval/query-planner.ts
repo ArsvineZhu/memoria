@@ -16,10 +16,7 @@ export { chooseStrategy } from "./query-strategy.js";
 
 import { profileNaturalLanguageQuery } from "./query-profile.js";
 import { planFromProfile } from "./query-strategy.js";
-import type {
-  QueryPlanningOptions,
-  RetrievalDecision,
-} from "./query-planner-types.js";
+import type { QueryPlanningOptions, RetrievalDecision } from "./query-planner-types.js";
 
 export function planRetrieval(
   query: string,

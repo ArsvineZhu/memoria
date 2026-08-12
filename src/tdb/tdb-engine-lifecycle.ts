@@ -46,7 +46,6 @@ export interface TdbEngineLifecycleOptions {
   setContext: (context: PipelineContext | undefined) => void;
   setState: (state: TdbEngineState) => void;
   getState: () => TdbEngineState;
-  setClosed: (closed: boolean) => void;
   setOwnership: (resource: "metadata" | "vector" | "embedding") => void;
   setVectorState: (complete: boolean, failed: boolean) => void;
   isVectorStateComplete: () => boolean;
@@ -75,7 +74,6 @@ export default class TdbEngineLifecycle {
     }
 
     this.options.setState("initializing");
-    this.options.setClosed(false);
     this.options.setVectorState(false, false);
     const initialization = this.initializeInternal();
     this.initPromise = initialization;
@@ -95,7 +93,6 @@ export default class TdbEngineLifecycle {
     try {
       await closing;
     } catch (error) {
-      this.options.setClosed(false);
       throw asMemoriaError(error, "lifecycle", "TDBEngine close failed.", {
         retryable: true,
       });
@@ -150,7 +147,6 @@ export default class TdbEngineLifecycle {
       }
       this.options.setContext(undefined);
       this.options.setState("created");
-      this.options.setClosed(false);
       throw asMemoriaError(error, "configuration", "TDBEngine initialization failed.", {
         retryable: true,
       });
@@ -236,7 +232,6 @@ export default class TdbEngineLifecycle {
     if (this.options.getState() === "created") {
       await this.options.ownedResources.dispose();
       this.options.setState("closed");
-      this.options.setClosed(true);
       return;
     }
 
@@ -266,6 +261,5 @@ export default class TdbEngineLifecycle {
     }
     if (firstError) throw firstError;
     this.options.setState("closed");
-    this.options.setClosed(true);
   }
 }

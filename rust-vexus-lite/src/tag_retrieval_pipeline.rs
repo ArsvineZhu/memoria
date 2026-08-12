@@ -1071,7 +1071,7 @@ struct DualDistributionOutput {
     local_support_ids: Vec<i64>,
     extended_support_ids: Vec<i64>,
     local_vector: Vec<f32>,
-    transfer_vector: Vec<f32>,
+    extended_vector: Vec<f32>,
     diagnostics: DualDistributionDiagnostics,
 }
 
@@ -1193,7 +1193,7 @@ fn solve_dual_distributions(
             local_support_ids: Vec::new(),
             extended_support_ids: Vec::new(),
             local_vector: vec![0.0; dimension],
-            transfer_vector: vec![0.0; dimension],
+            extended_vector: vec![0.0; dimension],
             diagnostics: DualDistributionDiagnostics {
                 iterations: 0,
                 local_converged: true,
@@ -1269,7 +1269,7 @@ fn solve_dual_distributions(
     let extended_support_ids =
         effective_domain(artifact, &transfer, config.extended_support_mass_ratio);
     let local_vector = project_distribution(index, artifact, &local, dimension)?;
-    let transfer_vector = project_distribution(index, artifact, &transfer, dimension)?;
+    let extended_vector = project_distribution(index, artifact, &transfer, dimension)?;
     let local_mass = distribution_mass(&local);
     let transfer_mass = distribution_mass(&transfer);
 
@@ -1279,7 +1279,7 @@ fn solve_dual_distributions(
         local_support_ids,
         extended_support_ids,
         local_vector,
-        transfer_vector,
+        extended_vector,
         diagnostics: DualDistributionDiagnostics {
             iterations,
             local_converged,
@@ -1322,7 +1322,7 @@ struct PipelineOutput {
     observation: ActivationPropagationObservation,
     enhanced_vector: Vec<f64>,
     local_vector: Vec<f32>,
-    transfer_vector: Vec<f32>,
+    extended_vector: Vec<f32>,
     local_distribution: Vec<(i64, f64)>,
     extended_distribution: Vec<(i64, f64)>,
     local_support_ids: Vec<i64>,
@@ -1443,7 +1443,7 @@ fn run_pipeline(
         input.query_vector.clone(),
         enhanced_vector.iter().map(|value| *value as f32).collect(),
         dual_distributions.local_vector.clone(),
-        dual_distributions.transfer_vector.clone(),
+        dual_distributions.extended_vector.clone(),
         dual_distributions.local_distribution.clone(),
         dual_distributions.extended_distribution.clone(),
         dual_distributions.local_support_ids.clone(),
@@ -1491,7 +1491,7 @@ fn run_pipeline(
         local_support_ids,
         extended_support_ids,
         local_vector,
-        transfer_vector,
+        extended_vector,
         diagnostics: dual_distribution_diagnostics,
     } = dual_distributions;
 
@@ -1504,7 +1504,7 @@ fn run_pipeline(
         observation,
         enhanced_vector,
         local_vector,
-        transfer_vector,
+        extended_vector,
         local_distribution,
         extended_distribution,
         local_support_ids,

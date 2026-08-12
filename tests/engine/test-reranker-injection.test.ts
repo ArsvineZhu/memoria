@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { createMemoryEngine } from "../../src/index.js";
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
 import type { EmbeddingProviderContract, ExternalReranker } from "../../src/types.js";
 
 test("MemoryEngine injects the reranker option into its runtime context", async () => {
@@ -25,8 +26,8 @@ test("MemoryEngine injects the reranker option into its runtime context", async 
     embeddingProvider,
     reranker,
     onReady: (readyEngine) => {
-      observedReranker = (readyEngine as unknown as { ctx?: { reranker?: unknown } })
-        .ctx?.reranker;
+      void readyEngine;
+      observedReranker = getMemoryEngineTestInternals(engine).context.reranker;
     },
   });
 

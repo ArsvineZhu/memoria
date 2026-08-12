@@ -139,7 +139,17 @@ assert.equal(metadataOnly.chunkIds.length, 0);
 assert.equal(embeddingCalls, callsAfterIngest);
 const search = await engine.search('packed consumer');
 assert.ok(search.results.length >= 1);
-assert.equal(search.results[0]?.documentId, 'consumer:document');
+const firstResult = search.results[0];
+assert.ok(firstResult);
+assert.equal(firstResult.documentId, 'consumer:document');
+assert.equal('retrievalTrace' in search, false);
+assert.equal('tagRetrievalSkipped' in search, false);
+assert.equal('queryVector' in search, false);
+assert.equal('updatedAt' in firstResult, false);
+assert.equal('mtime' in firstResult, false);
+assert.ok(Number.isFinite(firstResult.sourceUpdatedAt));
+assert.ok(Number.isFinite(firstResult.recordedAt));
+assert.ok(Number.isFinite(firstResult.indexedAt));
 await engine.close();
 
 const reopened = createMemoryEngine({

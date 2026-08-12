@@ -12,13 +12,16 @@ export function readMetadataWriterSnapshot(
   const relPath = fileInfo.relPath;
   const space = fileInfo.space;
   const checksum = fileInfo.checksum;
-  const mtime = fileInfo.mtime;
+  const sourceUpdatedAt = fileInfo.sourceUpdatedAt;
+  const recordedAt =
+    typeof fileInfo.recordedAt === "number" ? fileInfo.recordedAt : sourceUpdatedAt;
   const size = fileInfo.size;
   if (
     typeof relPath !== "string" ||
     typeof space !== "string" ||
     typeof checksum !== "string" ||
-    typeof mtime !== "number" ||
+    typeof sourceUpdatedAt !== "number" ||
+    typeof recordedAt !== "number" ||
     typeof size !== "number"
   ) {
     throw new TypeError("MetadataWriterStage requires a complete file snapshot");
@@ -29,7 +32,8 @@ export function readMetadataWriterSnapshot(
     relPath,
     space,
     checksum,
-    mtime,
+    sourceUpdatedAt,
+    recordedAt,
     size,
     sourceJson: serializeDocumentJson(fileInfo.documentSource, "source"),
     metadataJson: serializeDocumentJson(fileInfo.documentMetadata, "metadata"),

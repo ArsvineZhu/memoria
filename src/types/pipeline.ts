@@ -24,6 +24,7 @@ import type {
   EmbeddingRerankData,
   ExpansionStats,
   PropagationHistoryData,
+  PropagationHistoryObservation,
   PropagationStructureData,
   PropagationSupportData,
   PropagationTrace,
@@ -35,7 +36,9 @@ import type {
   PropagationHistoryStore,
   TagBasisDominantAxis,
 } from "./retrieval.js";
+import type { RetrievalDiagnostics } from "./documents.js";
 import type { TdbSearchOptions } from "./tdb.js";
+import type { TagRetrievalObservation } from "../stages/tag-retrieval/tag-retrieval-observation.js";
 
 /** The common object flowing between ordinary pipeline stages. */
 export interface PipelineData extends UnknownRecord {
@@ -45,7 +48,8 @@ export interface PipelineData extends UnknownRecord {
   format?: MemoryDocumentFormat;
   /** Immutable source snapshot used by derived-link extraction; never embedded. */
   sourceContent?: string;
-  mtime?: number;
+  sourceUpdatedAt?: number;
+  recordedAt?: number;
   size?: number;
   space?: string;
   checksum?: string;
@@ -102,6 +106,10 @@ export interface PipelineData extends UnknownRecord {
   propagationSupport?: PropagationSupportData;
   propagationSupportSkipped?: boolean;
   propagationHistory?: PropagationHistoryData;
+  /** Internal post-read observation committed after the stable-read phase. */
+  propagationHistoryObservation?: PropagationHistoryObservation;
+  /** Internal unified native/TypeScript tag-retrieval observation. */
+  tagRetrievalObservation?: TagRetrievalObservation;
   propagationHistorySkipped?: boolean;
   associatorStats?: AssociatorStats;
   associatorSkipped?: boolean;
@@ -110,6 +118,8 @@ export interface PipelineData extends UnknownRecord {
   tagExpansion?: TagExpansionData;
   embeddingRerank?: EmbeddingRerankData;
   propagationStructure?: PropagationStructureData;
+  /** Stable diagnostics projected from the internal stage trace. */
+  retrieval?: RetrievalDiagnostics;
   dedupeStats?: DedupeStats;
   truncationStats?: TruncationStats;
   expansionStats?: ExpansionStats;

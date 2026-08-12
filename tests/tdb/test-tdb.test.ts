@@ -1,5 +1,7 @@
 "use strict";
 
+import { getTdbEngineTestInternals } from "../../src/tdb/tdb-engine-test-access.js";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -96,9 +98,9 @@ test("TDBStore upserts files, chunks and survives reopen", async (t) => {
     library: "Root",
     path: "note.md",
     checksum: "abc",
-    mtime: 100,
+    sourceUpdatedAt: 100,
     size: 12,
-    updatedAt: 100,
+    recordedAt: 100,
   });
   assert.ok(fileId != null);
 
@@ -153,9 +155,9 @@ test("TDBStore getFileByChunkId / getChunkById resolve file context", async () =
     library: "faq",
     path: "bugs.md",
     checksum: "c",
-    mtime: 5,
+    sourceUpdatedAt: 5,
     size: 8,
-    updatedAt: 5,
+    recordedAt: 5,
   });
   const [row] = await store.insertChunks("faq", "bugs.md", [
     { text: "gamma 冷知识内容", checksum: "x" },
@@ -177,9 +179,9 @@ test("TDBStore deleteFile removes its chunks", async () => {
     library: "R",
     path: "a.md",
     checksum: "c",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
-    updatedAt: 1,
+    recordedAt: 1,
   });
   await store.insertChunks("R", "a.md", [
     { text: "alpha 一种", checksum: "a" },
@@ -199,9 +201,9 @@ test("TDBStore public CRUD preserves authority generation and dirty state", asyn
       library: "facts",
       path: "authority.md",
       checksum: "v1",
-      mtime: 1,
+      sourceUpdatedAt: 1,
       size: 1,
-      updatedAt: 1,
+      recordedAt: 1,
     },
     chunks: [{ text: "old", checksum: "old", vector: Buffer.from([1, 2, 3, 4]) }],
   });
@@ -212,9 +214,9 @@ test("TDBStore public CRUD preserves authority generation and dirty state", asyn
     library: "facts",
     path: "authority.md",
     checksum: "v2",
-    mtime: 2,
+    sourceUpdatedAt: 2,
     size: 2,
-    updatedAt: 2,
+    recordedAt: 2,
   });
   const afterFileUpdate = await store.getTdbGenerationState();
   assert.equal(afterFileUpdate.metadataGeneration, before.metadataGeneration + 1);
@@ -239,9 +241,9 @@ test("TDBStore low-level document replacement preserves nullable vectors", async
       library: "facts",
       path: "nullable.md",
       checksum: "v1",
-      mtime: 1,
+      sourceUpdatedAt: 1,
       size: 1,
-      updatedAt: 1,
+      recordedAt: 1,
     },
     chunks: [{ text: "pending vector", checksum: "pending", vector: null }],
   });
@@ -266,7 +268,7 @@ test("TDBEngine disabled by config: initialize is a no-op and search returns []"
     config: baseConfig({ tdbEnabled: false, tdbDbPath: path.join(dir, "no.sqlite") }),
     embeddingProvider: tombstones,
   });
-  assert.strictEqual(engine.enabled, false);
+  assert.strictEqual(getTdbEngineTestInternals(engine).enabled, false);
   const initResult = await engine.initialize();
   assert.strictEqual(initResult, false);
   const out = await engine.search("alpha 冷知识");
@@ -287,8 +289,8 @@ test("TDBEngine keeps closing state and retries only resources that failed to cl
   });
   await engine.initialize();
 
-  const vector = engine.vectorStore;
-  const metadata = engine.metadataStore;
+  const vector = getTdbEngineTestInternals(engine).vectorStore;
+  const metadata = getTdbEngineTestInternals(engine).metadataStore;
   const originalVectorClose = vector.close?.bind(vector);
   const originalMetadataClose = metadata.close?.bind(metadata);
   let vectorFailures = 1;
@@ -344,8 +346,8 @@ test("TDBEngine retains a metadata store when its close fails", async (t) => {
   });
   await engine.initialize();
 
-  const metadata = engine.metadataStore;
-  const vector = engine.vectorStore;
+  const metadata = getTdbEngineTestInternals(engine).metadataStore;
+  const vector = getTdbEngineTestInternals(engine).vectorStore;
   const originalVectorClose = vector.close?.bind(vector);
   const originalClose = metadata.close?.bind(metadata);
   let failures = 1;
@@ -760,7 +762,7 @@ test("TDBSearchPipeline ranks the overlapping-token fact on top", async () => {
   const pipeline = new TDBSearchPipeline(baseConfig());
   const out = await pipeline.run(
     { query: "gamma 老虎", options: { topK: 3, libraries: ["facts"] } },
-    engine.ctx,
+    getTdbEngineTestInternals(engine).context,
   );
   assert.strictEqual(out.tdbDisabled, undefined);
   assert.ok(out.results.length >= 1);
@@ -788,8 +790,8 @@ test("TDB search applies one library scope to vector and BM25 retrieval", async 
 });
 
 test("TDBSearchPipeline decays older facts below newer ones", async () => {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const twoDaysAgo = nowSec - 2 * 24 * 3600;
+  const nowMs = Date.now();
+  const twoDaysAgo = nowMs - 2 * 24 * 3600 * 1000;
 
   const store = new TDBStore({ dbPath: ":memory:" });
   const vectorStore = newVectorStore();
@@ -809,19 +811,19 @@ test("TDBSearchPipeline decays older facts below newer ones", async () => {
   });
   await engine.upsertText("gamma 海龟是长寿的海洋爬行动物", {
     path: "new.md",
-    now: nowSec,
+    now: nowMs,
   });
 
   const pipeline = new TDBSearchPipeline(
     baseConfig({
       tdbTimeDecayEnabled: true,
       timeDecayHalfLife: 10,
-      timeDecayNow: nowSec * 1000,
+      timeDecayNow: nowMs,
     }),
   );
   const out = await pipeline.run(
     { query: "gamma 海龟", options: { topK: 5 } },
-    engine.ctx,
+    getTdbEngineTestInternals(engine).context,
   );
   assert.ok(out.results.length >= 2);
   assert.match(out.results[0].path, /new\.md/);

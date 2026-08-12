@@ -46,23 +46,24 @@ tag basis projection
 ```
 
 `Activation Propagation → Graph Diffusion` 不允许被旧版本 section 或独立版本选择拆开。
-`retrievalTrace.stageOrder` 是验证该 invariant 的运行时证据。
+该顺序是内部 pipeline invariant；公开结果通过 `retrieval.evidence` 表达可用 channel。
 
 ## native 语义
 
 native runtime 只在 file-backed SQLite 和可用的 `VexusIndex` tag-retrieval runtime 上
 执行。它共享 tag association graph artifact signature 和查询 observation；缺少 binding、使用
-`:memory:`、维度不匹配或 payload 无效时，会设置 `tagRetrievalFailure` 或
-`propagationStructureNativeSkipped` 等 bounded diagnosis。TS stage 仍按 canonical
-排序和失败语义继续，不能把 skip 当作 native success。
+`:memory:`、维度不匹配或 payload 无效时，内部会记录具体 failure。公开结果通过稳定的
+`retrieval.fallbacks` 表达降级；TS stage 仍按 canonical 排序和失败语义继续，不能把
+skip 当作 native success。
 
 ## 结果字段
 
-最终结果可以包含 `tagMatchScore`、`similarity`、`matchedTags`、`decay`、
+内部阶段结果可以包含 `tagMatchScore`、`similarity`、`matchedTags`、`decay`、
 `associationChannel`、`associationOf`、`rerankScore`、`tagBasisProjection`、
 `tagResidualDecomposition`、`tagGraphPropagation`、`propagationHistory`、
 `propagationSupport` 和 `propagationStructure`。这些字段来自同一 SearchEnvelope，
-不额外暴露内部 carrier 类型。
+不额外暴露内部 carrier 类型；MemoryEngine 的公开 envelope 只保留 allowlist 字段和
+`retrieval` 诊断。
 
 ## Demo 和验证
 

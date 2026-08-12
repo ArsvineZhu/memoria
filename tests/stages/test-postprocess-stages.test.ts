@@ -23,27 +23,27 @@ const dim = 4;
 
 async function seedMemoryFiles() {
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
   const oldFile = (await store.upsertFile({
     path: "d/old.md",
     space: "space1",
     checksum: "o",
-    mtime: nowSec - 30 * 86400,
+    sourceUpdatedAt: nowMs - 30 * 86400 * 1000,
     size: 3,
   }))!;
   const newFile = (await store.upsertFile({
     path: "d/new.md",
     space: "space1",
     checksum: "n",
-    mtime: nowSec - 3 * 86400,
+    sourceUpdatedAt: nowMs - 3 * 86400 * 1000,
     size: 3,
   }))!;
   store.db
-    .prepare("UPDATE files SET updated_at = ? WHERE id = ?")
-    .run(nowSec - 30 * 86400, oldFile);
+    .prepare("UPDATE files SET recorded_at = ? WHERE id = ?")
+    .run(nowMs - 30 * 86400 * 1000, oldFile);
   store.db
-    .prepare("UPDATE files SET updated_at = ? WHERE id = ?")
-    .run(nowSec - 3 * 86400, newFile);
+    .prepare("UPDATE files SET recorded_at = ? WHERE id = ?")
+    .run(nowMs - 3 * 86400 * 1000, newFile);
   const [oldChunk, oldChunk2] = await store.insertChunks(oldFile, [
     { chunkIndex: 0, content: "旧版块一" },
     { chunkIndex: 1, content: "旧版块二" },
@@ -136,7 +136,7 @@ test("ResultDeduplicatorStage hydrates missing vectors through the metadata cont
     path: "loader.md",
     space: "Root",
     checksum: "loader",
-    mtime: 0,
+    sourceUpdatedAt: 0,
     size: 2,
   }))!;
   const vector = new Float32Array([1, 0, 0, 0]);
@@ -627,7 +627,7 @@ test("ExpanderStage adds same-file chunks with an expansion boost", async () => 
     path: "a.md",
     space: "d",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [c1, c2] = await store.insertChunks(f1, [
@@ -662,14 +662,14 @@ test("ExpanderStage applies the resolved hard scope before adding siblings", asy
     path: "research/a.md",
     space: "research",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const outsideFile = (await store.upsertFile({
     path: "private/b.md",
     space: "private",
     checksum: "b",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [seed, sibling] = await store.insertChunks(inScopeFile, [
@@ -709,7 +709,7 @@ test("ExpanderStage can materialize the full parent document", async () => {
     path: "docs/guide.md",
     space: "docs",
     checksum: "guide",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [first, second] = await store.insertChunks(file, [
@@ -749,7 +749,7 @@ test("ExpanderStage is gated off by default", async () => {
     path: "a.md",
     space: "d",
     checksum: "a",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 1,
   }))!;
   const [c1] = await store.insertChunks(f1, [
@@ -772,7 +772,7 @@ test("ExpanderStage is gated off by default", async () => {
 async function seedAssociatorStore() {
   const store = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const makeFile = (path: string, space: string, checksum: string) =>
-    store.upsertFile({ path, space, checksum, mtime: 1, size: 1 });
+    store.upsertFile({ path, space, checksum, sourceUpdatedAt: 1, size: 1 });
   const seedFile = (await makeFile("seed.md", "space1", "seed"))!;
   const tagFile = (await makeFile("tag.md", "space2", "tag"))!;
   const outsideFile = (await makeFile("outside.md", "space3", "outside"))!;
@@ -1018,7 +1018,7 @@ test("ResultFormatterStage hydrates partial candidates into full result rows", a
   assert.strictEqual(row.source, "associate");
   assert.strictEqual(row.associationChannel, "tag");
   assert.strictEqual(row.similarity, 0.77);
-  assert.ok(Number.isFinite(row.updatedAt));
+  assert.ok(Number.isFinite(row.recordedAt));
   assert.deepStrictEqual(row.tags, ["重要"]);
   assert.deepStrictEqual(row.matchedTags, ["重要"]);
   assert.strictEqual(
@@ -1102,7 +1102,7 @@ test("full postprocess pipeline: merge -> dedupe -> decay -> truncate -> format"
   );
   for (const row of out.results!) {
     assert.ok(row.content!.length <= 20);
-    assert.ok(Number.isFinite(row.updatedAt));
+    assert.ok(Number.isFinite(row.recordedAt));
     assert.strictEqual(typeof row.space, "string");
   }
   assert.strictEqual(out.results![0].tags!.length, 1, "tagged file resolves its tags");

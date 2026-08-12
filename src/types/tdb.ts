@@ -20,7 +20,6 @@ export interface TdbSearchEnvelope extends Omit<
   results: TdbSearchResult[];
   resultCount: number;
   tdbDisabled?: boolean;
-  [key: string]: unknown;
 }
 
 export interface TdbIngestEnvelope extends UnknownRecord {
@@ -61,12 +60,15 @@ export interface TdbFileRow {
   library: string;
   path: string;
   checksum: string;
-  mtime: number;
+  source_updated_at: number;
   size: number;
   doc_node_id?: number | null;
-  updated_at?: number | null;
+  recorded_at: number;
+  indexed_at: number;
   docNodeId?: number | null;
-  updatedAt?: number | null;
+  sourceUpdatedAt?: number | null;
+  recordedAt?: number | null;
+  indexedAt?: number | null;
 }
 
 export interface TdbChunkRow {
@@ -102,9 +104,10 @@ export interface TdbDocumentStateReplacement {
     library: string;
     path: string;
     checksum: string;
-    mtime: number;
+    sourceUpdatedAt: number;
+    recordedAt?: number;
+    indexedAt?: number;
     size: number;
-    updatedAt: number;
   };
   chunks: readonly {
     text: string;
@@ -151,10 +154,11 @@ export interface TdbStoreContract {
     library: string;
     path: string;
     checksum: string;
-    mtime: number;
+    sourceUpdatedAt: number;
     size: number;
     docNodeId?: number | null;
-    updatedAt?: number;
+    recordedAt?: number;
+    indexedAt?: number;
   }): Promise<number | null>;
   getFile(library: string, path: string): Promise<TdbFileRow | null>;
   getFileById(id: number): Promise<TdbFileRow | null>;
@@ -215,7 +219,8 @@ export interface TdbSearchOptions {
   library?: string;
   title?: string;
   now?: number;
-  mtime?: number;
+  recordedAt?: number;
+  sourceUpdatedAt?: number;
   size?: number;
 }
 

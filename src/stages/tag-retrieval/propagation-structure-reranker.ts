@@ -32,7 +32,7 @@ class PropagationStructureRerankerStage extends Stage {
 
     if (
       ctx.config.nativeTagRetrievalEnabled === true &&
-      info.tagRetrievalSkipped === false
+      info.tagRetrievalObservation?.source === "native"
     ) {
       const native = await this.native.rerank(info, ctx);
       if (native.output) {

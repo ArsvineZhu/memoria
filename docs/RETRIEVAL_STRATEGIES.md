@@ -35,7 +35,7 @@ const structural = await engine
 ## 自动 planner
 
 planner 会为 `semantic`、`associative` 和 `structural` 计算 canonical score，并在
-`RetrievalExplanation`、`retrievalDecision` 和 `retrievalTrace.decision` 中返回理由。
+`RetrievalExplanation` 和公开 `retrieval.strategy`/`retrieval.plan` 中返回稳定结果。
 `GraphReadiness` 使用 `tagGraphArtifactReady` 表示图资产状态；结构策略要求图资产和
 scope 等必要条件准备好，否则决策会选择可执行策略并保留明确原因。
 
@@ -57,8 +57,8 @@ tag basis projection
 ```
 
 是否加入每个阶段由 plan 和 config gate 共同决定。native runtime 可复用同一查询观测，
-但 native 失败时只报告 `tagRetrievalFailure` 或阶段的 `*NativeSkipped`，不会伪造成功
-结果。TS 阶段保留相同的排序、边界和失败语义。
+但 native 失败时内部保留具体 failure，公开结果只报告稳定的 `retrieval.fallbacks`，
+不会伪造成功结果。TS 阶段保留相同的排序、边界和失败语义。
 
 ## 与后处理的组合
 

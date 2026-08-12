@@ -102,8 +102,30 @@ export interface TagGraphPropagationData extends UnknownRecord {
 }
 
 export interface PropagationHistoryStore {
-  getKv(key: string): Promise<string | UnknownRecord | null>;
-  setKv(key: string, value: string): Promise<void>;
+  readPropagationHistory(
+    nodeIds: readonly number[],
+  ): Promise<PropagationHistorySnapshot>;
+  commitPropagationObservation(
+    observation: PropagationHistoryObservation,
+  ): Promise<PropagationHistorySnapshot>;
+}
+
+export interface PropagationHistoryEdgeIncrement {
+  sourceId: number;
+  targetId: number;
+  increment: number;
+}
+
+export interface PropagationHistoryObservation {
+  nodeIds: readonly number[];
+  edges: readonly PropagationHistoryEdgeIncrement[];
+  propagationTrace: PropagationTrace;
+}
+
+export interface PropagationHistorySnapshot {
+  sequence: number;
+  totalMass: number;
+  edgeTotals: ReadonlyArray<readonly [string, number]>;
 }
 
 export interface PropagationHistoryData {

@@ -7,20 +7,32 @@
     clippy::type_complexity
 )]
 
+mod persistence;
 mod propagation_structure_reranker;
 mod propagation_support_native;
+mod tag_basis;
 mod tag_graph_artifact_builder;
 mod tag_graph_observation;
+mod tag_pair_similarity;
+mod tag_residual;
 mod tag_retrieval_pipeline;
+mod vector_index;
+mod watcher;
 
 use propagation_structure_reranker::TagRetrievalRuntime;
+use tag_pair_similarity::cosine_similarity;
+use tag_residual::{
+    compute_anchored_gs_residual, compute_centroid_residual, compute_svd_residual, pair_key,
+    semantic_gate, tag_residual_method_from_name, tag_residual_method_name, TagResidualConfig,
+    TagResidualConfigInput, TagResidualMethod, TagResidualNeighbor,
+};
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use rusqlite::{Connection, OpenFlags};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 use usearch::Index;
+
+pub use watcher::{VexusWatcher, WatcherConfig};
 
 /// 搜索结果 (返回 ID 而非 Tag 文本)
 /// 上层 JS 会拿着 ID 去 SQLite 里查具体的文本内容
@@ -48,7 +60,7 @@ pub struct TagBasisProjectionResult {
 #[napi(object)]
 pub struct DiffusionDistributionResult {
     pub local_vector: Option<Vec<f64>>,
-    pub transfer_vector: Option<Vec<f64>>,
+    pub extended_vector: Option<Vec<f64>>,
     pub requested_count: u32,
     pub found_count: u32,
     pub missing_count: u32,
@@ -136,144 +148,12 @@ pub struct VexusIndex {
     tag_retrieval_runtime: Arc<TagRetrievalRuntime>,
 }
 
-static INDEX_SAVE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-fn unique_index_sidecar_path(target: &std::path::Path, role: &str) -> std::path::PathBuf {
-    let sequence = INDEX_SAVE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let file_name = target
-        .file_name()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "vexus-index".to_string());
-    target.with_file_name(format!(
-        ".{}.{}.{}.{}.{}",
-        file_name,
-        role,
-        std::process::id(),
-        timestamp,
-        sequence
-    ))
-}
-
-fn sync_index_file(path: &std::path::Path) -> std::io::Result<()> {
-    // Windows 上 flush/sync（FlushFileBuffers）要求句柄具备写访问权限；
-    // 只读打开会对 fsync 返回 PermissionDenied (os error 5)。这里显式请求
-    // 读写句柄，保证跨平台 fsync 语义一致。
-    std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)?
-        .sync_all()
-}
-
-#[cfg(unix)]
-fn sync_parent_directory(target: &std::path::Path) -> std::io::Result<()> {
-    let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
-    std::fs::File::open(parent)?.sync_all()
-}
-
-#[cfg(target_os = "windows")]
-fn retry_windows_file_operation<T, F>(mut operation: F) -> std::io::Result<T>
-where
-    F: FnMut() -> std::io::Result<T>,
-{
-    const RETRY_DELAYS_MS: [u64; 6] = [20, 40, 80, 160, 320, 500];
-    let mut last_error = None;
-
-    for attempt in 0..=RETRY_DELAYS_MS.len() {
-        match operation() {
-            Ok(value) => return Ok(value),
-            Err(error)
-                if attempt < RETRY_DELAYS_MS.len()
-                    && matches!(
-                        error.kind(),
-                        std::io::ErrorKind::PermissionDenied
-                            | std::io::ErrorKind::WouldBlock
-                            | std::io::ErrorKind::Interrupted
-                    ) =>
-            {
-                last_error = Some(error);
-                std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAYS_MS[attempt]));
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| std::io::Error::other("file operation retry exhausted")))
-}
-
-fn publish_index_file(temp: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        let backup = unique_index_sidecar_path(target, "bak");
-        let had_target = target.exists();
-
-        if had_target {
-            retry_windows_file_operation(|| std::fs::rename(target, &backup))?;
-        }
-
-        if let Err(replace_error) = retry_windows_file_operation(|| std::fs::rename(temp, target)) {
-            let rollback_error = if had_target {
-                retry_windows_file_operation(|| std::fs::rename(&backup, target)).err()
-            } else {
-                None
-            };
-            return Err(match rollback_error {
-                Some(error) => std::io::Error::new(
-                    replace_error.kind(),
-                    format!(
-                        "failed to publish new index: {}; rollback also failed: {}",
-                        replace_error, error
-                    ),
-                ),
-                None => replace_error,
-            });
-        }
-
-        if had_target {
-            if let Err(error) = retry_windows_file_operation(|| std::fs::remove_file(&backup)) {
-                // 新目标已经完整发布；遗留唯一命名备份不应把成功保存误报为失败。
-                eprintln!(
-                    "[Vexus-Lite] Index published but stale backup cleanup failed ({}): {}",
-                    backup.to_string_lossy(),
-                    error
-                );
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::fs::rename(temp, target)?;
-        #[cfg(unix)]
-        sync_parent_directory(target)?;
-    }
-
-    Ok(())
-}
-
 #[napi]
 impl VexusIndex {
     /// 创建新的空索引
     #[napi(constructor)]
     pub fn new(dim: u32, capacity: u32) -> Result<Self> {
-        let index = Index::new(&usearch::IndexOptions {
-            dimensions: dim as usize,
-            metric: usearch::MetricKind::L2sq, // 余弦相似度通常用 L2sq 或 Cosine (如果是归一化向量，L2sq 等价于 Cosine)
-            quantization: usearch::ScalarKind::F32,
-            connectivity: 16,
-            expansion_add: 128,
-            expansion_search: 64,
-            multi: false,
-        })
-        .map_err(|e| Error::from_reason(format!("Failed to create index: {:?}", e)))?;
-
-        index
-            .reserve(capacity as usize)
-            .map_err(|e| Error::from_reason(format!("Failed to reserve capacity: {:?}", e)))?;
+        let index = vector_index::create_index(dim, capacity).map_err(Error::from_reason)?;
 
         Ok(Self {
             index: Arc::new(RwLock::new(index)),
@@ -284,42 +164,11 @@ impl VexusIndex {
     }
 
     /// 从磁盘加载索引
-    /// 注意：移除了 map_path，因为映射关系现在由 SQLite 管理
+    /// 映射关系由 SQLite 管理。
     #[napi(factory)]
-    pub fn load(
-        index_path: String,
-        _unused_map_path: Option<String>,
-        dim: u32,
-        capacity: u32,
-    ) -> Result<Self> {
-        // 为了保持 JS 调用签名兼容，保留了 map_path 参数但忽略它
-        // 或者你可以修改 JS 里的调用去掉第二个参数
-
-        // 创建空索引配置
-        let index = Index::new(&usearch::IndexOptions {
-            dimensions: dim as usize,
-            metric: usearch::MetricKind::L2sq,
-            quantization: usearch::ScalarKind::F32,
-            connectivity: 16,
-            expansion_add: 128,
-            expansion_search: 64,
-            multi: false,
-        })
-        .map_err(|e| Error::from_reason(format!("Failed to create index wrapper: {:?}", e)))?;
-
-        // 加载二进制文件
-        index
-            .load(&index_path)
-            .map_err(|e| Error::from_reason(format!("Failed to load index from disk: {:?}", e)))?;
-
-        // 检查容量并扩容
-        let current_capacity = index.capacity();
-        if capacity as usize > current_capacity {
-            // eprintln!("[Vexus] Expanding capacity on load: {} -> {}", current_capacity, capacity);
-            index
-                .reserve(capacity as usize)
-                .map_err(|e| Error::from_reason(format!("Failed to expand capacity: {:?}", e)))?;
-        }
+    pub fn load(index_path: String, dim: u32, capacity: u32) -> Result<Self> {
+        let index =
+            vector_index::load_index(&index_path, dim, capacity).map_err(Error::from_reason)?;
 
         Ok(Self {
             index: Arc::new(RwLock::new(index)),
@@ -342,33 +191,7 @@ impl VexusIndex {
             .index
             .write()
             .map_err(|e| Error::from_reason(format!("Lock failed: {}", e)))?;
-        let target = std::path::Path::new(&index_path);
-        let temp = unique_index_sidecar_path(target, "tmp");
-        let temp_text = temp.to_string_lossy().into_owned();
-
-        if let Err(error) = index.save(&temp_text) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(Error::from_reason(format!(
-                "Failed to save temporary index {}: {:?}",
-                temp_text, error
-            )));
-        }
-
-        if let Err(error) = sync_index_file(&temp) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(Error::from_reason(format!(
-                "Failed to sync temporary index {}: {}",
-                temp_text, error
-            )));
-        }
-
-        if let Err(error) = publish_index_file(&temp, target) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(Error::from_reason(format!(
-                "Failed to atomically publish index {}: {}",
-                index_path, error
-            )));
-        }
+        vector_index::save_index_atomic(&index, &index_path).map_err(Error::from_reason)?;
 
         Ok(())
     }
@@ -587,7 +410,7 @@ impl VexusIndex {
 
         Ok(DiffusionDistributionResult {
             local_vector: finalize(local_output, local_total_weight),
-            transfer_vector: finalize(transfer_output, transfer_total_weight),
+            extended_vector: finalize(transfer_output, transfer_total_weight),
             requested_count: tag_ids.len() as u32,
             found_count: found_count as u32,
             missing_count: tag_ids.len().saturating_sub(found_count) as u32,
@@ -1128,7 +951,7 @@ impl VexusIndex {
         );
 
         let started_at = std::time::Instant::now();
-        let mut conn = open_sqlite_readwrite(&db_path)
+        let mut conn = persistence::open_sqlite_readwrite(&db_path)
             .map_err(|e| Error::from_reason(format!("DB write open/config failed: {}", e)))?;
         let tx = conn.transaction().map_err(|e| {
             Error::from_reason(format!(
@@ -1233,27 +1056,6 @@ impl VexusIndex {
     }
 }
 
-fn configure_sqlite_connection(conn: &Connection, readonly: bool) -> rusqlite::Result<()> {
-    conn.busy_timeout(Duration::from_secs(30))?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.pragma_update(None, "query_only", if readonly { "ON" } else { "OFF" })?;
-    Ok(())
-}
-
-fn open_sqlite_readonly(db_path: &str) -> rusqlite::Result<Connection> {
-    let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    configure_sqlite_connection(&conn, true)?;
-    Ok(conn)
-}
-
-fn open_sqlite_readwrite(db_path: &str) -> rusqlite::Result<Connection> {
-    let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-    configure_sqlite_connection(&conn, false)?;
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
-    Ok(conn)
-}
-
 /// 🌟 TagBasisProjection: Rust 侧 K-Means + 加权 PCA 计算结果暂存。
 #[derive(Clone)]
 pub struct TagBasisPendingCache {
@@ -1306,302 +1108,6 @@ fn json_escape(value: &str) -> String {
         .replace('\t', "\\t")
 }
 
-fn f32_slice_to_base64(values: &[f32]) -> String {
-    use base64::Engine;
-    let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
-    for value in values {
-        bytes.extend_from_slice(&value.to_ne_bytes());
-    }
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-fn normalize_f32_vector(vector: &mut [f32]) {
-    let mut mag = 0.0f64;
-    for value in vector.iter() {
-        mag += (*value as f64) * (*value as f64);
-    }
-    let mag = mag.sqrt();
-    if mag > 1e-9 {
-        for value in vector.iter_mut() {
-            *value = (*value as f64 / mag) as f32;
-        }
-    }
-}
-
-struct TagBasisDensityBucket {
-    count: usize,
-    sum: Vec<f32>,
-    best_idx: usize,
-    best_residual: f64,
-    samples: Vec<(usize, f64)>,
-}
-
-struct TagBasisAnchorCandidate {
-    key: u16,
-    density: usize,
-    centroid: Vec<f32>,
-    label_idx: usize,
-    base_score: f64,
-}
-
-fn tag_basis_projection_projection_bit(
-    vector: &[f32],
-    mean: &[f32],
-    bit: usize,
-    dim: usize,
-) -> bool {
-    let mut acc = 0.0f64;
-    let mut state = (bit as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    for _ in 0..16 {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        let idx = (state as usize) % dim;
-        let sign = if (state & 0x8000_0000_0000_0000) == 0 {
-            1.0
-        } else {
-            -1.0
-        };
-        acc += ((vector[idx] - mean[idx]) as f64) * sign;
-    }
-    acc >= 0.0
-}
-
-fn tag_basis_projection_density_key(vector: &[f32], mean: &[f32], dim: usize) -> u16 {
-    let mut key = 0u16;
-    for bit in 0..12 {
-        if tag_basis_projection_projection_bit(vector, mean, bit, dim) {
-            key |= 1u16 << bit;
-        }
-    }
-    key
-}
-
-fn tag_basis_projection_residual_norm(vector: &[f32], mean: &[f32], dim: usize) -> f64 {
-    let mut norm = 0.0f64;
-    for d in 0..dim {
-        let v = (vector[d] - mean[d]) as f64;
-        norm += v * v;
-    }
-    norm.sqrt()
-}
-
-fn select_tag_basis_projection_density_residual_samples(
-    vectors: &[Vec<f32>],
-    names: &[String],
-    requested_anchors: usize,
-    dim: usize,
-) -> (Vec<Vec<f32>>, Vec<usize>, Vec<String>, usize, usize, usize) {
-    use std::collections::{HashMap, HashSet};
-
-    let started_at = std::time::Instant::now();
-    let tag_count = vectors.len();
-    let anchor_count = requested_anchors.clamp(8, 128).min(tag_count);
-    let samples_per_anchor = std::env::var("TagBasisProjection_RUST_SAMPLES_PER_ANCHOR")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(32)
-        .clamp(4, 128);
-
-    println!(
-        "[Vexus-Lite][TagBasisProjection] density-residual sampling started: tags={}, anchors={}, samples_per_anchor={}, dim={}",
-        tag_count,
-        anchor_count,
-        samples_per_anchor,
-        dim
-    );
-
-    let mut mean = vec![0.0f32; dim];
-    for vector in vectors {
-        for d in 0..dim {
-            mean[d] += vector[d];
-        }
-    }
-    for value in &mut mean {
-        *value /= tag_count as f32;
-    }
-
-    let mut buckets: HashMap<u16, TagBasisDensityBucket> = HashMap::new();
-    for (idx, vector) in vectors.iter().enumerate() {
-        let key = tag_basis_projection_density_key(vector, &mean, dim);
-        let residual = tag_basis_projection_residual_norm(vector, &mean, dim);
-        let bucket = buckets.entry(key).or_insert_with(|| TagBasisDensityBucket {
-            count: 0,
-            sum: vec![0.0f32; dim],
-            best_idx: idx,
-            best_residual: residual,
-            samples: Vec::with_capacity(samples_per_anchor),
-        });
-
-        bucket.count += 1;
-        for d in 0..dim {
-            bucket.sum[d] += vector[d];
-        }
-
-        if residual > bucket.best_residual {
-            bucket.best_residual = residual;
-            bucket.best_idx = idx;
-        }
-
-        let insert_at = bucket
-            .samples
-            .binary_search_by(|probe| {
-                probe
-                    .1
-                    .partial_cmp(&residual)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .reverse()
-            })
-            .unwrap_or_else(|pos| pos);
-        if insert_at < samples_per_anchor {
-            bucket.samples.insert(insert_at, (idx, residual));
-            if bucket.samples.len() > samples_per_anchor {
-                bucket.samples.pop();
-            }
-        } else if bucket.samples.len() < samples_per_anchor {
-            bucket.samples.push((idx, residual));
-        }
-    }
-
-    println!(
-        "[Vexus-Lite][TagBasisProjection] density buckets built: buckets={}, elapsed={:.2}ms",
-        buckets.len(),
-        started_at.elapsed().as_secs_f64() * 1000.0
-    );
-
-    let mut candidates = Vec::with_capacity(buckets.len());
-    for (key, bucket) in &buckets {
-        if bucket.count == 0 {
-            continue;
-        }
-
-        let mut centroid = bucket.sum.clone();
-        for value in &mut centroid {
-            *value /= bucket.count as f32;
-        }
-        normalize_f32_vector(&mut centroid);
-
-        let density = bucket.count as f64;
-        let residual = bucket.best_residual.max(1e-9);
-        let base_score = density.powf(0.65) * residual.powf(0.35);
-
-        candidates.push(TagBasisAnchorCandidate {
-            key: *key,
-            density: bucket.count,
-            centroid,
-            label_idx: bucket.best_idx,
-            base_score,
-        });
-    }
-
-    candidates.sort_by(|a, b| {
-        b.base_score
-            .partial_cmp(&a.base_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let candidate_limit = std::env::var("TagBasisProjection_RUST_ANCHOR_CANDIDATE_LIMIT")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(512)
-        .clamp(anchor_count, 4096);
-    candidates.truncate(candidate_limit);
-
-    let mut centered_centroids: Vec<Vec<f64>> = Vec::with_capacity(candidates.len());
-    for candidate in &candidates {
-        let mut centered = Vec::with_capacity(dim);
-        let mut norm_sq = 0.0f64;
-        for d in 0..dim {
-            let value = (candidate.centroid[d] - mean[d]) as f64;
-            norm_sq += value * value;
-            centered.push(value);
-        }
-        let norm = norm_sq.sqrt();
-        if norm > 1e-12 {
-            for value in &mut centered {
-                *value /= norm;
-            }
-        }
-        centered_centroids.push(centered);
-    }
-
-    let mut selected: Vec<TagBasisAnchorCandidate> = Vec::with_capacity(anchor_count);
-    let mut selected_centered: Vec<Vec<f64>> = Vec::with_capacity(anchor_count);
-    let mut candidate_max_sim = vec![0.0f64; candidates.len()];
-
-    while selected.len() < anchor_count && !candidates.is_empty() {
-        let mut best_idx = 0usize;
-        let mut best_score = f64::MIN;
-
-        for (idx, candidate) in candidates.iter().enumerate() {
-            let max_sim = candidate_max_sim[idx];
-            let diversity_decay = (-3.0 * max_sim * max_sim).exp();
-            let score = candidate.base_score * diversity_decay;
-            if score > best_score {
-                best_score = score;
-                best_idx = idx;
-            }
-        }
-
-        let chosen = candidates.swap_remove(best_idx);
-        let chosen_centered = centered_centroids.swap_remove(best_idx);
-        candidate_max_sim.swap_remove(best_idx);
-
-        for (idx, centered) in centered_centroids.iter().enumerate() {
-            let mut sim = 0.0f64;
-            for d in 0..dim {
-                sim += centered[d] * chosen_centered[d];
-            }
-            let sim = sim.max(0.0);
-            if sim > candidate_max_sim[idx] {
-                candidate_max_sim[idx] = sim;
-            }
-        }
-
-        selected_centered.push(chosen_centered);
-        selected.push(chosen);
-    }
-
-    let mut representative_tag_indices = HashSet::new();
-    let mut anchor_vectors = Vec::with_capacity(selected.len());
-    let mut weights = Vec::with_capacity(selected.len());
-    let mut labels = Vec::with_capacity(selected.len());
-
-    for anchor in &selected {
-        labels.push(
-            names
-                .get(anchor.label_idx)
-                .cloned()
-                .unwrap_or_else(|| "Unknown".to_string()),
-        );
-        anchor_vectors.push(anchor.centroid.clone());
-        weights.push(anchor.density.max(1));
-
-        if let Some(bucket) = buckets.get(&anchor.key) {
-            for (idx, _residual) in &bucket.samples {
-                representative_tag_indices.insert(*idx);
-            }
-        }
-        representative_tag_indices.insert(anchor.label_idx);
-    }
-
-    println!(
-        "[Vexus-Lite][TagBasisProjection] density-residual sampling finished: anchors={}, representative_tags={}, svd_rows={}, elapsed={:.2}ms",
-        selected.len(),
-        representative_tag_indices.len(),
-        anchor_vectors.len(),
-        started_at.elapsed().as_secs_f64() * 1000.0
-    );
-
-    (
-        anchor_vectors,
-        weights,
-        labels,
-        selected.len(),
-        representative_tag_indices.len(),
-        buckets.len(),
-    )
-}
-
 impl Task for TagBasisTask {
     type Output = TagBasisResult;
     type JsValue = TagBasisResult;
@@ -1624,7 +1130,7 @@ impl Task for TagBasisTask {
         let mut tag_vectors = Vec::new();
 
         {
-            let conn = open_sqlite_readonly(&self.db_path).map_err(|e| {
+            let conn = persistence::open_sqlite_readonly(&self.db_path).map_err(|e| {
                 Error::from_reason(format!("DB readonly open/config failed: {}", e))
             })?;
             let mut stmt = conn
@@ -1647,7 +1153,7 @@ impl Task for TagBasisTask {
                     .chunks_exact(4)
                     .map(|chunk| f32::from_ne_bytes(chunk.try_into().unwrap()))
                     .collect();
-                normalize_f32_vector(&mut vector);
+                tag_basis::normalize_f32_vector(&mut vector);
                 tag_names.push(name);
                 tag_vectors.push(vector);
             }
@@ -1691,7 +1197,7 @@ impl Task for TagBasisTask {
             anchor_count,
             representative_tag_count,
             density_bucket_count,
-        ) = select_tag_basis_projection_density_residual_samples(
+        ) = tag_basis::select_tag_basis_projection_density_residual_samples(
             &tag_vectors,
             &tag_names,
             requested_anchors,
@@ -1796,8 +1302,8 @@ impl Task for TagBasisTask {
             for d in 0..dim {
                 basis.push(v_t[(i, d)]);
             }
-            normalize_f32_vector(&mut basis);
-            basis_b64.push(f32_slice_to_base64(&basis));
+            tag_basis::normalize_f32_vector(&mut basis);
+            basis_b64.push(tag_basis::f32_slice_to_base64(&basis));
 
             let s = singular_values[i] as f64;
             energies.push(s * s);
@@ -1830,7 +1336,7 @@ impl Task for TagBasisTask {
         let cache_json = format!(
             "{{\"basis\":[{}],\"mean\":\"{}\",\"energies\":[{}],\"labels\":[{}],\"timestamp\":{},\"tagCount\":{},\"tag_basis_projectionAlgorithm\":\"density-residual-sampling\",\"anchorCount\":{},\"representativeSampleCount\":{},\"densityBucketCount\":{},\"svdRows\":{}}}",
             basis_json,
-            f32_slice_to_base64(&mean),
+            tag_basis::f32_slice_to_base64(&mean),
             energies_json,
             labels_json,
             timestamp,
@@ -1923,284 +1429,6 @@ pub struct TagResidualMetricsTask {
     effective_config_json: Option<String>,
 }
 
-#[derive(Clone, Copy)]
-enum TagResidualMethod {
-    AnchoredGs,
-    Centroid,
-    Svd,
-}
-
-#[derive(Clone)]
-struct TagResidualNeighbor {
-    id: i64,
-    weight: f64,
-    semantic: f64,
-}
-
-struct TagResidualConfig {
-    method: TagResidualMethod,
-    max_neighbors: usize,
-    max_basis: usize,
-    min_neighbors: usize,
-    semantic_enabled: bool,
-    semantic_peak: f64,
-    semantic_sigma: f64,
-    semantic_floor: f64,
-    semantic_hard_floor: f64,
-    min_gain: f64,
-}
-
-#[derive(serde::Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct TagResidualConfigInput {
-    method: Option<String>,
-    max_neighbors: Option<usize>,
-    max_basis: Option<usize>,
-    min_neighbors: Option<usize>,
-    semantic_enabled: Option<bool>,
-    semantic_peak: Option<f64>,
-    semantic_sigma: Option<f64>,
-    semantic_floor: Option<f64>,
-    semantic_hard_floor: Option<f64>,
-    min_gain: Option<f64>,
-    position_decay: Option<f64>,
-}
-
-fn tag_residual_method_from_name(value: Option<&str>) -> TagResidualMethod {
-    match value
-        .unwrap_or("anchored_gs")
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "centroid" => TagResidualMethod::Centroid,
-        "svd" => TagResidualMethod::Svd,
-        _ => TagResidualMethod::AnchoredGs,
-    }
-}
-
-fn tag_residual_method_name(method: TagResidualMethod) -> &'static str {
-    match method {
-        TagResidualMethod::AnchoredGs => "anchored_gs",
-        TagResidualMethod::Centroid => "centroid",
-        TagResidualMethod::Svd => "svd",
-    }
-}
-
-fn dot_f32_f64(a: &[f32], b: &[f64], dim: usize) -> f64 {
-    let mut dot = 0.0;
-    for d in 0..dim {
-        dot += (a[d] as f64) * b[d];
-    }
-    dot
-}
-
-fn dot_f64(a: &[f64], b: &[f64], dim: usize) -> f64 {
-    let mut dot = 0.0;
-    for d in 0..dim {
-        dot += a[d] * b[d];
-    }
-    dot
-}
-
-fn residual_norm_from_basis(tag_vec: &[f32], basis: &[Vec<f64>], dim: usize) -> f64 {
-    let coeffs = basis
-        .iter()
-        .map(|u| dot_f32_f64(tag_vec, u, dim))
-        .collect::<Vec<_>>();
-
-    let mut residual_sq = 0.0;
-    for d in 0..dim {
-        let mut projection = 0.0;
-        for (coeff, u) in coeffs.iter().zip(basis.iter()) {
-            projection += coeff * u[d];
-        }
-        let diff = (tag_vec[d] as f64) - projection;
-        residual_sq += diff * diff;
-    }
-    residual_sq.sqrt()
-}
-
-fn semantic_gate(sim: f64, cfg: &TagResidualConfig) -> f64 {
-    if !cfg.semantic_enabled {
-        return 1.0;
-    }
-    if !sim.is_finite() || sim <= 0.0 {
-        return cfg.semantic_floor;
-    }
-    if sim < cfg.semantic_hard_floor {
-        return 0.0;
-    }
-    let bell = 0.5
-        + 0.8
-            * (-((sim - cfg.semantic_peak).powi(2))
-                / (2.0 * cfg.semantic_sigma * cfg.semantic_sigma))
-                .exp();
-    bell.max(cfg.semantic_floor)
-}
-
-fn pair_key(a: i64, b: i64) -> (i64, i64) {
-    if a < b {
-        (a, b)
-    } else {
-        (b, a)
-    }
-}
-
-fn compute_centroid_residual(
-    tag_vec: &[f32],
-    neighbors: &[TagResidualNeighbor],
-    tag_vectors: &std::collections::HashMap<i64, Vec<f32>>,
-    dim: usize,
-) -> Option<f64> {
-    let mut centroid = vec![0.0f64; dim];
-    let mut total_weight = 0.0;
-    for neighbor in neighbors {
-        let vec = tag_vectors.get(&neighbor.id)?;
-        let weight = neighbor.weight * neighbor.semantic;
-        if weight <= 0.0 {
-            continue;
-        }
-        total_weight += weight;
-        for d in 0..dim {
-            centroid[d] += (vec[d] as f64) * weight;
-        }
-    }
-    if total_weight <= 1e-12 {
-        return None;
-    }
-    for value in &mut centroid {
-        *value /= total_weight;
-    }
-    let mag = dot_f64(&centroid, &centroid, dim).sqrt();
-    if mag <= 1e-9 {
-        return None;
-    }
-    for value in &mut centroid {
-        *value /= mag;
-    }
-    Some(residual_norm_from_basis(
-        tag_vec,
-        std::slice::from_ref(&centroid),
-        dim,
-    ))
-}
-
-fn compute_anchored_gs_residual(
-    tag_vec: &[f32],
-    neighbors: &[TagResidualNeighbor],
-    tag_vectors: &std::collections::HashMap<i64, Vec<f32>>,
-    dim: usize,
-    cfg: &TagResidualConfig,
-) -> Option<f64> {
-    let mut basis: Vec<Vec<f64>> = Vec::with_capacity(cfg.max_basis);
-    let mut residual = tag_vec
-        .iter()
-        .map(|value| *value as f64)
-        .collect::<Vec<_>>();
-    let mut used = vec![false; neighbors.len()];
-
-    for _ in 0..cfg.max_basis {
-        let mut best_index: Option<usize> = None;
-        let mut best_score = 0.0;
-        let mut best_unit = Vec::new();
-        let mut best_gain = 0.0;
-
-        for (idx, neighbor) in neighbors.iter().enumerate() {
-            if used[idx] || neighbor.semantic <= 0.0 {
-                continue;
-            }
-            let source = match tag_vectors.get(&neighbor.id) {
-                Some(value) => value,
-                None => continue,
-            };
-            let mut candidate = source.iter().map(|value| *value as f64).collect::<Vec<_>>();
-            for u in &basis {
-                let dot = dot_f64(&candidate, u, dim);
-                for d in 0..dim {
-                    candidate[d] -= dot * u[d];
-                }
-            }
-
-            let orth_norm = dot_f64(&candidate, &candidate, dim).sqrt();
-            if orth_norm <= 1e-6 {
-                continue;
-            }
-            for value in &mut candidate {
-                *value /= orth_norm;
-            }
-
-            let explain_gain = dot_f64(&residual, &candidate, dim).abs();
-            let association_weight = (1.0 + neighbor.weight).ln().max(1e-6);
-            let score = explain_gain * orth_norm * association_weight * neighbor.semantic;
-
-            if score > best_score {
-                best_score = score;
-                best_gain = explain_gain;
-                best_index = Some(idx);
-                best_unit = candidate;
-            }
-        }
-
-        let Some(idx) = best_index else {
-            break;
-        };
-        if best_gain < cfg.min_gain {
-            break;
-        }
-
-        used[idx] = true;
-        let signed_gain = dot_f64(&residual, &best_unit, dim);
-        for d in 0..dim {
-            residual[d] -= signed_gain * best_unit[d];
-        }
-        basis.push(best_unit);
-    }
-
-    if basis.is_empty() {
-        None
-    } else {
-        Some(dot_f64(&residual, &residual, dim).sqrt())
-    }
-}
-
-fn compute_svd_residual(
-    tag_vec: &[f32],
-    neighbors: &[TagResidualNeighbor],
-    tag_vectors: &std::collections::HashMap<i64, Vec<f32>>,
-    dim: usize,
-    max_k: usize,
-) -> Option<f64> {
-    use nalgebra::DMatrix;
-
-    let mut flat = Vec::with_capacity(neighbors.len() * dim);
-    let mut n = 0usize;
-    for neighbor in neighbors {
-        if let Some(vec) = tag_vectors.get(&neighbor.id) {
-            flat.extend_from_slice(vec);
-            n += 1;
-        }
-    }
-    if n == 0 {
-        return None;
-    }
-
-    let matrix = DMatrix::from_row_slice(n, dim, &flat);
-    let svd = matrix.svd(false, true);
-    let v_t = svd.v_t?;
-    let k = max_k.min(n).min(dim);
-    let mut basis = Vec::with_capacity(k);
-    for i in 0..k {
-        let mut row = Vec::with_capacity(dim);
-        for d in 0..dim {
-            row.push(v_t[(i, d)] as f64);
-        }
-        basis.push(row);
-    }
-
-    Some(residual_norm_from_basis(tag_vec, &basis, dim))
-}
-
 impl Task for TagResidualMetricsTask {
     type Output = TagResidualMetricsResult;
     type JsValue = TagResidualMetricsResult;
@@ -2288,7 +1516,7 @@ impl Task for TagResidualMetricsTask {
         };
 
         {
-            let conn = open_sqlite_readonly(&self.db_path).map_err(|e| {
+            let conn = persistence::open_sqlite_readonly(&self.db_path).map_err(|e| {
                 Error::from_reason(format!("DB readonly open/config failed: {}", e))
             })?;
             let mut stmt = conn
@@ -2317,7 +1545,7 @@ impl Task for TagResidualMetricsTask {
                         .collect();
                     // P0: residual 必须是单位向量相对于局部子空间的不可解释比例。
                     // 不再隐含依赖 embedding 服务已经归一化。
-                    normalize_f32_vector(&mut vec);
+                    tag_basis::normalize_f32_vector(&mut vec);
                     tag_vectors.insert(id, vec);
                 }
             }
@@ -2491,7 +1719,7 @@ impl Task for TagResidualMetricsTask {
             })
             .unwrap_or(false);
         if !force_recompute && !tag_vectors.is_empty() {
-            let conn = open_sqlite_readonly(&self.db_path).map_err(|e| {
+            let conn = persistence::open_sqlite_readonly(&self.db_path).map_err(|e| {
                 Error::from_reason(format!("DB readonly cache open/config failed: {}", e))
             })?;
             let cached_count = conn
@@ -2657,7 +1885,7 @@ impl Task for TagResidualMetricsTask {
                 .map(|duration| duration.as_millis() as i64)
                 .unwrap_or(0);
 
-            let mut conn = open_sqlite_readwrite(&self.db_path)
+            let mut conn = persistence::open_sqlite_readwrite(&self.db_path)
                 .map_err(|e| Error::from_reason(format!("DB write open/config failed: {}", e)))?;
             let tx = conn
                 .transaction()
@@ -2786,7 +2014,7 @@ impl Task for TagPairSimilaritiesTask {
         let mut max_tag_id = 0_i64;
         let mut file_tag_rows = 0_u64;
         let (pair_count, graph_generation) = {
-            let conn = open_sqlite_readonly(&self.db_path).map_err(|e| {
+            let conn = persistence::open_sqlite_readonly(&self.db_path).map_err(|e| {
                 Error::from_reason(format!("DB readonly open/config failed: {}", e))
             })?;
             let mut content_hasher = {
@@ -2916,7 +2144,7 @@ impl Task for TagPairSimilaritiesTask {
         // 旧模型行的安全清理交给 JS 侧在确认当前 model_sig 已有可用缓存后执行。
         // ====================================================================
         if !self.full_rebuild {
-            let conn = open_sqlite_readonly(&self.db_path).map_err(|e| {
+            let conn = persistence::open_sqlite_readonly(&self.db_path).map_err(|e| {
                 Error::from_reason(format!("DB readonly open/config failed: {}", e))
             })?;
             let mut stmt = conn
@@ -2962,21 +2190,6 @@ impl Task for TagPairSimilaritiesTask {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        // 预先为每个 tag 计算并缓存模长（仅在第一次需要时）
-        let mut norm_cache: HashMap<i64, f32> = HashMap::new();
-        let get_norm = |id: i64, vec: &Vec<f32>, cache: &mut HashMap<i64, f32>| -> f32 {
-            if let Some(&n) = cache.get(&id) {
-                return n;
-            }
-            let mut s = 0.0_f32;
-            for &x in vec.iter() {
-                s += x * x;
-            }
-            let n = s.sqrt();
-            cache.insert(id, n);
-            n
-        };
-
         for &(a, b) in pair_set.iter() {
             if cached.contains(&(a, b)) {
                 skipped += 1;
@@ -3000,16 +2213,7 @@ impl Task for TagPairSimilaritiesTask {
                 }
             };
 
-            // 安全的余弦：dot / (|a| * |b|)
-            let mut dot = 0.0_f64;
-            for d in 0..dim {
-                dot += (va[d] as f64) * (vb[d] as f64);
-            }
-
-            let na = get_norm(a, va, &mut norm_cache) as f64;
-            let nb = get_norm(b, vb, &mut norm_cache) as f64;
-            let denom = na * nb;
-            let sim = if denom > 1e-9 { dot / denom } else { 0.0 };
+            let sim = cosine_similarity(va, vb, dim);
 
             computed += 1;
 
@@ -3029,7 +2233,7 @@ impl Task for TagPairSimilaritiesTask {
         // ====================================================================
         let stored_count = to_insert.len() as u32;
         if !status_rows.is_empty() || self.full_rebuild {
-            let mut conn = open_sqlite_readwrite(&self.db_path)
+            let mut conn = persistence::open_sqlite_readwrite(&self.db_path)
                 .map_err(|e| Error::from_reason(format!("DB write open/config failed: {}", e)))?;
             let tx = conn.transaction().map_err(|e| {
                 Error::from_reason(format!("Begin atomic pairwise publish failed: {}", e))
@@ -3162,7 +2366,7 @@ impl Task for RecoverTask {
     type JsValue = u32;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        let conn = open_sqlite_readonly(&self.db_path)
+        let conn = persistence::open_sqlite_readonly(&self.db_path)
             .map_err(|e| Error::from_reason(format!("Failed to open/config DB readonly: {}", e)))?;
 
         let sql: String;
@@ -3259,406 +2463,5 @@ impl Task for RecoverTask {
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
         Ok(output)
-    }
-}
-
-// ============================================================================
-// 🦀 高性能原生文件监听器 (VexusWatcher)
-// ============================================================================
-
-use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
-use notify::{Event, EventKind, RecursiveMode, Watcher};
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-#[napi(object)]
-pub struct WatcherConfig {
-    pub root_path: String,
-    pub ignore_folders: Vec<String>,
-    pub ignore_prefixes: Vec<String>,
-    pub ignore_suffixes: Vec<String>,
-    /// 可选扩展名白名单。为空时保持旧行为：仅监听 .md / .txt。
-    pub extensions: Option<Vec<String>>,
-    /// 路径事件静默窗口。窗口内的新事件会使旧 generation 自动失效。
-    pub debounce_ms: Option<u32>,
-    /// 两次文件元数据采样之间的稳定确认间隔。
-    pub stability_ms: Option<u32>,
-    /// 同一 generation 内最多执行的稳定采样次数。
-    pub stability_retries: Option<u32>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct WatchFileSnapshot {
-    size: u64,
-    modified_ms: u128,
-}
-
-#[derive(Clone, Copy)]
-struct WatchPendingPath {
-    generation: u64,
-    observed_as_create: bool,
-}
-
-fn watch_file_snapshot(path: &Path) -> Option<WatchFileSnapshot> {
-    let metadata = std::fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    let modified_ms = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
-        .map(|value| value.as_millis())
-        .unwrap_or(0);
-    Some(WatchFileSnapshot {
-        size: metadata.len(),
-        modified_ms,
-    })
-}
-
-fn watcher_path_allowed(
-    path: &Path,
-    root_path: &Path,
-    allowed_extensions: &HashSet<String>,
-    ignore_folders: &HashSet<String>,
-    ignore_prefixes: &[String],
-    ignore_suffixes: &[String],
-) -> bool {
-    let ext = match path.extension() {
-        Some(value) => value.to_string_lossy().to_lowercase(),
-        None => return false,
-    };
-    if !allowed_extensions.contains(&ext) {
-        return false;
-    }
-
-    let rel_path = match path.strip_prefix(root_path) {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    let space = rel_path
-        .components()
-        .next()
-        .map(|value| value.as_os_str().to_string_lossy().to_string())
-        .unwrap_or_else(|| "Root".to_string());
-    if ignore_folders.contains(&space) {
-        return false;
-    }
-
-    let file_name = path
-        .file_name()
-        .map(|value| value.to_string_lossy().to_string())
-        .unwrap_or_default();
-    if ignore_prefixes
-        .iter()
-        .any(|prefix| space.starts_with(prefix) || file_name.starts_with(prefix))
-    {
-        return false;
-    }
-    if ignore_suffixes
-        .iter()
-        .any(|suffix| space.ends_with(suffix) || file_name.ends_with(suffix))
-    {
-        return false;
-    }
-
-    true
-}
-
-#[napi]
-pub struct VexusWatcher {
-    watcher: Arc<Mutex<Option<notify::RecommendedWatcher>>>,
-    // 同一路径只保留一个可重置状态和一个 worker；重复 notify 事件仅刷新 generation。
-    path_generations: Arc<Mutex<HashMap<PathBuf, WatchPendingPath>>>,
-    generation_counter: Arc<AtomicU64>,
-    running: Arc<AtomicBool>,
-}
-
-#[napi]
-impl VexusWatcher {
-    #[napi(constructor)]
-    pub fn new() -> Self {
-        Self {
-            watcher: Arc::new(Mutex::new(None)),
-            path_generations: Arc::new(Mutex::new(HashMap::new())),
-            generation_counter: Arc::new(AtomicU64::new(0)),
-            running: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// 启动高性能原生文件监听
-    #[napi]
-    pub fn start_watch(
-        &self,
-        config: WatcherConfig,
-        js_callback: ThreadsafeFunction<String>,
-    ) -> Result<()> {
-        let root_path_buf = PathBuf::from(&config.root_path);
-        let root_path_buf_clone = root_path_buf.clone();
-        let ignore_folders: Arc<HashSet<String>> =
-            Arc::new(config.ignore_folders.into_iter().collect());
-        let ignore_prefixes = Arc::new(config.ignore_prefixes);
-        let ignore_suffixes = Arc::new(config.ignore_suffixes);
-        let allowed_extensions: Arc<HashSet<String>> = Arc::new(
-            config
-                .extensions
-                .unwrap_or_else(|| vec!["md".to_string(), "txt".to_string()])
-                .into_iter()
-                .map(|ext| ext.trim().trim_start_matches('.').to_lowercase())
-                .filter(|ext| !ext.is_empty())
-                .collect(),
-        );
-        let debounce_ms = config.debounce_ms.unwrap_or(350).clamp(25, 30_000) as u64;
-        let stability_ms = config.stability_ms.unwrap_or(150).clamp(25, 10_000) as u64;
-        let stability_retries = config.stability_retries.unwrap_or(6).clamp(2, 100);
-
-        let js_cb = Arc::new(js_callback);
-        let watcher_ref = self.watcher.clone();
-        let path_generations = self.path_generations.clone();
-        let generation_counter = self.generation_counter.clone();
-        let running = self.running.clone();
-        running.store(true, Ordering::Release);
-        if let Ok(mut generations) = path_generations.lock() {
-            generations.clear();
-        }
-
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            match res {
-                Ok(event) => {
-                    // notify 的 rename 事件通常同时携带旧路径与新路径。
-                    // 必须遍历全部路径；最终事件类型由静默窗口结束时的真实存在性决定：
-                    // 旧路径不存在 => unlink，新路径存在 => add/change。
-                    if !matches!(
-                        event.kind,
-                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                    ) {
-                        return;
-                    }
-
-                    for path in event.paths {
-                        if !watcher_path_allowed(
-                            &path,
-                            &root_path_buf_clone,
-                            &allowed_extensions,
-                            &ignore_folders,
-                            &ignore_prefixes,
-                            &ignore_suffixes,
-                        ) {
-                            continue;
-                        }
-
-                        let generation = generation_counter.fetch_add(1, Ordering::AcqRel) + 1;
-                        let observed_as_create = matches!(event.kind, EventKind::Create(_));
-                        let should_spawn = if let Ok(mut generations) = path_generations.lock() {
-                            let should_spawn = !generations.contains_key(&path);
-                            generations.insert(
-                                path.clone(),
-                                WatchPendingPath {
-                                    generation,
-                                    observed_as_create,
-                                },
-                            );
-                            should_spawn
-                        } else {
-                            continue;
-                        };
-
-                        // 乐观防御：同一路径已有 worker 时只刷新其状态，不再创建额外线程。
-                        if !should_spawn {
-                            continue;
-                        }
-
-                        let callback = js_cb.clone();
-                        let pending = path_generations.clone();
-                        let task_running = running.clone();
-                        let task_path = path.clone();
-                        let cleanup_path = path.clone();
-                        let cleanup_pending = path_generations.clone();
-
-                        let spawn_result = std::thread::Builder::new()
-                            .name("vexus-watch-path".to_string())
-                            .spawn(move || {
-                                'generation: loop {
-                                    if !task_running.load(Ordering::Acquire) {
-                                        return;
-                                    }
-                                    let current = match pending
-                                        .lock()
-                                        .ok()
-                                        .and_then(|generations| generations.get(&task_path).copied())
-                                    {
-                                        Some(value) => value,
-                                        None => return,
-                                    };
-                                    let generation = current.generation;
-
-                                    std::thread::sleep(Duration::from_millis(debounce_ms));
-                                    if !task_running.load(Ordering::Acquire) {
-                                        return;
-                                    }
-
-                                    // 静默窗口内若收到新事件，当前 worker 继续存活并为最新代际重启窗口。
-                                    let after_debounce = pending
-                                        .lock()
-                                        .ok()
-                                        .and_then(|generations| generations.get(&task_path).copied());
-                                    if after_debounce.map(|value| value.generation) != Some(generation) {
-                                        continue 'generation;
-                                    }
-
-                                    // 文件存在时要求连续两次 metadata 完全一致。
-                                    // 同一 generation 内有限重采样，防止某些文件系统只发一次 notify、
-                                    // 首轮采样仍在变化而后续没有新事件时永久漏入库。
-                                    let mut previous_snapshot = watch_file_snapshot(&task_path);
-                                    let mut final_snapshot = None;
-                                    let mut stable = false;
-
-                                    for _ in 0..stability_retries {
-                                        std::thread::sleep(Duration::from_millis(stability_ms));
-                                        if !task_running.load(Ordering::Acquire) {
-                                            return;
-                                        }
-                                        let latest = pending
-                                            .lock()
-                                            .ok()
-                                            .and_then(|generations| generations.get(&task_path).copied());
-                                        if latest.map(|value| value.generation) != Some(generation) {
-                                            continue 'generation;
-                                        }
-
-                                        let next_snapshot = watch_file_snapshot(&task_path);
-                                        if next_snapshot == previous_snapshot {
-                                            stable = true;
-                                            final_snapshot = next_snapshot;
-                                            break;
-                                        }
-                                        previous_snapshot = next_snapshot;
-                                    }
-
-                                    if !stable {
-                                        // 本代际明确结束，避免留下无法自行恢复的 generation 状态。
-                                        if let Ok(mut generations) = pending.lock() {
-                                            if generations
-                                                .get(&task_path)
-                                                .map(|value| value.generation)
-                                                == Some(generation)
-                                            {
-                                                generations.remove(&task_path);
-                                            } else {
-                                                continue 'generation;
-                                            }
-                                        }
-                                        eprintln!(
-                                            "[VexusWatcher] ⚠️ Path did not stabilize after {} samples; generation {} dropped: {}",
-                                            stability_retries,
-                                            generation,
-                                            task_path.to_string_lossy()
-                                        );
-                                        return;
-                                    }
-
-                                    let observed_as_create = if let Ok(mut generations) = pending.lock() {
-                                        match generations.get(&task_path).copied() {
-                                            Some(value) if value.generation == generation => {
-                                                generations.remove(&task_path);
-                                                value.observed_as_create
-                                            }
-                                            Some(_) => continue 'generation,
-                                            None => return,
-                                        }
-                                    } else {
-                                        return;
-                                    };
-
-                                    let (event_type, size, modified_ms) = match final_snapshot {
-                                        Some(snapshot) => (
-                                            if observed_as_create { "add" } else { "change" },
-                                            snapshot.size,
-                                            snapshot.modified_ms,
-                                        ),
-                                        None => ("unlink", 0, 0),
-                                    };
-                                    let emitted_at = SystemTime::now()
-                                        .duration_since(UNIX_EPOCH)
-                                        .map(|value| value.as_millis())
-                                        .unwrap_or(0);
-                                    let payload = format!(
-                                        r#"{{"event":"{}","path":"{}","generation":{},"stable":true,"size":{},"mtimeMs":{},"emittedAt":{}}}"#,
-                                        json_escape(event_type),
-                                        json_escape(&task_path.to_string_lossy().replace('\\', "/")),
-                                        generation,
-                                        size,
-                                        modified_ms,
-                                        emitted_at
-                                    );
-                                    callback.call(
-                                        Ok(payload),
-                                        ThreadsafeFunctionCallMode::NonBlocking,
-                                    );
-                                    return;
-                                }
-                            });
-
-                        if let Err(error) = spawn_result {
-                            // spawn 已明确失败，此路径不可能存在活跃 worker；无条件清理，
-                            // 避免并发刷新的新 generation 留下“有状态、无执行者”的孤儿项。
-                            if let Ok(mut generations) = cleanup_pending.lock() {
-                                generations.remove(&cleanup_path);
-                            }
-                            eprintln!(
-                                "[VexusWatcher] ❌ Failed to spawn path worker for {}: {}",
-                                cleanup_path.to_string_lossy(),
-                                error
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[VexusWatcher] ❌ Native watch error: {:?}", e);
-                }
-            }
-        })
-        .map_err(|e| Error::from_reason(format!("Failed to create native watcher: {:?}", e)))?;
-
-        // 开始递归监听
-        watcher
-            .watch(&root_path_buf, RecursiveMode::Recursive)
-            .map_err(|e| Error::from_reason(format!("Failed to start watching path: {:?}", e)))?;
-
-        let mut lock = watcher_ref
-            .lock()
-            .map_err(|e| Error::from_reason(format!("Watcher lock failed: {}", e)))?;
-        *lock = Some(watcher);
-
-        println!(
-            "[VexusWatcher] 🦀 Stable native watcher started for: {} (debounce={}ms, stability={}ms, retries={})",
-            config.root_path, debounce_ms, stability_ms, stability_retries
-        );
-        Ok(())
-    }
-
-    /// 停止监听
-    #[napi]
-    pub fn stop_watch(&self) -> Result<()> {
-        self.running.store(false, Ordering::Release);
-        if let Ok(mut generations) = self.path_generations.lock() {
-            generations.clear();
-        }
-        let mut lock = self
-            .watcher
-            .lock()
-            .map_err(|e| Error::from_reason(format!("Watcher lock failed: {}", e)))?;
-        *lock = None;
-        println!("[VexusWatcher] 🦀 Native watcher stopped.");
-        Ok(())
-    }
-}
-
-impl Default for VexusWatcher {
-    fn default() -> Self {
-        Self::new()
     }
 }

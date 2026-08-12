@@ -22,7 +22,7 @@ class MetadataStore implements MetadataStoreContract {
 
   /**
    * Insert or update a file record.
-   * @param {{path:string, space:string, checksum:string, mtime:number, size:number}} fileMeta
+   * @param {{path:string, space:string, checksum:string, sourceUpdatedAt:number, recordedAt?:number, indexedAt?:number, size:number}} fileMeta
    * @returns {Promise<number>} file ID
    */
   async upsertFile(_fileMeta: FileMetadataInput): Promise<number | null> {
@@ -59,7 +59,7 @@ class MetadataStore implements MetadataStoreContract {
   /**
    * Get the file row owning a chunk.
    * @param {number} chunkId
-   * @returns {Promise<object|null>} file row (incl. mtime / updated_at)
+   * @returns {Promise<object|null>} file row (including source_updated_at / recorded_at / indexed_at)
    */
   async getFileByChunkId(_chunkId: number): Promise<FileRow | null> {
     throw new Error("MetadataStore.getFileByChunkId() must be implemented");

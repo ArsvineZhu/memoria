@@ -1,5 +1,7 @@
 "use strict";
 
+import { getTdbEngineTestInternals } from "../../src/tdb/tdb-engine-test-access.js";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -54,10 +56,8 @@ test("TDBEngine keeps default providers lazy and enforces lifecycle guards", asy
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-tdb-lazy-"));
   const engine = new TDBEngine({ config: config(root) });
   assert.equal(engine.state, "created");
-  assert.equal(
-    (engine as unknown as { metadataStore?: unknown }).metadataStore,
-    undefined,
-  );
+  assert.equal("metadataStore" in engine, false);
+  assert.deepEqual(Object.keys(engine), ["name"]);
   await assert.rejects(
     () => engine.search("before initialize"),
     (error: unknown) => error instanceof MemoriaError && error.code === "lifecycle",
@@ -131,7 +131,7 @@ test("TDBEngine close drains an active upsert", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "memoria-tdb-upsert-drain-"));
   const { engine, metadataStore } = injectedEngine(root);
   await engine.initialize();
-  const provider = engine.embeddingProvider;
+  const provider = getTdbEngineTestInternals(engine).embeddingProvider;
   let release!: () => void;
   let started!: () => void;
   const barrier = new Promise<void>((resolve) => {

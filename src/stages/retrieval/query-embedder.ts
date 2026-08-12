@@ -1,6 +1,4 @@
-import type {
-  QueryVector,
-} from "../../types/documents.js";
+import type { QueryVector } from "../../types/documents.js";
 import type { EmbeddingVector } from "../../types/common.js";
 import type { MemoryConfigOverrides } from "../../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";

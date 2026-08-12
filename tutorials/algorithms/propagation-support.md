@@ -21,7 +21,7 @@ Propagation Support Rerank 用候选 chunk 的 tag/support 信号，对基础候
 
 ## 阶段
 
-它位于 tag expansion、embedding rerank 等候选生产/局部算法之后，relation expansion 之前或附近，最终仍会进入 dedupe 和 common postprocess tail。准确执行情况应以 \`retrievalTrace.stageOrder\` 为准。
+它位于 tag expansion、embedding rerank 等候选生产/局部算法之后，relation expansion 之前或附近，最终仍会进入 dedupe 和 common postprocess tail。公开结果通过 \`retrieval.evidence\` 与 \`retrieval.fallbacks\` 表达能力状态，不暴露原始 stage 顺序。
 
 ## 计算语义
 

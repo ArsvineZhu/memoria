@@ -3,7 +3,11 @@
 import type { UnknownRecord, VectorLike } from "../types/common.js";
 import type { MetadataStoreContract } from "../types/metadata.js";
 import type { VectorStoreContract } from "../types/vector.js";
-import type { TdbCorpusChunk, TdbStoreContract, TriviumSearchHit } from "../types/tdb.js";
+import type {
+  TdbCorpusChunk,
+  TdbStoreContract,
+  TriviumSearchHit,
+} from "../types/tdb.js";
 import { at } from "../utils/numerical.js";
 
 /**

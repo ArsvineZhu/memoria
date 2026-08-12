@@ -1,5 +1,7 @@
 "use strict";
 
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -75,8 +77,10 @@ test("MDX source remains immutable while relations and retrieval trace live outs
     const envelopes = await adapter.scan();
     assert.equal(envelopes.length, 2);
 
-    const listRelations = engine.metadataStore.listRelations?.bind(
-      engine.metadataStore,
+    const listRelations = getMemoryEngineTestInternals(
+      engine,
+    ).metadataStore.listRelations?.bind(
+      getMemoryEngineTestInternals(engine).metadataStore,
     );
     assert.ok(listRelations);
     const relations = await listRelations();
@@ -90,7 +94,7 @@ test("MDX source remains immutable while relations and retrieval trace live outs
     );
 
     const derived = await new RelationGraphStore(
-      engine.metadataStore,
+      getMemoryEngineTestInternals(engine).metadataStore,
     ).addDerivedRelations([
       {
         from: relationDocumentKey({ path: "notes/b.mdx" }),
@@ -116,8 +120,9 @@ test("MDX source remains immutable while relations and retrieval trace live outs
         postprocess: { dedupe: true, truncate: true, maxResults: 2 },
       },
     });
-    assert.equal(result.retrievalTrace?.decision.strategy, "semantic");
-    assert.ok(result.retrievalTrace?.stageOrder.includes("candidateFilter"));
+    assert.equal(result.retrieval?.strategy, "semantic");
+    assert.ok(result.retrieval?.evidence.length);
+    assert.equal("retrievalTrace" in result, false);
     assert.deepEqual(fs.readFileSync(sourceAPath), beforeA);
     assert.deepEqual(fs.readFileSync(sourceBPath), beforeB);
   } finally {

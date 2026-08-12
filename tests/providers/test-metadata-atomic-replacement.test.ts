@@ -10,7 +10,7 @@ interface Replacement {
     path: string;
     space: string;
     checksum: string;
-    mtime: number;
+    sourceUpdatedAt: number;
     size: number;
     documentId?: string;
     revision?: string;
@@ -59,7 +59,7 @@ async function seedStore(store: SqliteMetadataStore): Promise<number> {
     path: "Logical/atomic.md",
     space: "Logical",
     checksum: "old-checksum",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 11,
     documentId: "atomic:document",
     revision: "1",
@@ -88,7 +88,7 @@ function replacement(): Replacement {
       path: "Logical/atomic.md",
       space: "Logical",
       checksum: "new-checksum",
-      mtime: 2,
+      sourceUpdatedAt: 2,
       size: 12,
       documentId: "atomic:document",
       revision: "2",
@@ -110,7 +110,7 @@ function preserveReplacement(): Replacement {
       path: "Logical/atomic.md",
       space: "Logical",
       checksum: "old-checksum",
-      mtime: 2,
+      sourceUpdatedAt: 2,
       size: 11,
       documentId: "atomic:document",
       revision: "2",

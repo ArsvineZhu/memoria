@@ -1,6 +1,4 @@
-import type {
-  ChunkCandidate,
-} from "../../types/documents.js";
+import type { ChunkCandidate } from "../../types/documents.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { TagGraphPropagationData } from "../../types/retrieval.js";
 
@@ -15,6 +13,7 @@ import type {
   GraphDiffusionResult,
   DistributionOperator,
 } from "../../algorithms/tag-graph/graph-diffusion-solver.js";
+import { mergeTagRetrievalObservation } from "./tag-retrieval-observation.js";
 
 type DistributionEntry = readonly [number, number];
 type PrunedDistribution = Array<DistributionEntry> & {
@@ -183,6 +182,10 @@ class GraphDiffusionStage extends Stage {
       ...info,
       tagGraphPropagation,
       mergedCandidates,
+      tagRetrievalObservation: mergeTagRetrievalObservation(info, {
+        source: "typescript",
+        propagation: tagGraphPropagation,
+      }),
     };
   }
 

@@ -22,7 +22,9 @@ export function normalizeFiles(files: unknown): FileInput[] {
       content: typeof entry.content === "string" ? entry.content : undefined,
       sourceContent:
         typeof entry.sourceContent === "string" ? entry.sourceContent : undefined,
-      mtime: typeof entry.mtime === "number" ? entry.mtime : undefined,
+      sourceUpdatedAt:
+        typeof entry.sourceUpdatedAt === "number" ? entry.sourceUpdatedAt : undefined,
+      recordedAt: typeof entry.recordedAt === "number" ? entry.recordedAt : undefined,
       size: typeof entry.size === "number" ? entry.size : undefined,
       documentId: typeof entry.documentId === "string" ? entry.documentId : undefined,
       revision: typeof entry.revision === "string" ? entry.revision : undefined,

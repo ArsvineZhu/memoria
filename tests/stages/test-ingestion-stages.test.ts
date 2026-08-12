@@ -85,13 +85,13 @@ test("FileReaderStage reads a temp file and computes checksum", async (t) => {
   assert.strictEqual(out.space, "space1");
   assert.strictEqual(out.content, content);
   assert.strictEqual(out.checksum, md5(content));
-  assert.strictEqual(typeof out.mtime, "number");
+  assert.strictEqual(typeof out.sourceUpdatedAt, "number");
   assert.strictEqual(typeof out.size, "number");
   assert.strictEqual(out.needsEmbedding, true);
   assert.strictEqual(out.unstable, false);
 });
 
-test("FileReaderStage needsEmbedding=false when checksum/size/mtime match stored row", async (t) => {
+test("FileReaderStage needsEmbedding=false when checksum/size/sourceUpdatedAt match stored row", async (t) => {
   const tmpRoot = makeTmpDir("memoria-reuse-");
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
@@ -113,11 +113,11 @@ test("FileReaderStage needsEmbedding=false when checksum/size/mtime match stored
     path: relPath,
     space: first.space,
     checksum: first.checksum,
-    mtime: first.mtime,
+    sourceUpdatedAt: first.sourceUpdatedAt,
     size: first.size,
   });
 
-  // Second read: identical checksum/size/mtime -> no re-embedding needed.
+  // Second read: identical checksum/size/sourceUpdatedAt -> no re-embedding needed.
   const second = await stage.process({ path: filePath }, ctx);
   assert.strictEqual(second.needsEmbedding, false);
   assert.strictEqual(second.checksum, first.checksum);
@@ -139,7 +139,7 @@ test("FileReaderStage detects content change via checksum mismatch", async (t) =
     path: path.basename(filePath),
     space: first.space,
     checksum: first.checksum,
-    mtime: first.mtime,
+    sourceUpdatedAt: first.sourceUpdatedAt,
     size: first.size,
   });
 
@@ -157,14 +157,14 @@ test("FileReaderStage supports fallbackRead (content provided by caller)", async
     {
       path: "C:\\virtual\\space\\archived.md",
       content: "fallback content",
-      mtime: 123456,
+      sourceUpdatedAt: 123456,
       size: 15,
     },
     ctx,
   );
 
   assert.strictEqual(out.content, "fallback content");
-  assert.strictEqual(out.mtime, 123456);
+  assert.strictEqual(out.sourceUpdatedAt, 123456);
   assert.strictEqual(out.size, 15);
   assert.strictEqual(out.checksum, md5("fallback content"));
   assert.strictEqual(out.relPath, "space/archived.md");
@@ -201,7 +201,7 @@ test("FileReaderStage parses MDX front matter and keeps JSX/import literal", asy
       path: "C:\\virtual\\journal\\demo.mdx",
       relPath: "journal/demo.mdx",
       content: raw,
-      mtime: 100,
+      sourceUpdatedAt: 100,
       size: Buffer.byteLength(raw),
     },
     makeCtx({ rootPath: "C:\\virtual" }),
@@ -225,7 +225,7 @@ test("FileReaderStage lets explicit text override an MDX-looking path", async ()
       relPath: "journal/literal.mdx",
       content: raw,
       format: "text",
-      mtime: 100,
+      sourceUpdatedAt: 100,
       size: Buffer.byteLength(raw),
     },
     makeCtx({ rootPath: "C:\\virtual" }),
@@ -243,7 +243,7 @@ test("FileReaderStage treats .md files as structured markdown", async () => {
       path: "C:\\virtual\\journal\\note.md",
       relPath: "journal/note.md",
       content: raw,
-      mtime: 100,
+      sourceUpdatedAt: 100,
       size: Buffer.byteLength(raw),
     },
     makeCtx({ rootPath: "C:\\virtual" }),
@@ -262,7 +262,7 @@ test("FileReaderStage preserves an adapter-provided raw source for relation span
       relPath: "journal/source.mdx",
       content: "Body [link](./other.mdx)",
       sourceContent: raw,
-      mtime: 100,
+      sourceUpdatedAt: 100,
       size: Buffer.byteLength(raw),
     },
     makeCtx({ rootPath: "C:\\virtual" }),
@@ -272,13 +272,32 @@ test("FileReaderStage preserves an adapter-provided raw source for relation span
   assert.equal(out.sourceContent, raw);
 });
 
+test("FileReaderStage parses raw MDX once when the body starts with a delimiter", async () => {
+  const raw = "---\ntitle: Source\n---\n---\nSome section\n---\n\n正文";
+  const out = await new FileReaderStage().process(
+    {
+      path: "C:\\virtual\\journal\\section.mdx",
+      relPath: "journal/section.mdx",
+      content: raw,
+      sourceContent: raw,
+      format: "mdx",
+      sourceUpdatedAt: 1,
+      size: raw.length,
+    },
+    makeCtx({ rootPath: "C:\\virtual" }),
+  );
+
+  assert.equal(out.content, "---\nSome section\n---\n\n正文");
+  assert.deepEqual(out.documentMetadata, { title: "Source" });
+});
+
 test("FileDeleterStage stales source relations but preserves their audit history", async () => {
   const metadataStore = new SqliteMetadataStore({ dbPath: ":memory:", dimension: dim });
   const fileId = await metadataStore.upsertFile({
     path: "journal/source.mdx",
     space: "journal",
     checksum: "checksum",
-    mtime: 100,
+    sourceUpdatedAt: 100,
     size: 20,
     revision: "rev-1",
   });
@@ -321,7 +340,7 @@ test("FileReaderStage treats front-matter-only changes as metadata/tag updates",
       path: "C:\\virtual\\journal\\note.mdx",
       relPath: "journal/note.mdx",
       content: firstRaw,
-      mtime: 100,
+      sourceUpdatedAt: 100,
       size: Buffer.byteLength(firstRaw),
     },
     ctx,
@@ -330,7 +349,7 @@ test("FileReaderStage treats front-matter-only changes as metadata/tag updates",
     path: first.relPath,
     space: first.space,
     checksum: first.checksum,
-    mtime: first.mtime,
+    sourceUpdatedAt: first.sourceUpdatedAt,
     size: first.size,
     metadataJson: JSON.stringify(first.documentMetadata),
   });
@@ -341,7 +360,7 @@ test("FileReaderStage treats front-matter-only changes as metadata/tag updates",
       path: "C:\\virtual\\journal\\note.mdx",
       relPath: "journal/note.mdx",
       content: secondRaw,
-      mtime: 101,
+      sourceUpdatedAt: 101,
       size: Buffer.byteLength(secondRaw),
     },
     ctx,
@@ -364,7 +383,7 @@ test("FileReaderStage reuses embeddings when caller-provided metadata changes", 
       path: "C:\\virtual\\journal\\note.mdx",
       relPath: "journal/note.mdx",
       content: body,
-      mtime: 100,
+      sourceUpdatedAt: 100,
       size: Buffer.byteLength(body),
       revision: "raw-1",
       documentMetadata: { title: "First" },
@@ -375,7 +394,7 @@ test("FileReaderStage reuses embeddings when caller-provided metadata changes", 
     path: first.relPath,
     space: first.space,
     checksum: first.checksum,
-    mtime: first.mtime,
+    sourceUpdatedAt: first.sourceUpdatedAt,
     size: first.size,
     metadataJson: JSON.stringify(first.documentMetadata),
   });
@@ -385,7 +404,7 @@ test("FileReaderStage reuses embeddings when caller-provided metadata changes", 
       path: "C:\\virtual\\journal\\note.mdx",
       relPath: "journal/note.mdx",
       content: body,
-      mtime: 101,
+      sourceUpdatedAt: 101,
       size: Buffer.byteLength(body),
       revision: "raw-2",
       documentMetadata: { title: "Second", status: "active" },
@@ -414,7 +433,7 @@ test("FileReaderStage rejects malformed front matter with the source identity", 
           relPath: "logical/document",
           content,
           format: "mdx",
-          mtime: 100,
+          sourceUpdatedAt: 100,
           size: Buffer.byteLength(content),
         },
         makeCtx({ rootPath: "C:\\virtual" }),
@@ -430,7 +449,7 @@ test("FileReaderStage keeps extensionless logical text unparsed by default", asy
       path: "logical/document",
       relPath: "logical/document",
       content: raw,
-      mtime: 100,
+      sourceUpdatedAt: 100,
       size: Buffer.byteLength(raw),
     },
     makeCtx({ rootPath: "C:\\virtual" }),
@@ -628,7 +647,7 @@ test("FileReaderStage separates metadata changes from embedding changes", async 
     path: "logical/doc",
     space: "Logical",
     checksum: md5(content),
-    mtime: 100,
+    sourceUpdatedAt: 100,
     size: content.length,
     documentId: "logical:doc",
     revision: "r1",
@@ -641,7 +660,7 @@ test("FileReaderStage separates metadata changes from embedding changes", async 
       path: "logical/doc",
       relPath: "logical/doc",
       content,
-      mtime: 200,
+      sourceUpdatedAt: 200,
       size: content.length,
       documentId: "logical:doc",
       revision: "r2",

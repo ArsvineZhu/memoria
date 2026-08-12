@@ -1,3 +1,4 @@
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +27,7 @@ function ingestResult(input: PipelineData): PipelineData {
     space: input.space ?? "Logical",
     content: input.content ?? "",
     checksum: "queue-test",
-    mtime: 0,
+    sourceUpdatedAt: 0,
     size: Buffer.byteLength(input.content ?? "", "utf8"),
     needsEmbedding: true,
     unstable: false,
@@ -50,7 +51,6 @@ function makeEngine() {
 }
 
 type MutationQueueInternals = {
-  _mutationTails: Map<string, Promise<void>>;
   _runSerializedMutation<T>(
     key: string | readonly string[],
     operation: () => Promise<T>,
@@ -70,7 +70,7 @@ test("same document revisions execute in queue-entry order", async () => {
     releaseRevision2 = resolve;
   });
 
-  engine.ingestPipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).ingestPipeline.run = async (input) => {
     const revision = input.revision ?? "none";
     events.push(`start:${revision}`);
     if (revision === "2") {
@@ -101,7 +101,7 @@ test("same document revisions execute in queue-entry order", async () => {
     await Promise.all([revision2, revision3]);
     assert.deepStrictEqual(events, ["start:2", "finish:2", "start:3", "finish:3"]);
     assert.equal((await revision3).revision, "3");
-    assert.equal((engine as unknown as MutationQueueInternals)._mutationTails.size, 0);
+    assert.equal(getMemoryEngineTestInternals(engine).mutationTails.size, 0);
   } finally {
     releaseRevision2();
     await engine.close();
@@ -121,14 +121,14 @@ test("same document upsert and remove are serialized in invocation order", async
     releaseUpsert = resolve;
   });
 
-  engine.ingestPipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).ingestPipeline.run = async (input) => {
     events.push("upsert-start");
     startUpsert();
     await release;
     events.push("upsert-finish");
     return ingestResult(input);
   };
-  engine.deletePipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).deletePipeline.run = async (input) => {
     events.push("remove-start");
     events.push("remove-finish");
     return { ...input, deleted: true, removedChunkIds: [] };
@@ -149,7 +149,7 @@ test("same document upsert and remove are serialized in invocation order", async
       "remove-start",
       "remove-finish",
     ]);
-    assert.equal((engine as unknown as MutationQueueInternals)._mutationTails.size, 0);
+    assert.equal(getMemoryEngineTestInternals(engine).mutationTails.size, 0);
   } finally {
     releaseUpsert();
     await engine.close();
@@ -199,7 +199,7 @@ test("different mutation keys can run concurrently and clean their tails", async
     releaseA();
     releaseB();
     assert.deepStrictEqual(await Promise.all([first, second]), ["a", "b"]);
-    assert.equal(queue._mutationTails.size, 0);
+    assert.equal(getMemoryEngineTestInternals(engine).mutationTails.size, 0);
 
     await assert.rejects(
       () =>
@@ -208,7 +208,7 @@ test("different mutation keys can run concurrently and clean their tails", async
         }),
       /queue operation failed/,
     );
-    assert.equal(queue._mutationTails.size, 0);
+    assert.equal(getMemoryEngineTestInternals(engine).mutationTails.size, 0);
   } finally {
     releaseA();
     releaseB();
@@ -252,7 +252,7 @@ test("authority alias stabilization retries without dirtying vector state", asyn
     assert.equal(result, "stable");
     assert.equal(operations, 1);
     assert.equal(resolveCalls, 4);
-    assert.equal(internals._vectorMutationFailed, false);
+    assert.equal(getMemoryEngineTestInternals(engine).vectorMutationFailed, false);
   } finally {
     await engine.close();
   }
@@ -281,14 +281,14 @@ test("absolute and relative file mutations share one canonical queue key", async
     releaseFlush = resolve;
   });
 
-  engine.ingestPipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).ingestPipeline.run = async (input) => {
     events.push("flush-start");
     markFlushStarted();
     await flushRelease;
     events.push("flush-finish");
     return ingestResult(input);
   };
-  engine.deletePipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).deletePipeline.run = async (input) => {
     events.push("delete");
     return { ...input, deleted: true, removedChunkIds: [] };
   };
@@ -298,7 +298,7 @@ test("absolute and relative file mutations share one canonical queue key", async
     const flush = engine.flushBatch({
       path: absolutePath,
       content: "same canonical file",
-      mtime: 0,
+      sourceUpdatedAt: 0,
       size: Buffer.byteLength("same canonical file", "utf8"),
     });
     await flushStarted;
@@ -336,7 +336,7 @@ test("logical and file mutations with one documentId share a canonical queue key
     releaseFlush = resolve;
   });
 
-  engine.ingestPipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).ingestPipeline.run = async (input) => {
     const label = String(input.path).includes("__logical__") ? "logical" : "file";
     events.push(`${label}-start`);
     if (label === "file") {
@@ -354,7 +354,7 @@ test("logical and file mutations with one documentId share a canonical queue key
       relPath: "foo.md",
       documentId: "shared:authority",
       content: "file state",
-      mtime: 0,
+      sourceUpdatedAt: 0,
       size: 10,
     });
     await flushStarted;
@@ -400,14 +400,14 @@ test("documentId-backed flush and path-only delete share both authority aliases"
     releaseFlush = resolve;
   });
 
-  engine.ingestPipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).ingestPipeline.run = async (input) => {
     events.push("flush-start");
     markFlushStarted();
     await flushRelease;
     events.push("flush-finish");
     return ingestResult(input);
   };
-  engine.deletePipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).deletePipeline.run = async (input) => {
     events.push("delete");
     return { ...input, deleted: true, removedChunkIds: [] };
   };
@@ -419,7 +419,7 @@ test("documentId-backed flush and path-only delete share both authority aliases"
       relPath: "foo.md",
       documentId: "shared:authority",
       content: "file state",
-      mtime: 0,
+      sourceUpdatedAt: 0,
       size: 10,
     });
     await flushStarted;
@@ -438,7 +438,10 @@ test("logical upsert and path-only delete serialize after the authority row exis
   const engine = makeEngine();
   await engine.initialize();
   await engine.ingest({ id: "persisted:alias", content: "initial state" });
-  const row = await engine.metadataStore.getFileByDocumentId!("persisted:alias");
+  const row =
+    await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId!(
+      "persisted:alias",
+    );
   assert.ok(row);
 
   const events: string[] = [];
@@ -450,14 +453,14 @@ test("logical upsert and path-only delete serialize after the authority row exis
   const started = new Promise<void>((resolve) => {
     upsertStarted = resolve;
   });
-  engine.ingestPipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).ingestPipeline.run = async (input) => {
     events.push("upsert-start");
     upsertStarted();
     await upsertRelease;
     events.push("upsert-finish");
     return ingestResult(input);
   };
-  engine.deletePipeline.run = async (input) => {
+  getMemoryEngineTestInternals(engine).deletePipeline.run = async (input) => {
     events.push("delete");
     return { ...input, deleted: true, removedChunkIds: [] };
   };
@@ -487,7 +490,10 @@ test("logical upsert and path delete cannot interleave into a stale vector", asy
     content: "initial authority",
     revision: "1",
   });
-  const row = await engine.metadataStore.getFileByDocumentId!("race:authority");
+  const row =
+    await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId!(
+      "race:authority",
+    );
   assert.ok(row);
 
   const events: string[] = [];
@@ -504,7 +510,7 @@ test("logical upsert and path delete cannot interleave into a stale vector", asy
     deleteQueued = resolve;
   });
 
-  const metadataStore = engine.metadataStore;
+  const metadataStore = getMemoryEngineTestInternals(engine).metadataStore;
   const replaceAuthority = metadataStore.replaceDocumentAuthority?.bind(metadataStore);
   if (typeof replaceAuthority !== "function")
     throw new Error("missing authority capability");
@@ -519,8 +525,10 @@ test("logical upsert and path delete cannot interleave into a stale vector", asy
     return result;
   };
 
-  const originalDeleteRun = engine.deletePipeline.run.bind(engine.deletePipeline);
-  engine.deletePipeline.run = async (input, ctx) => {
+  const originalDeleteRun = getMemoryEngineTestInternals(
+    engine,
+  ).deletePipeline.run.bind(getMemoryEngineTestInternals(engine).deletePipeline);
+  getMemoryEngineTestInternals(engine).deletePipeline.run = async (input, ctx) => {
     events.push("delete-start");
     return originalDeleteRun(input, ctx);
   };
@@ -559,10 +567,14 @@ test("logical upsert and path delete cannot interleave into a stale vector", asy
       "delete-start",
     ]);
     assert.equal(
-      await engine.metadataStore.getFileByDocumentId!("race:authority"),
+      await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId!(
+        "race:authority",
+      ),
       null,
     );
-    const getIndexStats = engine.vectorStore.getIndexStats?.bind(engine.vectorStore);
+    const getIndexStats = getMemoryEngineTestInternals(
+      engine,
+    ).vectorStore.getIndexStats?.bind(getMemoryEngineTestInternals(engine).vectorStore);
     if (typeof getIndexStats !== "function") throw new Error("missing index stats");
     assert.equal((await getIndexStats("Logical")).size, 0);
   } finally {
@@ -589,7 +601,7 @@ test("rename flush captures the old path alias before a path delete", async () =
     documentId: "race:rename",
     revision: "1",
     content: "old path authority",
-    mtime: 0,
+    sourceUpdatedAt: 0,
     size: 18,
   });
 
@@ -607,7 +619,7 @@ test("rename flush captures the old path alias before a path delete", async () =
     deleteQueued = resolve;
   });
 
-  const metadataStore = engine.metadataStore;
+  const metadataStore = getMemoryEngineTestInternals(engine).metadataStore;
   const replaceAuthority = metadataStore.replaceDocumentAuthority?.bind(metadataStore);
   if (typeof replaceAuthority !== "function")
     throw new Error("missing authority capability");
@@ -622,8 +634,10 @@ test("rename flush captures the old path alias before a path delete", async () =
     return result;
   };
 
-  const originalDeleteRun = engine.deletePipeline.run.bind(engine.deletePipeline);
-  engine.deletePipeline.run = async (input, ctx) => {
+  const originalDeleteRun = getMemoryEngineTestInternals(
+    engine,
+  ).deletePipeline.run.bind(getMemoryEngineTestInternals(engine).deletePipeline);
+  getMemoryEngineTestInternals(engine).deletePipeline.run = async (input, ctx) => {
     events.push("delete-start");
     return originalDeleteRun(input, ctx);
   };
@@ -649,7 +663,7 @@ test("rename flush captures the old path alias before a path delete", async () =
       documentId: "race:rename",
       revision: "2",
       content: "new path authority",
-      mtime: 0,
+      sourceUpdatedAt: 0,
       size: 18,
     });
     await authorityStart;
@@ -667,10 +681,17 @@ test("rename flush captures the old path alias before a path delete", async () =
       "rename-authority-end",
       "delete-start",
     ]);
-    const stored = await engine.metadataStore.getFileByDocumentId!("race:rename");
+    const stored =
+      await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId!(
+        "race:rename",
+      );
     assert.equal(stored?.path, "bar.md");
-    const chunks = await engine.metadataStore.getChunksByFileId(stored!.id);
-    const getIndexStats = engine.vectorStore.getIndexStats?.bind(engine.vectorStore);
+    const chunks = await getMemoryEngineTestInternals(
+      engine,
+    ).metadataStore.getChunksByFileId(stored!.id);
+    const getIndexStats = getMemoryEngineTestInternals(
+      engine,
+    ).vectorStore.getIndexStats?.bind(getMemoryEngineTestInternals(engine).vectorStore);
     if (typeof getIndexStats !== "function") throw new Error("missing index stats");
     assert.equal((await getIndexStats("Logical")).size, chunks.length);
   } finally {

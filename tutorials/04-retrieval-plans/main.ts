@@ -38,9 +38,7 @@ export async function run(): Promise<void> {
     const explanation = await engine.explain("索引和查询性能", { retrievalPlan });
     console.log(`strategy=${explanation.decision.strategy}`);
     const objectStyle = await engine.search("索引和查询性能", { retrievalPlan });
-    console.log(
-      `object stages=${objectStyle.retrievalTrace?.stageOrder?.join(" -> ") ?? "not returned"}`,
-    );
+    console.log(`object strategy=${objectStyle.retrieval?.strategy ?? "not returned"}`);
 
     heading("run the equivalent immutable chain");
     // withoutDefaults() prevents engine defaults from changing this comparison;

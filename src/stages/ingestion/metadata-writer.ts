@@ -16,9 +16,7 @@ import {
   readMetadataWriterSnapshot,
   shouldRefreshTextRelations,
 } from "./metadata-writer-input.js";
-import type {
-  MetadataWriterOutput,
-} from "./metadata-writer-types.js";
+import type { MetadataWriterOutput } from "./metadata-writer-types.js";
 import type { DocumentStateReplacementResult } from "../../types/metadata.js";
 import { toFileMetadata } from "./metadata-writer-types.js";
 
@@ -151,7 +149,9 @@ class MetadataWriterStage extends Stage {
     const previousIndexName = existing?.space || snapshot.space;
     let fileId: number | null = existing?.id ?? null;
     if (typeof metadataStore.updateDocumentMetadata === "function") {
-      const updated = await metadataStore.updateDocumentMetadata(toFileMetadata(snapshot));
+      const updated = await metadataStore.updateDocumentMetadata(
+        toFileMetadata(snapshot),
+      );
       fileId = updated.fileId;
     } else {
       fileId = await metadataStore.upsertFile(toFileMetadata(snapshot));

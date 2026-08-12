@@ -1,7 +1,4 @@
-import type {
-  ChunkCandidate,
-  SearchResult,
-} from "../../types/documents.js";
+import type { ChunkCandidate, SearchResult } from "../../types/documents.js";
 import type { MetadataStoreContract } from "../../types/metadata.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { UnknownRecord } from "../../types/common.js";
@@ -20,9 +17,9 @@ type OutputCandidate = ChunkCandidate & {
   fileId?: number | null;
   space?: string;
   matchedTags?: string[];
-  updatedAt?: number | null;
-  updated_at?: number | null;
-  mtime?: number | null;
+  sourceUpdatedAt?: number | null;
+  recordedAt?: number | null;
+  indexedAt?: number | null;
   similarity?: number;
   tagMatchScore?: number;
   rerankScore?: number;
@@ -51,7 +48,7 @@ function parseRecord(value: string | null | undefined): UnknownRecord | undefine
  *
  *   {
  *     id, chunkId, content, path, sourceFile, fileId, space,
- *     score, similarity, updatedAt, mtime, tags, matchedTags,
+ *     score, similarity, sourceUpdatedAt, recordedAt, indexedAt, tags, matchedTags,
  *     tagMatchScore, source, decay, rerankScore, original_score(s)
  *   }
  *
@@ -187,12 +184,10 @@ class ResultFormatterStage extends Stage {
       similarity: Number.isFinite(Number(outputCandidate?.similarity))
         ? Number(outputCandidate.similarity)
         : score,
-      updatedAt:
-        file?.updated_at ??
-        outputCandidate?.updatedAt ??
-        outputCandidate?.updated_at ??
-        null,
-      mtime: file?.mtime ?? outputCandidate?.mtime ?? null,
+      sourceUpdatedAt:
+        file?.source_updated_at ?? outputCandidate?.sourceUpdatedAt ?? null,
+      recordedAt: file?.recorded_at ?? outputCandidate?.recordedAt ?? null,
+      indexedAt: file?.indexed_at ?? outputCandidate?.indexedAt ?? null,
       tags,
       matchedTags: outputCandidate?.matchedTags ?? tags,
       documentId: file?.document_id ?? undefined,

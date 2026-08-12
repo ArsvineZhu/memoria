@@ -1,5 +1,7 @@
 "use strict";
 
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -42,10 +44,9 @@ function writeMdx(root: string, relativePath: string, body: string): string {
   return absolutePath;
 }
 
-function nativeGlobalTagIndex(engine: {
-  vectorStore?: { indices?: Map<string, unknown> };
-}): Record<string, unknown> | null {
-  const value = engine.vectorStore?.indices?.get("tag_vectors");
+function nativeGlobalTagIndex(engine: object): Record<string, unknown> | null {
+  const value =
+    getMemoryEngineTestInternals(engine).vectorStore?.indices?.get("tag_vectors");
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
@@ -106,12 +107,17 @@ test("shipped native binding handles tag association graph, direct anchors, grap
       return;
     }
 
-    const relations = await engine.metadataStore.listRelations!();
-    const sourceRelation = relations.find((relation) => relation.origin === "source");
+    const relations =
+      await getMemoryEngineTestInternals(engine).metadataStore.listRelations!();
+    const sourceRelation = relations.find(
+      (relation: any) => relation.origin === "source",
+    );
     assert.equal(sourceRelation?.targetAnchor, "result");
     assert.equal(sourceRelation?.status, "active");
 
-    await new RelationGraphStore(engine.metadataStore).addDerivedRelations([
+    await new RelationGraphStore(
+      getMemoryEngineTestInternals(engine).metadataStore,
+    ).addDerivedRelations([
       {
         from: relationDocumentKey({ path: "research/b.mdx" }),
         to: relationDocumentKey({ path: "research/c.mdx" }),
@@ -128,7 +134,7 @@ test("shipped native binding handles tag association graph, direct anchors, grap
       },
     ]);
     const pathGraph = await new RelationGraphStore(
-      engine.metadataStore,
+      getMemoryEngineTestInternals(engine).metadataStore,
     ).relatedDocumentKeys([relationDocumentKey({ path: "research/a.mdx" })], 2);
     assert.equal(
       pathGraph.get(relationDocumentKey({ path: "research/b.mdx" }))?.distance,
@@ -152,41 +158,15 @@ test("shipped native binding handles tag association graph, direct anchors, grap
         postprocess: { dedupe: true, truncate: true, maxResults: 10 },
       },
     });
-    const propagationStructure = result.propagationStructure as
-      Record<string, unknown> | undefined;
-    const diagnostics = propagationStructure?.diagnostics as
-      Record<string, unknown> | undefined;
-    assert.equal(result.tagRetrievalSkipped, false);
-    assert.equal(propagationStructure?.native, true);
-    assert.equal(
-      propagationStructure?.algorithmVersion,
-      "propagation-structure-reranker-v1-rust",
-    );
-    assert.equal(diagnostics?.backend, "rust-rayon-sqlite");
-    assert.ok(Number(diagnostics?.artifactNodes) >= 3);
-    assert.ok(Number(diagnostics?.artifactEdges) >= 1);
-    const nativeStructure = (result as unknown as Record<string, unknown>)
-      .propagationStructureNative as Record<string, unknown> | undefined;
-    assert.ok(nativeStructure, "canonical native structure payload should be present");
+    assert.equal(result.retrieval?.strategy, "structural");
     assert.ok(
-      (Array.isArray(nativeStructure?.results) ? nativeStructure.results : []).some(
-        (entry) =>
-          String(
-            (
-              (entry as Record<string, unknown>)?.propagationTrace as
-                Record<string, unknown> | undefined
-            )?.mode,
-          ).includes("direct_anchor"),
-      ),
+      result.retrieval?.evidence.some((entry) => entry.channel === "structure"),
     );
+    assert.deepEqual(result.retrieval?.fallbacks, []);
+    assert.equal("propagationStructure" in result, false);
+    assert.equal("propagationStructureNative" in result, false);
     assert.ok(result.results.length >= 1);
-    assert.ok(result.retrievalTrace?.stageOrder.includes("nativeTagRetrieval"));
-    assert.equal(
-      result.retrievalTrace?.fallbacks.some((item) =>
-        item.includes("nativeTagRetrieval"),
-      ),
-      false,
-    );
+    assert.equal("retrievalTrace" in result, false);
 
     const emptyScope = await engine.search("沿着实验记录找来源", {
       retrievalPlan: {
@@ -235,8 +215,8 @@ test("structural strategy reports a bounded fallback for an in-memory database",
         structural: { enabled: true, propagationStructure: true },
       },
     });
-    assert.equal(result.tagRetrievalSkipped, true);
-    assert.match(String(result.tagRetrievalSkipReason), /file-backed SQLite/);
+    assert.ok((result.retrieval?.fallbacks.length ?? 0) >= 1);
+    assert.equal("tagRetrievalSkipped" in result, false);
     assert.ok(result.results.length >= 1);
   } finally {
     await engine.close();

@@ -104,7 +104,7 @@ export interface GraphDiffusionDiagnostics extends UnknownRecord {
 export interface GraphDiffusionResult {
   sourceVector: readonly number[];
   localVector: readonly number[];
-  transferVector: readonly number[];
+  extendedVector: readonly number[];
   localDistribution: ReadonlyArray<readonly [number, number]>;
   extendedDistribution: ReadonlyArray<readonly [number, number]>;
   localSupport: SupportDomain;

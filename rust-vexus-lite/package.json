@@ -12,10 +12,13 @@
   "napi": {
     "name": "vexus-lite",
     "triples": {
-      "defaults": true,
+      "defaults": false,
       "additional": [
         "x86_64-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
         "aarch64-apple-darwin"
       ]
     }

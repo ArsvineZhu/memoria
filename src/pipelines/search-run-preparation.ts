@@ -44,11 +44,14 @@ export async function prepareSearchRun(
   }
   const propagationHistoryStore =
     ctx.propagationHistoryStore ||
-    (typeof ctx.metadataStore?.getKv === "function" &&
-    typeof ctx.metadataStore?.setKv === "function"
+    (typeof ctx.metadataStore?.readPropagationHistory === "function" &&
+    typeof ctx.metadataStore?.commitPropagationObservation === "function"
       ? {
-          getKv: ctx.metadataStore.getKv.bind(ctx.metadataStore),
-          setKv: ctx.metadataStore.setKv.bind(ctx.metadataStore),
+          readPropagationHistory: ctx.metadataStore.readPropagationHistory.bind(
+            ctx.metadataStore,
+          ),
+          commitPropagationObservation:
+            ctx.metadataStore.commitPropagationObservation.bind(ctx.metadataStore),
         }
       : undefined);
   const context: PipelineContextLike = {

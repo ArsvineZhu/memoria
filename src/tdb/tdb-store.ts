@@ -4,15 +4,9 @@ import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type BetterSqlite3 from "better-sqlite3";
-import type {
-  TdbGenerationState,
-  TdbStoreContract,
-} from "../types/tdb.js";
+import type { TdbGenerationState, TdbStoreContract } from "../types/tdb.js";
 import type { HealthStatus } from "../types/metadata.js";
-import {
-  initializeTdbSchema,
-  TdbGenerationStore,
-} from "./tdb-schema.js";
+import { initializeTdbSchema, TdbGenerationStore } from "./tdb-schema.js";
 import { TdbDocumentRepository } from "./tdb-document-repository.js";
 import { TdbQueryRepository } from "./tdb-query-repository.js";
 
@@ -21,7 +15,7 @@ import { TdbQueryRepository } from "./tdb-query-repository.js";
  * cold-knowledge) engine.
  *
  * Mirrors the legacy TDB table shape used by VectorStoreTDB. Per-library
- * `files` rows carry document checksum / mtime / size bookkeeping while
+ * `files` rows carry document checksum / sourceUpdatedAt / recordedAt / indexedAt bookkeeping while
  * `chunks` map chunk_index →
  * vector node id. One local deviation: the `chunks.text` column stores the
  * chunk text itself, replacing the original TriviumDB native payload, since
@@ -106,7 +100,9 @@ class TDBStore implements TdbStoreContract {
     this.documents = new TdbDocumentRepository(this.db, this.generations);
     this.queries = new TdbQueryRepository(this.db);
     this.upsertFile = this.documents.upsertFile.bind(this.documents);
-    this.replaceDocumentState = this.documents.replaceDocumentState.bind(this.documents);
+    this.replaceDocumentState = this.documents.replaceDocumentState.bind(
+      this.documents,
+    );
     this.deleteDocumentState = this.documents.deleteDocumentState.bind(this.documents);
     this.getFile = this.queries.getFile.bind(this.queries);
     this.getFileById = this.queries.getFileById.bind(this.queries);
@@ -131,8 +127,8 @@ class TDBStore implements TdbStoreContract {
 
   /**
    * Insert or update a file row (UNIQUE(library, path)).
-   * @param {{library:string, path:string, checksum:string, mtime:number,
-   *          size:number, docNodeId?:number, updatedAt?:number}} meta
+   * @param {{library:string, path:string, checksum:string, sourceUpdatedAt:number,
+   *          size:number, docNodeId?:number, recordedAt?:number, indexedAt?:number}} meta
    * @returns {Promise<number>} file id
    */
   /**
@@ -208,7 +204,6 @@ class TDBStore implements TdbStoreContract {
     this.db.close();
     this._closed = true;
   }
-
 }
 
 export default TDBStore;

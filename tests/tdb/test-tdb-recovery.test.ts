@@ -51,9 +51,9 @@ function replacement(
       library: "facts",
       path: "fact.md",
       checksum,
-      mtime: 1,
+      sourceUpdatedAt: 1,
       size: chunks.reduce((sum, chunk) => sum + Buffer.byteLength(chunk.text), 0),
-      updatedAt: 1,
+      recordedAt: 1,
     },
     chunks,
   };
@@ -215,9 +215,9 @@ test("TDBStore migrates legacy chunks with vectors and generation defaults", asy
   `);
   legacy.db
     .prepare(
-      "INSERT INTO files (library, path, checksum, mtime, size, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO files (library, path, checksum, source_updated_at, size, recorded_at, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
-    .run("facts", "legacy.md", "legacy", 1, 6, 1);
+    .run("facts", "legacy.md", "legacy", 1, 6, 1, 1);
   legacy.db
     .prepare(
       "INSERT INTO chunks (library, path, chunk_index, node_id, text, checksum) VALUES (?, ?, ?, ?, ?, ?)",
@@ -442,9 +442,9 @@ test("TDBEngine backfills legacy null vectors before building indexes", async ()
     library: "legacy",
     path: "legacy.md",
     checksum: "legacy",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 6,
-    updatedAt: 1,
+    recordedAt: 1,
   }))!;
   await metadataStore.insertChunks("legacy", "legacy.md", [
     { text: "legacy", checksum: "legacy" },
@@ -480,9 +480,9 @@ test("TDBEngine fails initialization when legacy vector backfill fails", async (
     library: "legacy",
     path: "broken.md",
     checksum: "legacy",
-    mtime: 1,
+    sourceUpdatedAt: 1,
     size: 6,
-    updatedAt: 1,
+    recordedAt: 1,
   });
   await metadataStore.insertChunks("legacy", "broken.md", [
     { text: "legacy", checksum: "legacy" },

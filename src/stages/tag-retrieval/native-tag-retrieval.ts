@@ -1,18 +1,21 @@
 "use strict";
 
-import type {
-  PipelineContextLike,
-  PipelineData,
-} from "../../types/pipeline.js";
+import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { TagGraphPropagationData } from "../../types/retrieval.js";
+import type {
+  TagBasisProjectionEnvelope,
+  TagResidualDecompositionData,
+} from "../../types/retrieval.js";
 import Stage from "../../core/stage.js";
 import {
   ensureTagRetrievalArtifact,
   getTagRetrievalIndex,
+  readRecord,
   readNumberList,
   runTagRetrievalPipeline,
   toTagGraphPropagation,
 } from "../../native/tag-graph-artifact-runtime.js";
+import { mergeTagRetrievalObservation } from "./tag-retrieval-observation.js";
 
 /**
  * Executes the single native tag-retrieval pipeline. The stage owns artifact
@@ -84,13 +87,42 @@ class NativeTagRetrievalStage extends Stage {
       ctx.config,
       result.value,
     ) as TagGraphPropagationData;
+    const basis = result.value.tagBasisProjection as
+      TagBasisProjectionEnvelope | undefined;
+    const residual = result.value.tagResidualDecomposition as
+      TagResidualDecompositionData | undefined;
+    const nativeObservation = readRecord(result.value.observation);
+    const tagRetrievalObservation = mergeTagRetrievalObservation(info, {
+      source: "native",
+      basis,
+      residual,
+      propagation: tagGraphPropagation,
+      enhancedVector: hasEnhancedVector ? new Float32Array(enhanced) : undefined,
+      localVector: readNumberList(result.value.localVector),
+      extendedVector: readNumberList(result.value.extendedVector),
+      localDistribution: result.value.localDistribution as
+        ReadonlyArray<readonly [number, number]> | undefined,
+      extendedDistribution: result.value.extendedDistribution as
+        ReadonlyArray<readonly [number, number]> | undefined,
+      localSupportIds: readNumberList(result.value.localSupportIds),
+      extendedSupportIds: readNumberList(result.value.extendedSupportIds),
+      observationHandle:
+        typeof result.value.observationHandle === "string"
+          ? result.value.observationHandle
+          : undefined,
+      nativeObservation,
+      diagnostics: readRecord(result.value.diagnostics),
+    });
 
     return {
       ...info,
       tagRetrieval: result.value,
+      tagRetrievalObservation,
       tagGraphArtifact: artifact.state,
       nativeQueryVector: info.queryVector,
       tagRetrievalSkipped: false,
+      ...(basis ? { tagBasisProjection: basis } : {}),
+      ...(residual ? { tagResidualDecomposition: residual } : {}),
       ...(hasEnhancedVector
         ? { queryVector: new Float32Array(enhanced), queries }
         : {}),

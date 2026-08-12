@@ -1,6 +1,4 @@
-import type {
-  ChunkCandidate,
-} from "../../types/documents.js";
+import type { ChunkCandidate } from "../../types/documents.js";
 import type { EmbeddingVector } from "../../types/common.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { TagExpansionData } from "../../types/retrieval.js";

@@ -62,6 +62,190 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:native
+  native-build:
+    name: Build N-API ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            file: vexus-lite.linux-x64-gnu.node
+            musl: false
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            file: vexus-lite.linux-x64-musl.node
+            musl: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            file: vexus-lite.linux-arm64-gnu.node
+            musl: false
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            file: vexus-lite.linux-arm64-musl.node
+            musl: true
+          - target: aarch64-apple-darwin
+            os: macos-14
+            file: vexus-lite.darwin-arm64.node
+            musl: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            file: vexus-lite.win32-x64-msvc.node
+            musl: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl linker
+        if: matrix.musl
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Install N-API CLI
+        run: npm ci
+        working-directory: rust-vexus-lite
+      - name: Build target artifact
+        run: npx napi build --platform --release --target ${{ matrix.target }}
+        working-directory: rust-vexus-lite
+      - name: Build generic artifact
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: npx napi build --release
+        working-directory: rust-vexus-lite
+      - name: Verify target artifact name
+        shell: bash
+        run: test -f "rust-vexus-lite/${{ matrix.file }}"
+      - name: Upload target artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: rust-vexus-lite/${{ matrix.file }}
+          if-no-files-found: error
+      - name: Upload generic artifact
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-generic
+          path: rust-vexus-lite/vexus-lite.node
+          if-no-files-found: error
+  native-smoke-matrix:
+    name: Smoke-test N-API ${{ matrix.target }}
+    needs: native-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            musl: false
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            musl: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            musl: false
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            musl: true
+          - target: aarch64-apple-darwin
+            os: macos-14
+            musl: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            musl: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: rust-vexus-lite
+      - name: Smoke-test native loader
+        if: ${{ !matrix.musl }}
+        shell: bash
+        run: >-
+          node --input-type=commonjs -e
+          "const { VexusIndex } = require('./rust-vexus-lite');
+          const index = new VexusIndex(4, 4);
+          index.add(1, new Float32Array([1, 0, 0, 0]));
+          const hits = index.search(new Float32Array([1, 0, 0, 0]), 1);
+          if (!Array.isArray(hits) || hits[0]?.id !== 1) process.exit(1);
+          if (VexusIndex.load.length !== 3) process.exit(1);"
+      - name: Smoke-test musl native loader
+        if: matrix.musl
+        shell: bash
+        run: >-
+          docker run --rm
+          -v "${{ github.workspace }}:/workspace"
+          -w /workspace node:24-alpine node --input-type=commonjs -e
+          "const { VexusIndex } = require('./rust-vexus-lite');
+          const index = new VexusIndex(4, 4);
+          index.add(1, new Float32Array([1, 0, 0, 0]));
+          const hits = index.search(new Float32Array([1, 0, 0, 0]), 1);
+          if (!Array.isArray(hits) || hits[0]?.id !== 1) process.exit(1);
+          if (VexusIndex.load.length !== 3) process.exit(1);"
+  native-artifacts:
+    name: Collect native artifacts and ABI contract
+    needs: [native-build, native-smoke-matrix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: rust-vexus-lite/artifacts
+          merge-multiple: true
+      - name: Remove generic artifact from napi input
+        shell: bash
+        run: rm -f rust-vexus-lite/artifacts/vexus-lite.node
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-generic
+          path: rust-vexus-lite
+      - name: Install N-API CLI
+        run: npm ci
+        working-directory: rust-vexus-lite
+      - name: Assemble packages with napi artifacts
+        run: npx napi artifacts --dir artifacts --dist npm
+        working-directory: rust-vexus-lite
+      - name: Verify six binaries, generic artifact, loader and declaration
+        shell: bash
+        run: |
+          node --input-type=commonjs <<'NODE'
+          const fs = require('fs');
+          const root = 'rust-vexus-lite';
+          const expected = [
+            'vexus-lite.linux-x64-gnu.node',
+            'vexus-lite.linux-x64-musl.node',
+            'vexus-lite.linux-arm64-gnu.node',
+            'vexus-lite.linux-arm64-musl.node',
+            'vexus-lite.darwin-arm64.node',
+            'vexus-lite.win32-x64-msvc.node',
+          ];
+          for (const file of expected) {
+            if (!fs.existsSync(root + '/' + file)) throw new Error('missing ' + file);
+          }
+          if (!fs.existsSync(root + '/vexus-lite.node')) throw new Error('missing generic artifact');
+          const declaration = fs.readFileSync(root + '/index.d.ts', 'utf8');
+          if (!declaration.includes('static load(indexPath: string, dim: number, capacity: number)')) throw new Error('stale load declaration');
+          if (declaration.includes('unusedMapPath') || declaration.includes('transferVector')) throw new Error('stale ABI terminology');
+          const loader = fs.readFileSync(root + '/index.js', 'utf8');
+          for (const file of expected) {
+            const platform = file.slice(0, -5);
+            if (!loader.includes(platform)) throw new Error('loader does not mention ' + platform);
+          }
+          NODE
   node-experimental:
     continue-on-error: true
     runs-on: ubuntu-latest

@@ -1,6 +1,4 @@
-import type {
-  EmbeddingVector,
-} from "../../types/common.js";
+import type { EmbeddingVector } from "../../types/common.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 import type { VectorStoreContract } from "../../types/vector.js";
 

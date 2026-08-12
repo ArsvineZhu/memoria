@@ -29,7 +29,7 @@ engine 可以通过 defaultRetrievalPlan 设置固定默认值；单次搜索通
 
 ## Explain 与 trace
 
-engine.explain(query, options) 只解析 profile、readiness、strategy 和 plan，不执行完整检索。search() 返回的 envelope 可能包含 retrievalTrace，其中 stageOrder 用于诊断实际阶段顺序。trace 是诊断信息，不应被当作稳定的业务结果字段。
+engine.explain(query, options) 只解析 profile、readiness、strategy 和 plan，不执行完整检索。search() 返回的 envelope 可包含稳定的 `retrieval` 诊断：`strategy`、`strategySource`、规范化 `plan`、证据 channel 和 capability fallback。内部 stage 名称与原始 trace 不属于公开结果契约。
 
 ## Chain equivalence
 

@@ -46,7 +46,7 @@ try {
 
     // 测试6: 加载
     console.log('Test 6: Loading index...');
-    const vexus2 = VexusIndex.load('./test_index.usearch', './test_map.bin');
+    const vexus2 = VexusIndex.load('./test_index.usearch', 128, 1000);
     const stats2 = vexus2.stats();
     console.log('✅ Index loaded successfully');
     console.log('   Loaded stats:', stats2);

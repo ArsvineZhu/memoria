@@ -90,7 +90,10 @@ test("filesystem adapter prefers file snapshots when both target contracts exist
   assert.equal(logicalIngests, 0);
   assert.equal(logicalDeletes, 0);
   assert.equal(fileSnapshots.length, 1);
-  assert.equal(fileSnapshots[0]?.[0]?.content, "Body only");
+  assert.equal(
+    fileSnapshots[0]?.[0]?.content,
+    "---\ntags:\n  - coffee\n---\nBody only",
+  );
   assert.equal(
     (fileSnapshots[0]?.[0] as (FileInput & { format?: string }) | undefined)?.format,
     "mdx",
@@ -99,7 +102,7 @@ test("filesystem adapter prefers file snapshots when both target contracts exist
     fileSnapshots[0]?.[0]?.sourceContent,
     "---\ntags:\n  - coffee\n---\nBody only",
   );
-  assert.deepEqual(fileSnapshots[0]?.[0]?.documentMetadata, { tags: ["coffee"] });
+  assert.equal(fileSnapshots[0]?.[0]?.documentMetadata, undefined);
   assert.equal(fileDeletes, 1);
 });
 
@@ -119,7 +122,8 @@ test("filesystem adapter maps files to the logical ingestion contract", async ()
         path: document.id,
         relPath: document.id,
         content: document.content,
-        mtime: document.updatedAt ?? 0,
+        sourceUpdatedAt: document.recordedAt ?? 0,
+        recordedAt: document.recordedAt ?? 0,
         size: document.metadata?.size ?? Buffer.byteLength(document.content),
         space: "Filesystem",
         checksum: document.revision ?? "",
@@ -162,7 +166,7 @@ test("filesystem adapter maps files to the logical ingestion contract", async ()
   });
   assert.deepEqual(document.metadata, {
     path: "notes/one.md",
-    mtime: document.updatedAt,
+    sourceUpdatedAt: document.recordedAt,
     size: Buffer.byteLength("logical content"),
   });
   assert.deepEqual(removed, ["filesystem:notes/one.md"]);
@@ -184,7 +188,8 @@ test("filesystem adapter parses structured front matter and hashes raw source", 
         path: document.id,
         relPath: document.id,
         content: document.content,
-        mtime: document.updatedAt ?? 0,
+        sourceUpdatedAt: document.recordedAt ?? 0,
+        recordedAt: document.recordedAt ?? 0,
         size: document.metadata?.size ?? 0,
         space: "Filesystem",
         checksum: document.revision ?? "",
@@ -208,31 +213,27 @@ test("filesystem adapter parses structured front matter and hashes raw source", 
 
   const [document] = ingested;
   assert.ok(document);
-  assert.equal(document.content, "Body text");
+  assert.equal(document.content, raw);
   assert.equal((document as typeof document & { format?: string }).format, "mdx");
   assert.equal(document.revision, createHash("sha256").update(raw).digest("hex"));
   assert.deepEqual(document.metadata, {
-    title: "Demo",
-    tags: ["alpha"],
     path: "notes/one.MDX",
-    mtime: document.updatedAt,
+    sourceUpdatedAt: document.recordedAt,
     size: Buffer.byteLength(raw),
   });
 });
 
-test("filesystem adapter keeps malformed MDX errors at the filesystem boundary", async () => {
+test("filesystem adapter forwards raw MDX so the ingestion pipeline owns parsing", async () => {
   const root = await mkdtemp(join(tmpdir(), "memoria-fs-adapter-"));
   const filePath = join(root, "broken.mdx");
-  await writeFile(filePath, "---\ntitle: [unterminated\n---\nBody", "utf8");
-  const adapter = new FilesystemIngestionAdapter(makeTarget(), { rootPath: root });
+  const raw = "---\ntitle: [unterminated\n---\nBody";
+  await writeFile(filePath, raw, "utf8");
+  const target = makeTarget();
+  const adapter = new FilesystemIngestionAdapter(target, { rootPath: root });
 
-  await assert.rejects(
-    () => adapter.ingestFile(filePath),
-    (error: unknown) =>
-      error instanceof Error &&
-      error.message.includes("MDX") &&
-      error.message.includes("broken.mdx"),
-  );
+  await adapter.ingestFile(filePath);
+  assert.equal(target.ingested[0]?.[0]?.content, raw);
+  assert.equal(target.ingested[0]?.[0]?.documentMetadata, undefined);
 });
 
 test("filesystem adapter scans accepted files and maps deletes", async () => {
@@ -267,24 +268,30 @@ test("filesystem adapter syncs additions, unchanged sources, and safe removals",
       path: "notes/keep.md",
       space: "notes",
       checksum: "old",
-      mtime: 1,
+      source_updated_at: 1,
       size: 4,
+      recorded_at: 1,
+      indexed_at: 1,
     },
     {
       id: 2,
       path: "notes/removed.md",
       space: "notes",
       checksum: "old",
-      mtime: 1,
+      source_updated_at: 1,
       size: 7,
+      recorded_at: 1,
+      indexed_at: 1,
     },
     {
       id: 3,
       path: "__logical__/protected",
       space: "Logical",
       checksum: "logical",
-      mtime: 1,
+      source_updated_at: 1,
       size: 7,
+      recorded_at: 1,
+      indexed_at: 1,
       document_id: "protected",
     },
   ];
@@ -296,7 +303,8 @@ test("filesystem adapter syncs additions, unchanged sources, and safe removals",
           path: file.path,
           relPath: file.relPath || file.path,
           content: file.content || "",
-          mtime: file.mtime || 0,
+          sourceUpdatedAt: file.sourceUpdatedAt || 0,
+          recordedAt: file.recordedAt || 0,
           size: file.size || 0,
           space: "notes",
           checksum: "test",

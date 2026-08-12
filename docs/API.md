@@ -99,21 +99,20 @@ const result = await engine
   .run();
 ```
 
-`RetrievalExplanation` 和返回信封中的 `retrievalTrace` 会记录规范化计划、策略分数、
-阶段顺序、跳过原因和后处理状态。
+`RetrievalExplanation` 记录规范化计划和策略分数；返回信封中的 `retrieval` 只提供稳定
+的 strategy、strategySource、plan、evidence channel 和 capability fallback。内部阶段顺序
+和 raw stage payload 不属于公开契约。
 
 ## canonical search/result 字段
 
-搜索信封的核心字段是 `results`、`resultCount`、`retrievalDecision` 和
-`retrievalTrace`。结果可包含 `documentId`、`content`、`path`、`space`、`score`、
+搜索信封的核心字段是 `results`、`resultCount` 和可选的 `retrieval`。结果可包含
+`documentId`、`content`、`path`、`space`、`score`、
 `similarity`、`tagMatchScore`、`matchedTags`、`decay`、`associationChannel`、
-`associationOf`、`rerankScore`、`metadata` 和 `sourceMetadata`。
+`associationOf`、`rerankScore`、`metadata`、`sourceMetadata`、`sourceUpdatedAt`、
+`recordedAt` 和 `indexedAt`。
 
-标签检索诊断使用 `tagBasisProjection`、`tagResidualDecomposition`、
-`tagGraphPropagation`、`propagationHistory`、`propagationSupport` 和
-`propagationStructure`；native 状态使用 `tagRetrieval*` 和
-`tagGraphArtifact*` 字段。`retrievalTrace.stageOrder` 只能记录当前 canonical stage
-名称。
+标签检索的内部阶段数据不会透传到 SearchEnvelope；公开诊断通过 `retrieval.evidence`
+和 `retrieval.fallbacks` 表达能力与降级状态。时间字段统一为 Unix epoch milliseconds。
 
 ## Native boundary
 

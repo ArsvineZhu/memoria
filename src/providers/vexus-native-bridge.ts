@@ -50,5 +50,5 @@ export function loadVexusIndex(
   capacity: number,
 ): VexusIndex {
   const VexusIndex = getVexusIndex();
-  return VexusIndex.load(indexPath, null, dimension, capacity);
+  return VexusIndex.load(indexPath, dimension, capacity);
 }

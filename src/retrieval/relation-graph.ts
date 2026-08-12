@@ -10,10 +10,7 @@ export {
   relationDocumentKey,
 } from "./relation-identifiers.js";
 export { extractMdxRelations } from "./relation-parser.js";
-export {
-  RELATION_GRAPH_KEY,
-  RelationGraphStore,
-} from "./relation-graph-store.js";
+export { RELATION_GRAPH_KEY, RelationGraphStore } from "./relation-graph-store.js";
 export type {
   MemoryRelation,
   RelatedChunk,

@@ -1,3 +1,4 @@
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -107,7 +108,9 @@ test("logical ingestion does not require a filesystem path and persists source m
   assert.equal(result.documentId, document.id);
   assert.equal(result.skipped, undefined);
 
-  const row = await engine.metadataStore.getFileByDocumentId?.(document.id);
+  const row = await getMemoryEngineTestInternals(
+    engine,
+  ).metadataStore.getFileByDocumentId?.(document.id);
   assert.ok(row);
   assert.equal(row.document_id, document.id);
   assert.equal(row.revision, "r1");
@@ -256,7 +259,7 @@ test("logical metadata-only update avoids re-embedding and vector mutation", asy
       revision: "r1",
       source: { type: "old" },
       metadata: { version: 1 },
-      updatedAt: 100,
+      recordedAt: 100,
     });
     const callsAfterFirst = embeddingCalls;
     const addsAfterFirst = vectorStore.addCount;
@@ -269,7 +272,7 @@ test("logical metadata-only update avoids re-embedding and vector mutation", asy
       revision: "r2",
       source: { type: "new" },
       metadata: { version: 2 },
-      updatedAt: 200,
+      recordedAt: 200,
     });
 
     assert.equal(embeddingCalls, callsAfterFirst);
@@ -277,14 +280,19 @@ test("logical metadata-only update avoids re-embedding and vector mutation", asy
     assert.equal(vectorStore.removeCount, removesAfterFirst);
     assert.deepEqual(second.chunkIds, []);
 
-    const row = await engine.metadataStore.getFileByDocumentId?.("metadata-only:1");
+    const row =
+      await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId?.(
+        "metadata-only:1",
+      );
     assert.ok(row);
     assert.equal(row.revision, "r2");
-    assert.equal(row.mtime, 200);
+    assert.equal(row.source_updated_at, 200);
     assert.deepEqual(JSON.parse(String(row.source_json)), { type: "new" });
     assert.deepEqual(JSON.parse(String(row.metadata_json)), { version: 2 });
 
-    const chunks = await engine.metadataStore.getChunksByFileId(row.id);
+    const chunks = await getMemoryEngineTestInternals(
+      engine,
+    ).metadataStore.getChunksByFileId(row.id);
     assert.deepEqual(
       chunks.map((chunk) => chunk.id),
       firstChunkIds,
@@ -301,12 +309,20 @@ test("logical text keeps front matter and links as literal content", async () =>
   await engine.initialize();
   const content = "---\ntitle: literal\n---\nBody [other](other.mdx)";
   const result = await engine.ingest({ id: "logical:text", content });
-  const row = await engine.metadataStore.getFileByDocumentId?.("logical:text");
+  const row =
+    await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId?.(
+      "logical:text",
+    );
   assert.ok(row);
   assert.equal(row.metadata_json, null);
-  const chunks = await engine.metadataStore.getChunksByFileId?.(Number(row.id));
+  const chunks = await getMemoryEngineTestInternals(
+    engine,
+  ).metadataStore.getChunksByFileId?.(Number(row.id));
   assert.ok(chunks?.some((chunk) => chunk.content === content));
-  assert.deepEqual(await engine.metadataStore.listRelations?.(), []);
+  assert.deepEqual(
+    await getMemoryEngineTestInternals(engine).metadataStore.listRelations?.(),
+    [],
+  );
   await (engine as unknown as { close(): Promise<void> }).close();
   assert.equal(result.documentId, "logical:text");
 });
@@ -316,12 +332,18 @@ test("explicit logical MDX enables front matter and source relations", async () 
   await engine.initialize();
   const raw = "---\ntitle: literal\n---\nBody [other](other.mdx)";
   await engine.ingest({ id: "logical:mdx", content: raw, format: "mdx" });
-  const row = await engine.metadataStore.getFileByDocumentId?.("logical:mdx");
+  const row =
+    await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId?.(
+      "logical:mdx",
+    );
   assert.ok(row);
   assert.deepEqual(JSON.parse(String(row.metadata_json)), { title: "literal" });
-  const chunks = await engine.metadataStore.getChunksByFileId?.(Number(row.id));
+  const chunks = await getMemoryEngineTestInternals(
+    engine,
+  ).metadataStore.getChunksByFileId?.(Number(row.id));
   assert.ok(chunks?.some((chunk) => chunk.content === "Body [other](other.mdx)"));
-  const relations = await engine.metadataStore.listRelations?.();
+  const relations =
+    await getMemoryEngineTestInternals(engine).metadataStore.listRelations?.();
   assert.equal(relations?.length, 1);
   await (engine as unknown as { close(): Promise<void> }).close();
 });
@@ -335,7 +357,11 @@ test("text re-ingestion clears source relations without rewriting the source", a
       content: "Body [other](other.mdx)",
       format: "mdx",
     });
-    assert.equal((await engine.metadataStore.listRelations?.())?.length, 1);
+    assert.equal(
+      (await getMemoryEngineTestInternals(engine).metadataStore.listRelations?.())
+        ?.length,
+      1,
+    );
 
     const literal = "Body [other](other.mdx)";
     await engine.upsert({
@@ -343,8 +369,13 @@ test("text re-ingestion clears source relations without rewriting the source", a
       content: literal,
       format: "text",
     });
-    assert.deepEqual(await engine.metadataStore.listRelations?.(), []);
-    const history = await engine.metadataStore.listRelations?.({
+    assert.deepEqual(
+      await getMemoryEngineTestInternals(engine).metadataStore.listRelations?.(),
+      [],
+    );
+    const history = await getMemoryEngineTestInternals(
+      engine,
+    ).metadataStore.listRelations?.({
       includeInactive: true,
     });
     assert.equal(history?.length, 1);
@@ -420,7 +451,9 @@ test("partial logical embedding fails before any metadata row is committed", asy
       (error: unknown) => error instanceof MemoriaError && error.code === "embedding",
     );
     assert.equal(
-      await engine.metadataStore.getFileByDocumentId?.("partial:batch"),
+      await getMemoryEngineTestInternals(engine).metadataStore.getFileByDocumentId?.(
+        "partial:batch",
+      ),
       null,
     );
     assert.equal((await engine.getStats()).files, 0);

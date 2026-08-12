@@ -15,6 +15,8 @@ import type { MemoryConfig, MemoryConfigOverrides } from "../types/config.js";
 import type { PipelineContextLike, PipelineData } from "../types/pipeline.js";
 import type { TdbSearchEnvelope, TdbSearchOptions } from "../types/tdb.js";
 
+type TdbPipelineEnvelope = TdbSearchEnvelope & PipelineData;
+
 /**
  * Default gates for the TDB search chain.
  */
@@ -137,7 +139,7 @@ class TDBSearchPipeline extends Pipeline {
   override async run(
     input: PipelineData,
     ctx: PipelineContextLike,
-  ): Promise<TdbSearchEnvelope> {
+  ): Promise<TdbPipelineEnvelope> {
     const runConfig = { ...this.config, ...((ctx && ctx.config) || {}) };
     const runCtx: PipelineContextLike = { ...ctx, config: runConfig as MemoryConfig };
 
@@ -164,10 +166,10 @@ class TDBSearchPipeline extends Pipeline {
         tdbDisabled: true,
         results: [],
         resultCount: 0,
-      } as TdbSearchEnvelope;
+      } as TdbPipelineEnvelope;
     }
 
-    return super.run(payload, runCtx) as Promise<TdbSearchEnvelope>;
+    return super.run(payload, runCtx) as Promise<TdbPipelineEnvelope>;
   }
 }
 

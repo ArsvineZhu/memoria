@@ -17,10 +17,7 @@ import {
   requireGroupBuilder,
   requireGroupInput,
 } from "./query-group-builders.js";
-import {
-  hasPlanInput,
-  mergePlanInputs,
-} from "./query-builder-values.js";
+import { hasPlanInput, mergePlanInputs } from "./query-builder-values.js";
 import {
   type ExpansionInput,
   type ExternalRerankInput,
@@ -110,7 +107,10 @@ export class QueryBuilder {
 
   tagBasisProjection(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "associative", associative: { enabled: true, tagBasisProjection: enabled } },
+      {
+        strategy: "associative",
+        associative: { enabled: true, tagBasisProjection: enabled },
+      },
       { core: "associative" },
     );
   }
@@ -127,28 +127,40 @@ export class QueryBuilder {
 
   activationPropagation(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "associative", associative: { enabled: true, tagGraphPropagation: enabled } },
+      {
+        strategy: "associative",
+        associative: { enabled: true, tagGraphPropagation: enabled },
+      },
       { core: "associative" },
     );
   }
 
   graphDiffusion(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "associative", associative: { enabled: true, tagGraphPropagation: enabled } },
+      {
+        strategy: "associative",
+        associative: { enabled: true, tagGraphPropagation: enabled },
+      },
       { core: "associative" },
     );
   }
 
   propagationSupport(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "associative", associative: { enabled: true, propagationSupport: enabled } },
+      {
+        strategy: "associative",
+        associative: { enabled: true, propagationSupport: enabled },
+      },
       { core: "associative" },
     );
   }
 
   propagationStructure(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "structural", structural: { enabled: true, propagationStructure: enabled } },
+      {
+        strategy: "structural",
+        structural: { enabled: true, propagationStructure: enabled },
+      },
       { core: "structural" },
     );
   }
@@ -159,28 +171,40 @@ export class QueryBuilder {
 
   embeddingRerank(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "associative", associative: { enabled: true, embeddingRerank: enabled } },
+      {
+        strategy: "associative",
+        associative: { enabled: true, embeddingRerank: enabled },
+      },
       { core: "associative" },
     );
   }
 
   tagExpansion(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "associative", associative: { enabled: true, tagExpansion: enabled } },
+      {
+        strategy: "associative",
+        associative: { enabled: true, tagExpansion: enabled },
+      },
       { core: "associative" },
     );
   }
 
   nativeTagRetrieval(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "associative", associative: { enabled: true, nativeTagRetrieval: enabled } },
+      {
+        strategy: "associative",
+        associative: { enabled: true, nativeTagRetrieval: enabled },
+      },
       { core: "associative" },
     );
   }
 
   structuralRelations(enabled = true): QueryBuilder {
     return this.next(
-      { strategy: "structural", structural: { enabled: true, relationExpansion: enabled } },
+      {
+        strategy: "structural",
+        structural: { enabled: true, relationExpansion: enabled },
+      },
       { core: "structural" },
     );
   }
@@ -196,7 +220,8 @@ export class QueryBuilder {
   }
 
   expand(input: ExpansionInput | GroupCallback<ExpansionBuilder>): QueryBuilder {
-    if (typeof input !== "function") assertValidRetrievalPlanInput({ expansion: input });
+    if (typeof input !== "function")
+      assertValidRetrievalPlanInput({ expansion: input });
     const builder =
       typeof input === "function"
         ? requireGroupBuilder(input(new ExpansionBuilder()), "expand")

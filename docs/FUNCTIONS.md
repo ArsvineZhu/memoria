@@ -47,10 +47,9 @@ canonical 阶段按计划加入：
 ## 4. 结果格式
 
 `ResultFormatterStage` 通过 chunk/file metadata hydrate 结果，并保留
-`tagMatchScore`、`similarity`、`updatedAt`、`mtime`、`matchedTags`、`decay`、
+`tagMatchScore`、`similarity`、`sourceUpdatedAt`、`recordedAt`、`indexedAt`、`matchedTags`、`decay`、
 `associationChannel`、`associationOf` 和 `rerankScore` 等正式字段。最终信封包含
-`results` 与 `resultCount`，并可带 `retrievalDecision`、`retrievalTrace`、各阶段诊断
-和统计。
+`results` 与 `resultCount`，并可带稳定的 `retrieval` strategy/evidence/fallback 诊断。
 
 ## 5. Native runtime
 

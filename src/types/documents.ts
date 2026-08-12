@@ -1,22 +1,38 @@
-import type { RetrievalPlan, RetrievalPlanInput } from "../retrieval/retrieval-plan.js";
+import type { RetrievalPlan } from "../retrieval/retrieval-plan.js";
 import type { RetrievalStrategySource } from "../retrieval/query-planner.js";
 import type { TdbSearchOptions } from "./tdb.js";
 import type { EmbeddingVector, UnknownRecord, VectorLike } from "./common.js";
-import type {
-  AssociatorStats,
-  DedupeStats,
-  EmbeddingRerankData,
-  ExpansionStats,
-  PropagationHistoryData,
-  PropagationStructureData,
-  PropagationSupportData,
-  TagBasisProjectionData,
-  TagExpansionData,
-  TagGraphPropagationData,
-  TagResidualDecompositionData,
-  TruncationStats,
-} from "./retrieval.js";
 import type { SearchOptions } from "./config.js";
+
+export type RetrievalEvidenceChannel =
+  | "semantic"
+  | "lexical"
+  | "tag-association"
+  | "relation-expansion"
+  | "support"
+  | "structure";
+
+export interface RetrievalEvidence {
+  channel: RetrievalEvidenceChannel;
+  available: boolean;
+}
+
+export type RetrievalFallbackReason =
+  | "capability-unavailable"
+  | "backend-unavailable"
+  | "native-backend-failed"
+  | "artifact-unavailable"
+  | "provider-error"
+  | "invalid-result"
+  | "disabled-by-plan";
+
+export interface RetrievalDiagnostics {
+  strategy: string;
+  strategySource?: RetrievalStrategySource;
+  plan: RetrievalPlan;
+  evidence: RetrievalEvidence[];
+  fallbacks: RetrievalFallbackReason[];
+}
 
 export type MemoryDocumentFormat = "text" | "markdown" | "mdx";
 
@@ -36,7 +52,8 @@ export interface MemoryDocumentInput {
   source?: MemoryDocumentSource;
   revision?: string | number;
   metadata?: UnknownRecord;
-  updatedAt?: number;
+  /** When the memory itself was recorded, as Unix epoch milliseconds. */
+  recordedAt?: number;
 }
 
 export interface MemoryDocumentIngestResult extends IngestEnvelope {
@@ -55,9 +72,12 @@ export interface FileInput {
   relPath?: string;
   content?: string;
   format?: MemoryDocumentFormat;
-  /** Optional raw source snapshot; content may be a parsed/body projection. */
+  /** Optional raw source snapshot; the ingest pipeline owns any projection. */
   sourceContent?: string;
-  mtime?: number;
+  /** Last source modification time, as Unix epoch milliseconds. */
+  sourceUpdatedAt?: number;
+  /** When the memory was recorded, as Unix epoch milliseconds. */
+  recordedAt?: number;
   size?: number;
   documentId?: string;
   revision?: string;
@@ -80,7 +100,8 @@ export interface FileSnapshot extends Omit<
   content: string;
   format?: MemoryDocumentFormat;
   sourceContent?: string;
-  mtime: number;
+  sourceUpdatedAt: number;
+  recordedAt: number;
   size: number;
   space: string;
   checksum: string;
@@ -134,8 +155,9 @@ export interface SearchResult extends VectorResult {
   relPath?: string;
   space?: string;
   similarity?: number;
-  updatedAt?: number | null;
-  mtime?: number | null;
+  sourceUpdatedAt?: number | null;
+  recordedAt?: number | null;
+  indexedAt?: number | null;
   fileId?: number | null;
   chunkIndex?: number | null;
   payload?: UnknownRecord;
@@ -179,74 +201,10 @@ export interface ChunkCandidate {
 
 export interface SearchEnvelope {
   query?: string;
-  tokens?: string[];
   options?: SearchOptions | TdbSearchOptions;
-  queries?: QueryVector[];
-  queryVector?: EmbeddingVector;
-  vectorResults?: VectorResult[];
-  bm25Results?: ChunkCandidate[];
-  candidates?: SearchResult[];
   results: SearchResult[];
   resultCount: number;
-  tagBasisProjection?: TagBasisProjectionData;
-  tagResidualDecomposition?: TagResidualDecompositionData;
-  tagGraphPropagation?: TagGraphPropagationData;
-  propagationSupport?: PropagationSupportData;
-  propagationStructure?: PropagationStructureData;
-  propagationHistory?: PropagationHistoryData;
-  associatorStats?: AssociatorStats;
-  associatorSkipped?: boolean;
-  tagExpansion?: TagExpansionData;
-  embeddingRerank?: EmbeddingRerankData;
-  tagBasisProjectionSkipped?: boolean;
-  tagResidualDecompositionSkipped?: boolean;
-  tagGraphPropagationSkipped?: boolean;
-  graphDiffusionSkipped?: boolean;
-  propagationStructureSkipped?: boolean;
-  tagExpansionSkipped?: boolean;
-  embeddingRerankSkipped?: boolean;
-  propagationSupportSkipped?: boolean;
-  tagRetrievalSkipped?: boolean;
-  tagRetrievalSkipReason?: string;
-  dedupeStats?: DedupeStats;
-  truncationStats?: TruncationStats;
-  expansionStats?: ExpansionStats;
-  reranked?: boolean;
-  rerankSkipped?: boolean;
-  rerankFailure?: "provider_error";
-  rerankError?: string;
-  tagRetrievalFailure?:
-    "artifact_build_failed" | "backend_unavailable" | "invalid_result";
-  propagationSupportFailure?:
-    "backend_unavailable" | "artifact_unavailable" | "invalid_result";
-  propagationStructureFailure?:
-    "native_backend_failed" | "artifact_unavailable" | "invalid_result";
-  defaultRetrievalPlan?: RetrievalPlan;
-  requestedRetrievalPlan?: RetrievalPlanInput;
-  retrievalDecision?: {
-    strategy: string;
-    scores?: Record<string, number>;
-    reasons?: string[];
-    fallback?: string;
-    reason?: string;
-    confidence?: number;
-    explicit?: boolean;
-    strategySource?: RetrievalStrategySource;
-    defaultsInherited?: boolean;
-    queryOverrideApplied?: boolean;
-  };
-  retrievalTrace?: {
-    defaultPlan?: RetrievalPlan;
-    requestedPlan?: RetrievalPlanInput;
-    plan: RetrievalPlan;
-    strategySource?: RetrievalStrategySource;
-    defaultsInherited?: boolean;
-    queryOverrideApplied?: boolean;
-    profile: UnknownRecord;
-    decision: UnknownRecord;
-    stageOrder: string[];
-    fallbacks: string[];
-  };
+  retrieval?: RetrievalDiagnostics;
   failed?: boolean;
 }
 

@@ -145,7 +145,7 @@ test("solveGraphDiffusion propagates mass away from the source", () => {
   const neighborOffsets = [-1, 1];
   for (const offset of neighborOffsets) {
     assert.ok(
-      at(result.transferVector, sourceIndex + offset, "transfer vector") > 0,
+      at(result.extendedVector, sourceIndex + offset, "extended vector") > 0,
       `transfer reaches neighbor ${offset}`,
     );
     assert.ok(
@@ -154,7 +154,7 @@ test("solveGraphDiffusion propagates mass away from the source", () => {
     );
   }
   assert.ok(
-    at(result.transferVector, 0, "transfer vector") >=
+    at(result.extendedVector, 0, "extended vector") >=
       at(result.localVector, 0, "local vector"),
     "transfer tail heavier than local",
   );

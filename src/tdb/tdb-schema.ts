@@ -6,10 +6,11 @@ export const TDB_SCHEMA_SQL = `
         library TEXT NOT NULL,
         path TEXT NOT NULL,
         checksum TEXT NOT NULL,
-        mtime REAL NOT NULL,
+        source_updated_at INTEGER NOT NULL,
         size INTEGER NOT NULL,
         doc_node_id INTEGER,
-        updated_at INTEGER NOT NULL,
+        recorded_at INTEGER NOT NULL,
+        indexed_at INTEGER NOT NULL,
         UNIQUE(library, path)
     );
     CREATE TABLE IF NOT EXISTS chunks (

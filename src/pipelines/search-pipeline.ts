@@ -17,10 +17,7 @@ import {
   buildDefaultSearchStages,
 } from "./search-pipeline-stages.js";
 import SearchPlanResolver from "./search-plan-resolver.js";
-import {
-  mergeRunOptions,
-  prepareSearchRun,
-} from "./search-run-preparation.js";
+import { mergeRunOptions, prepareSearchRun } from "./search-run-preparation.js";
 import { withRetrievalTrace } from "./search-pipeline-trace.js";
 
 export interface SearchPipelineOptions {
@@ -68,12 +65,7 @@ class SearchPipeline extends Pipeline {
     options: SearchOptions = {},
     ctx: Partial<PipelineContextLike> = {},
   ): Promise<RetrievalExplanation> {
-    return this.planResolver.resolve(
-      String(query ?? ""),
-      options,
-      ctx,
-      this.config,
-    );
+    return this.planResolver.resolve(String(query ?? ""), options, ctx, this.config);
   }
 
   override async run(

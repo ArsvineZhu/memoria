@@ -1,6 +1,4 @@
-import type {
-  ChunkCandidate,
-} from "../../types/documents.js";
+import type { ChunkCandidate } from "../../types/documents.js";
 import type { MetadataStoreContract } from "../../types/metadata.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
 
@@ -12,7 +10,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Postprocess stage: recency-based score decay on merged candidates.
  *
- * Each candidate's owning file `updated_at` (or `mtime`) age in days is
+ * Each candidate's owning file `recorded_at` age in days is
  * converted to a decay multiplier 0.5 ^ (ageDays / halfLifeDays), following
  * the Memoria/TDB recency formula. Scores are multiplied by the decay;
  * candidates without resolvable recency keep decay = 1.
@@ -58,9 +56,9 @@ class TimeDecayStage extends Stage {
     for (const candidate of candidates) {
       let decay = 1;
       try {
-        const recencySeconds = await this._resolveRecency(candidate, metadataStore);
-        if (recencySeconds !== null && Number.isFinite(recencySeconds)) {
-          const ageMs = Math.max(0, nowMs - recencySeconds * 1000);
+        const recordedAt = await this._resolveRecency(candidate, metadataStore);
+        if (recordedAt !== null && Number.isFinite(recordedAt)) {
+          const ageMs = Math.max(0, nowMs - recordedAt);
           let ageDays = ageMs / DAY_MS;
           if (Number.isFinite(upperBoundDays) && upperBoundDays > 0) {
             ageDays = Math.min(ageDays, upperBoundDays);
@@ -87,12 +85,8 @@ class TimeDecayStage extends Stage {
     candidate: ChunkCandidate,
     metadataStore: MetadataStoreContract | null | undefined,
   ): Promise<number | null> {
-    if (candidate.updated_at != null) {
-      const direct = Number(candidate.updated_at);
-      if (Number.isFinite(direct)) return direct;
-    }
-    if (candidate.mtime != null) {
-      const direct = Number(candidate.mtime);
+    if (candidate.recordedAt != null) {
+      const direct = Number(candidate.recordedAt);
       if (Number.isFinite(direct)) return direct;
     }
     if (
@@ -101,14 +95,8 @@ class TimeDecayStage extends Stage {
     ) {
       const file = await metadataStore.getFileByChunkId(candidate.chunkId);
       if (file) {
-        const updatedSeconds = file.updated_at != null ? Number(file.updated_at) : null;
-        if (updatedSeconds != null && Number.isFinite(updatedSeconds)) {
-          return updatedSeconds;
-        }
-        const mtimeSeconds = file.mtime != null ? Number(file.mtime) : null;
-        if (mtimeSeconds != null && Number.isFinite(mtimeSeconds)) {
-          return mtimeSeconds;
-        }
+        const recordedAt = Number(file.recorded_at);
+        if (Number.isFinite(recordedAt)) return recordedAt;
       }
     }
     return null;

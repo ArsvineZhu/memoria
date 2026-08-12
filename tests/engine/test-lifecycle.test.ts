@@ -1,5 +1,7 @@
 "use strict";
 
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -125,19 +127,11 @@ test("constructor defers default providers and context until initialize", async 
   const engine = createMemoryEngine({ config: { dimension: DIM } });
   assert.strictEqual(engine.state, "created");
   assert.strictEqual(engine.initialized, false);
-  assert.strictEqual(
-    (engine as unknown as { metadataStore?: unknown }).metadataStore,
-    undefined,
-  );
-  assert.strictEqual(
-    (engine as unknown as { vectorStore?: unknown }).vectorStore,
-    undefined,
-  );
-  assert.strictEqual(
-    (engine as unknown as { embeddingProvider?: unknown }).embeddingProvider,
-    undefined,
-  );
-  assert.strictEqual((engine as unknown as { ctx?: unknown }).ctx, undefined);
+  assert.equal("metadataStore" in engine, false);
+  assert.equal("vectorStore" in engine, false);
+  assert.equal("embeddingProvider" in engine, false);
+  assert.equal("ctx" in engine, false);
+  assert.deepEqual(Object.keys(engine), ["name", "defaultRetrievalPlan"]);
   await engine.close();
   assert.strictEqual(engine.state, "closed");
 });
@@ -325,7 +319,7 @@ test("failed initialization drains an onReady search before closing owned resour
     embeddingProvider: makeEmbeddingProvider(),
     onReady: async (value) => {
       const ready = value as ReturnType<typeof createMemoryEngine>;
-      const metadata = ready.metadataStore;
+      const metadata = getMemoryEngineTestInternals(ready).metadataStore;
       if (typeof metadata.getSearchCorpus !== "function") {
         throw new Error("metadata search corpus capability is required");
       }
@@ -376,9 +370,12 @@ test("close is idempotent and does not close injected providers", async () => {
     await created.engine.close();
     await created.engine.close();
     assert.strictEqual(created.engine.state, "closed");
-    assert.strictEqual(created.metadataStore._closed, false);
+    assert.strictEqual(
+      (getMemoryEngineTestInternals(created.engine).metadataStore as any)._closed,
+      false,
+    );
   } finally {
-    created.metadataStore.close();
+    (getMemoryEngineTestInternals(created.engine).metadataStore as any).close();
   }
 
   const ready = makeInjectedEngine();
@@ -387,10 +384,15 @@ test("close is idempotent and does not close injected providers", async () => {
     await ready.engine.close();
     await ready.engine.close();
     assert.strictEqual(ready.engine.state, "closed");
-    assert.strictEqual(ready.metadataStore._closed, false);
-    assert.ok(ready.vectorStore.flushCount >= 2);
+    assert.strictEqual(
+      (getMemoryEngineTestInternals(ready.engine).metadataStore as any)._closed,
+      false,
+    );
+    assert.ok(
+      (getMemoryEngineTestInternals(ready.engine).vectorStore as any).flushCount >= 2,
+    );
   } finally {
-    ready.metadataStore.close();
+    (getMemoryEngineTestInternals(ready.engine).metadataStore as any).close();
   }
 });
 
@@ -407,11 +409,11 @@ test("close drains an in-flight keyed mutation before closing", async () => {
 
   try {
     await engine.initialize();
-    engine.ingestPipeline.run = (async () => {
+    getMemoryEngineTestInternals(engine).ingestPipeline.run = (async () => {
       mutationStarted();
       await mutationBarrier;
       return { skipped: false, fileId: 1, chunkIds: [], tagIds: [] };
-    }) as typeof engine.ingestPipeline.run;
+    }) as any;
 
     const mutation = engine.ingest({ id: "drain", content: "queued" });
     await started;
@@ -469,7 +471,7 @@ test("an active engine operation cannot close its own engine", async () => {
 
   try {
     await engine.initialize();
-    engine.ingestPipeline.run = (async (input) => {
+    getMemoryEngineTestInternals(engine).ingestPipeline.run = (async (input: any) => {
       await assert.rejects(
         () => engine.close(),
         (error: unknown) => isConcurrencyError(error, "close"),
@@ -481,7 +483,7 @@ test("an active engine operation cannot close its own engine", async () => {
         chunkIds: [],
         tagIds: [],
       };
-    }) as typeof engine.ingestPipeline.run;
+    }) as any;
 
     await engine.ingest({ id: "active-close", content: "content" });
     assert.equal(engine.state, "ready");
@@ -492,7 +494,7 @@ test("an active engine operation cannot close its own engine", async () => {
 
 test("close waits for an in-flight search before flushing and closing", async () => {
   const { engine, metadataStore } = makeInjectedEngine();
-  engine.config.indexNames = ["Root"];
+  getMemoryEngineTestInternals(engine).config.indexNames = ["Root"];
   let lookupStarted!: () => void;
   let releaseLookup!: () => void;
   const started = new Promise<void>((resolve) => {
@@ -545,7 +547,7 @@ test("close drains the whole already-started flushBatch", async () => {
     releaseSecond = resolve;
   });
   let calls = 0;
-  engine.ingestPipeline.run = (async () => {
+  getMemoryEngineTestInternals(engine).ingestPipeline.run = (async () => {
     calls += 1;
     if (calls === 1) {
       firstStarted();
@@ -555,13 +557,13 @@ test("close drains the whole already-started flushBatch", async () => {
       await secondBarrier;
     }
     return { skipped: false, fileId: calls, chunkIds: [], tagIds: [] };
-  }) as typeof engine.ingestPipeline.run;
+  }) as any;
 
   try {
     await engine.initialize();
     const batch = engine.flushBatch([
-      { path: "batch-a.md", content: "a", mtime: 0, size: 1 },
-      { path: "batch-b.md", content: "b", mtime: 0, size: 1 },
+      { path: "batch-a.md", content: "a", sourceUpdatedAt: 0, size: 1 },
+      { path: "batch-b.md", content: "b", sourceUpdatedAt: 0, size: 1 },
     ]);
     await first;
     releaseFirst();
@@ -587,9 +589,9 @@ test("initialization cleanup does not reuse an owned provider closed before a si
     config: { dimension: DIM },
     onReady: async (value) => {
       const readyEngine = value as ReturnType<typeof createMemoryEngine>;
-      firstVectorStores.push(readyEngine.vectorStore);
+      firstVectorStores.push(getMemoryEngineTestInternals(readyEngine).vectorStore);
       if (failReady) {
-        const metadata = readyEngine.metadataStore;
+        const metadata = getMemoryEngineTestInternals(readyEngine).metadataStore;
         const originalClose = metadata.close?.bind(metadata);
         metadata.close = () => {
           if (failReady) throw new Error("metadata cleanup failed");
@@ -602,9 +604,12 @@ test("initialization cleanup does not reuse an owned provider closed before a si
 
   await assert.rejects(() => engine.initialize());
   assert.equal(engine.state, "created");
-  assert.equal((engine as unknown as { vectorStore?: unknown }).vectorStore, undefined);
+  assert.equal("vectorStore" in engine, false);
   failReady = false;
   await engine.initialize();
-  assert.notEqual(engine.vectorStore, firstVectorStores[0]);
+  assert.notEqual(
+    getMemoryEngineTestInternals(engine).vectorStore,
+    firstVectorStores[0],
+  );
   await engine.close();
 });

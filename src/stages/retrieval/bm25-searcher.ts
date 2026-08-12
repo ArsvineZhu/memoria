@@ -1,6 +1,4 @@
-import type {
-  ChunkCandidate,
-} from "../../types/documents.js";
+import type { ChunkCandidate } from "../../types/documents.js";
 import type { ChunkRow } from "../../types/metadata.js";
 import type { SearchCorpusChunk } from "../../types/vector.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";

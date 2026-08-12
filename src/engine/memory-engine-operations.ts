@@ -16,10 +16,12 @@ import type {
   SearchEnvelope,
 } from "../types/documents.js";
 import type { PipelineData } from "../types/pipeline.js";
+import type { PropagationHistorySnapshot } from "../types/retrieval.js";
 import { asMemoriaError, MemoriaError } from "../errors.js";
 import { isRecord, normalizeFiles } from "./input-normalization.js";
 import type { RuntimeMetadataStore, RuntimeVectorStore } from "./runtime-types.js";
 import { logicalDocumentPath, normalizeDocumentId } from "../utils/logical-document.js";
+import { projectSearchEnvelope } from "../pipelines/search-public-envelope.js";
 
 type ReadyOperation = <T>(name: string, operation: () => Promise<T>) => Promise<T>;
 type AuthorityInput = { path: string; relPath?: string; documentId?: string };
@@ -174,7 +176,8 @@ export default class MemoryEngineOperations {
               content: entry.content,
               format: entry.format,
               sourceContent: entry.sourceContent,
-              mtime: entry.mtime,
+              sourceUpdatedAt: entry.sourceUpdatedAt,
+              recordedAt: entry.recordedAt,
               size: entry.size,
               documentId: entry.documentId,
               revision: entry.revision,
@@ -219,9 +222,9 @@ export default class MemoryEngineOperations {
         async () => {
           const revision =
             document.revision === undefined ? undefined : String(document.revision);
-          const mtime = Number.isFinite(document.updatedAt)
-            ? Number(document.updatedAt)
-            : 0;
+          const recordedAt = Number.isFinite(document.recordedAt)
+            ? Number(document.recordedAt)
+            : undefined;
           const result = (await this.options.ingestPipeline.run(
             {
               path: storagePath,
@@ -229,7 +232,12 @@ export default class MemoryEngineOperations {
               content: document.content,
               format: document.format ?? "text",
               sourceContent: document.sourceContent ?? document.content,
-              mtime,
+              // Logical sources have no filesystem mtime. FileReaderStage
+              // assigns the first implicit timestamp at ingestion time and
+              // preserves it on an unchanged re-ingest; an explicit
+              // recordedAt remains authoritative.
+              sourceUpdatedAt: recordedAt ?? Date.now(),
+              recordedAt,
               size: Buffer.byteLength(document.content, "utf8"),
               space: "Logical",
               documentId,
@@ -302,18 +310,55 @@ export default class MemoryEngineOperations {
     if (!input.query && typeof query === "string") input.query = query;
     input.options = { ...options, ...(input.options || {}) };
     try {
-      return await this.options.vectorCoordinator.runStableRead(
+      const output = await this.options.vectorCoordinator.runStableRead(
         async () =>
           (await this.options.searchPipeline.run(
             input,
             this.options.getContext(),
-          )) as SearchEnvelope,
+          )) as PipelineData,
       );
+      const observation = output.propagationHistoryObservation;
+      const store = this.options.getMetadataStore();
+      if (observation && typeof store.commitPropagationObservation === "function") {
+        const snapshot = await store.commitPropagationObservation(observation);
+        return projectSearchEnvelope(this._applyCommittedHistory(output, snapshot));
+      }
+      return projectSearchEnvelope(this._stripInternalSearchData(output));
     } catch (error) {
       throw asMemoriaError(error, "retrieval", "MemoryEngine search failed.", {
         retryable: true,
       });
     }
+  }
+
+  private _applyCommittedHistory(
+    output: PipelineData,
+    snapshot: PropagationHistorySnapshot,
+  ): PipelineData {
+    const history = output.propagationHistory;
+    if (!history) return this._stripInternalSearchData(output);
+    const nodeTotals: Record<string, number> = {};
+    for (const [key, value] of snapshot.edgeTotals) {
+      const separator = key.indexOf(":");
+      if (separator < 1) continue;
+      const target = key.slice(separator + 1);
+      nodeTotals[target] = (nodeTotals[target] || 0) + Number(value);
+    }
+    return this._stripInternalSearchData({
+      ...output,
+      propagationHistory: {
+        ...history,
+        sequence: snapshot.sequence,
+        edgeTotals: snapshot.edgeTotals,
+        historySupport: Math.max(0, Math.min(1, Number(snapshot.totalMass) || 0)),
+        nodeTotals,
+      },
+    });
+  }
+
+  private _stripInternalSearchData(output: PipelineData): PipelineData {
+    const { propagationHistoryObservation: _observation, ...publicOutput } = output;
+    return publicOutput;
   }
 
   private async handleDeleteInternal(

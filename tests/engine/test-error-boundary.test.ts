@@ -1,5 +1,7 @@
 "use strict";
 
+import { getMemoryEngineTestInternals } from "../../src/engine/test-access.js";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -165,7 +167,7 @@ test("search vector failures are not silently downgraded", async () => {
   const { engine, metadataStore } = makeEngine({
     vector: { searchFailure: cause },
   });
-  engine.config.indexNames = ["Root"];
+  getMemoryEngineTestInternals(engine).config.indexNames = ["Root"];
   try {
     await engine.initialize();
     await assert.rejects(
@@ -183,7 +185,7 @@ test("search vector failures are not silently downgraded", async () => {
 test("search getAllChunks failures cross the boundary as persistence errors", async () => {
   const cause = new Error("chunks persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
-  engine.config.indexNames = ["Root"];
+  getMemoryEngineTestInternals(engine).config.indexNames = ["Root"];
   (metadataStore as unknown as { getSearchCorpus?: unknown }).getSearchCorpus =
     undefined;
   metadataStore.getAllChunks = async () => {
@@ -229,11 +231,11 @@ test("getStats vector-stat failures cross the boundary as vector_backend errors"
   try {
     await engine.initialize();
     (
-      engine.vectorStore as VectorStoreContract & {
+      getMemoryEngineTestInternals(engine).vectorStore as VectorStoreContract & {
         indices?: Map<string, unknown>;
       }
     ).indices?.set("Root", new Map());
-    engine.vectorStore.getIndexStats = async () => {
+    getMemoryEngineTestInternals(engine).vectorStore.getIndexStats = async () => {
       throw cause;
     };
     await assert.rejects(
@@ -251,7 +253,7 @@ test("getStats vector-stat failures cross the boundary as vector_backend errors"
 test("search getDistinctSpaces failures cross the boundary as persistence errors", async () => {
   const cause = new Error("space names persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
-  engine.config.searchAllIndices = true;
+  getMemoryEngineTestInternals(engine).config.searchAllIndices = true;
   try {
     await engine.initialize();
     (
@@ -275,14 +277,16 @@ test("search getDistinctSpaces failures cross the boundary as persistence errors
 test("search getChunkById failures cross the boundary as persistence errors", async () => {
   const cause = new Error("chunk lookup persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
-  engine.config.indexNames = ["Root"];
+  getMemoryEngineTestInternals(engine).config.indexNames = ["Root"];
   try {
     await engine.initialize();
     metadataStore.getAllChunks = async () => [];
     metadataStore.getChunkById = async () => {
       throw cause;
     };
-    engine.vectorStore.search = async () => [{ id: 1, score: 1 }];
+    getMemoryEngineTestInternals(engine).vectorStore.search = async () => [
+      { id: 1, score: 1 },
+    ];
     await assert.rejects(
       () => engine.search("private content"),
       (error: unknown) => {
@@ -298,7 +302,7 @@ test("search getChunkById failures cross the boundary as persistence errors", as
 test("search getFileByChunkId failures cross the boundary as persistence errors", async () => {
   const cause = new Error("file lookup persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
-  engine.config.indexNames = ["Root"];
+  getMemoryEngineTestInternals(engine).config.indexNames = ["Root"];
   try {
     await engine.initialize();
     metadataStore.getAllChunks = async () => [];
@@ -311,7 +315,9 @@ test("search getFileByChunkId failures cross the boundary as persistence errors"
     metadataStore.getFileByChunkId = async () => {
       throw cause;
     };
-    engine.vectorStore.search = async () => [{ id: 1, score: 1 }];
+    getMemoryEngineTestInternals(engine).vectorStore.search = async () => [
+      { id: 1, score: 1 },
+    ];
     await assert.rejects(
       () => engine.search("private content"),
       (error: unknown) => {
@@ -327,15 +333,15 @@ test("search getFileByChunkId failures cross the boundary as persistence errors"
 test("search tag file lookup failures cross the boundary as persistence errors", async () => {
   const cause = new Error("tag file lookup persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
-  engine.config.indexNames = ["Root"];
-  engine.config.tagSearchEnabled = true;
+  getMemoryEngineTestInternals(engine).config.indexNames = ["Root"];
+  getMemoryEngineTestInternals(engine).config.tagSearchEnabled = true;
   metadataStore.getAllChunks = async () => [];
   metadataStore.getFileIdsByTagId = async () => {
     throw cause;
   };
   try {
     await engine.initialize();
-    engine.vectorStore.search = async (indexName) =>
+    getMemoryEngineTestInternals(engine).vectorStore.search = async (indexName) =>
       indexName === "tag_vectors" ? [{ id: 9, score: 1 }] : [];
     await assert.rejects(
       () => engine.search("private content"),
@@ -352,8 +358,8 @@ test("search tag file lookup failures cross the boundary as persistence errors",
 test("search tag chunk lookup failures cross the boundary as persistence errors", async () => {
   const cause = new Error("tag chunk lookup persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
-  engine.config.indexNames = ["Root"];
-  engine.config.tagSearchEnabled = true;
+  getMemoryEngineTestInternals(engine).config.indexNames = ["Root"];
+  getMemoryEngineTestInternals(engine).config.tagSearchEnabled = true;
   metadataStore.getAllChunks = async () => [];
   metadataStore.getFileIdsByTagId = async () => [7];
   metadataStore.getChunksByFileId = async () => {
@@ -361,7 +367,7 @@ test("search tag chunk lookup failures cross the boundary as persistence errors"
   };
   try {
     await engine.initialize();
-    engine.vectorStore.search = async (indexName) =>
+    getMemoryEngineTestInternals(engine).vectorStore.search = async (indexName) =>
       indexName === "tag_vectors" ? [{ id: 9, score: 1 }] : [];
     await assert.rejects(
       () => engine.search("private content"),
@@ -378,7 +384,7 @@ test("search tag chunk lookup failures cross the boundary as persistence errors"
 test("search getFileTags failures cross the boundary as persistence errors", async () => {
   const cause = new Error("tag hydration persistence secret=do-not-copy");
   const { engine, metadataStore } = makeEngine();
-  engine.config.indexNames = ["Root"];
+  getMemoryEngineTestInternals(engine).config.indexNames = ["Root"];
   try {
     await engine.initialize();
     metadataStore.getAllChunks = async () => [];
@@ -393,13 +399,17 @@ test("search getFileTags failures cross the boundary as persistence errors", asy
       path: "candidate.md",
       space: "Root",
       checksum: "candidate",
-      mtime: 0,
+      source_updated_at: 0,
       size: 9,
+      recorded_at: 0,
+      indexed_at: 0,
     });
     metadataStore.getFileTags = async () => {
       throw cause;
     };
-    engine.vectorStore.search = async () => [{ id: 1, score: 1 }];
+    getMemoryEngineTestInternals(engine).vectorStore.search = async () => [
+      { id: 1, score: 1 },
+    ];
     await assert.rejects(
       () => engine.search("private content"),
       (error: unknown) => {
@@ -462,7 +472,7 @@ test("SQLite metadata close failure remains retryable through the engine", async
   });
   await engine.initialize();
 
-  const metadataStore = engine.metadataStore;
+  const metadataStore = getMemoryEngineTestInternals(engine).metadataStore;
   const close = metadataStore.close;
   assert.ok(close);
   const originalClose = close.bind(metadataStore);

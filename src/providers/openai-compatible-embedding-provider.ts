@@ -10,7 +10,10 @@ import {
   planEmbeddingBatches,
   runEmbeddingWorkers,
 } from "./openai-embedding-batcher.js";
-import { normalizeFallbackModels, uniqueModelCandidates } from "./openai-embedding-models.js";
+import {
+  normalizeFallbackModels,
+  uniqueModelCandidates,
+} from "./openai-embedding-models.js";
 
 interface OpenAICompatibleConfig {
   apiUrl?: string;
@@ -95,7 +98,10 @@ class OpenAICompatibleEmbeddingProvider extends EmbeddingProvider {
    * @private
    */
   _getModelCandidates(): string[] {
-    return uniqueModelCandidates({ primary: this.model, fallbacks: this.fallbackModels });
+    return uniqueModelCandidates({
+      primary: this.model,
+      fallbacks: this.fallbackModels,
+    });
   }
 
   /**

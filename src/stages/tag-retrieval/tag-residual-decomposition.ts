@@ -1,6 +1,4 @@
-import type {
-  EmbeddingVector,
-} from "../../types/common.js";
+import type { EmbeddingVector } from "../../types/common.js";
 import type { MemoryConfigOverrides } from "../../types/config.js";
 import type { TagRow } from "../../types/metadata.js";
 import type { PipelineContextLike, PipelineData } from "../../types/pipeline.js";
@@ -10,6 +8,7 @@ import Stage from "../../core/stage.js";
 import { TagResidualDecomposition } from "../../algorithms/tag-residual-decomposition.js";
 import { asMemoriaError, MemoriaError } from "../../errors.js";
 import type { ResidualTag } from "../../algorithms/tag-residual-decomposition.js";
+import { mergeTagRetrievalObservation } from "./tag-retrieval-observation.js";
 
 // Shared global tag vector index name (mirror of VectorIndexerStage).
 const TAG_INDEX_NAME = "tag_vectors";
@@ -62,6 +61,16 @@ class TagResidualDecompositionStage extends Stage {
       return { ...info, tagResidualDecompositionSkipped: true };
     }
 
+    const nativeObservation = info.tagRetrievalObservation;
+    if (nativeObservation?.source === "native") {
+      return {
+        ...info,
+        ...(nativeObservation.residual
+          ? { tagResidualDecomposition: nativeObservation.residual }
+          : {}),
+      };
+    }
+
     const queryVector = info.queryVector;
     const vectorStore = ctx.vectorStore;
     if (!queryVector || !vectorStore || typeof vectorStore.search !== "function") {
@@ -100,7 +109,14 @@ class TagResidualDecompositionStage extends Stage {
       return { ...info, tagResidualDecompositionSkipped: true };
     }
 
-    return { ...info, tagResidualDecomposition: result };
+    return {
+      ...info,
+      tagResidualDecomposition: result,
+      tagRetrievalObservation: mergeTagRetrievalObservation(info, {
+        source: "typescript",
+        residual: result,
+      }),
+    };
   }
 
   async _makeLookupFn(

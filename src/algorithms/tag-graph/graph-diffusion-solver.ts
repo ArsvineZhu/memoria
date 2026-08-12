@@ -1,13 +1,7 @@
 import { at } from "../../utils/numerical.js";
 import { clamp, l1Distance, vectorMass } from "./graph-diffusion-math.js";
-import {
-  buildRowOperator,
-  normalizeSource,
-} from "./graph-diffusion-operator.js";
-import {
-  distributionToEntries,
-  effectiveSupport,
-} from "./graph-diffusion-support.js";
+import { buildRowOperator, normalizeSource } from "./graph-diffusion-operator.js";
+import { distributionToEntries, effectiveSupport } from "./graph-diffusion-support.js";
 import type {
   DistributionOperator,
   DualOperator,
@@ -210,7 +204,7 @@ function solveGraphDiffusion(options: SolverOptions): Readonly<GraphDiffusionRes
   return Object.freeze({
     sourceVector: Object.freeze(Array.from(source)),
     localVector: Object.freeze(Array.from(local)),
-    transferVector: Object.freeze(Array.from(transfer)),
+    extendedVector: Object.freeze(Array.from(transfer)),
     localDistribution: Object.freeze(distributionToEntries(local, localOperator)),
     extendedDistribution: Object.freeze(
       distributionToEntries(transfer, transferOperator),

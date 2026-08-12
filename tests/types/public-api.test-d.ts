@@ -12,6 +12,8 @@ import type {
   RetrievalPlanInput,
   RetrievalStrategy,
   SearchOptions,
+  SearchEnvelope,
+  SearchResult,
   VectorStore,
 } from "../../dist/index.js";
 
@@ -55,6 +57,10 @@ const options: MemoryEngineOptions = {
   config,
   embeddingProvider: provider,
   reranker,
+  onReady: async (engine) => {
+    await engine.search("ready callback");
+    await engine.getStats();
+  },
   defaultRetrievalPlan: {
     strategy: "associative",
     associative: {
@@ -90,8 +96,41 @@ const document: MemoryDocumentInput = {
   source: { type: "test" } satisfies MemoryDocumentSource,
   revision: 1,
   format: "mdx",
+  recordedAt: 1_700_000_000_000,
 };
 const documentFormat: MemoryDocumentFormat = document.format!;
+
+const searchResult: SearchResult = {
+  id: 1,
+  score: 0.5,
+  sourceUpdatedAt: 1_700_000_000_000,
+  recordedAt: 1_700_000_000_000,
+  indexedAt: 1_700_000_000_000,
+};
+
+const publicEnvelope: SearchEnvelope = {
+  results: [searchResult],
+  resultCount: 1,
+  retrieval: {
+    strategy: "semantic",
+    strategySource: "auto",
+    plan: retrievalPlan,
+    evidence: [{ channel: "semantic", available: true }],
+    fallbacks: [],
+  },
+};
+
+// Internal stage diagnostics and the removed ambiguous time fields are not public.
+// @ts-expect-error raw stage traces must not escape the public envelope.
+void publicEnvelope.retrievalTrace;
+// @ts-expect-error old lifecycle field was replaced by recordedAt.
+void document.updatedAt;
+// @ts-expect-error old filesystem timestamp was replaced by sourceUpdatedAt.
+void searchResult.mtime;
+// @ts-expect-error stage skip flags are internal pipeline data.
+void publicEnvelope.tagRetrievalSkipped;
+// @ts-expect-error intermediate vectors are internal pipeline data.
+void publicEnvelope.queryVector;
 
 const vectorStore: VectorStore = {
   add: async () => undefined,
@@ -170,9 +209,11 @@ void optionalMetadataCapabilities;
 void optionalVectorCapabilities;
 void document;
 void documentFormat;
+void searchResult;
 void domainMetadataMethods;
 void removedInternalTypes;
 void reranker;
 void searchOptions;
 void builder;
 void retrievalPlan;
+void publicEnvelope;

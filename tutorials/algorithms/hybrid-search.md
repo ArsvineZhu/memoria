@@ -14,7 +14,7 @@ Hybrid Search 同时利用语义相似度和词法匹配，得到比单一路径
 - \`spaces\`、\`filters\`：候选范围；
 - embedding provider：把查询转换为与索引一致维度的向量。
 
-中间输出包括 \`vectorResults\`、\`bm25Results\`、\`mergedCandidates\`；公开的 \`SearchEnvelope\` 会将最终候选格式化为 document/chunk/result 字段。
+中间输出包括 \`vectorResults\`、\`bm25Results\`、\`mergedCandidates\`；这些字段只存在于内部 pipeline。公开的 \`SearchEnvelope\` 只返回最终结果和稳定的 \`retrieval.evidence\`。
 
 ## 阶段与 gate
 
@@ -52,7 +52,7 @@ topK: 10,
 spaces: ["travel"],
 indexNames: ["tag_vectors"],
 });
-console.log(envelope.vectorResults?.length, envelope.bm25Results?.length);
+console.log(envelope.results.length, envelope.retrieval?.evidence);
 \`\`\`
 
 源码位置：[vector-searcher.ts](../../src/stages/retrieval/vector-searcher.ts)、[bm25-searcher.ts](../../src/stages/retrieval/bm25-searcher.ts)、[candidate-merger.ts](../../src/stages/retrieval/candidate-merger.ts)。

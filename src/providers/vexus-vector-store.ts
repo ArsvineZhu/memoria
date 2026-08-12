@@ -11,10 +11,7 @@ import {
   assertFiniteVector,
   assertVectorDimension,
 } from "../utils/numerical.js";
-import {
-  createVexusIndex,
-  parseNativeSearchResults,
-} from "./vexus-native-bridge.js";
+import { createVexusIndex, parseNativeSearchResults } from "./vexus-native-bridge.js";
 import { VexusIndexPersistence } from "./vexus-index-persistence.js";
 
 interface VexusStoreConfig {

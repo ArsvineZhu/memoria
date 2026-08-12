@@ -74,10 +74,11 @@ class SearchPipeline extends Pipeline {
   ): Promise<PipelineData> {
     const source = input || {};
     const options = (source.options || {}) as SearchOptions;
+    const runOptions = mergeRunOptions(source, options);
     const query = typeof source.query === "string" ? source.query : "";
     const resolution = await this.planResolver.resolve(
       query,
-      mergeRunOptions(source, options),
+      runOptions,
       ctx,
       this.config,
     );
@@ -85,10 +86,11 @@ class SearchPipeline extends Pipeline {
       resolution,
       this.config,
       ctx.config,
+      runOptions,
     );
     const prepared = await prepareSearchRun({
       source,
-      options,
+      options: runOptions,
       ctx,
       runConfig,
       resolution,

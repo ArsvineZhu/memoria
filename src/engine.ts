@@ -274,6 +274,7 @@ class MemoryEngine {
       },
       getLastReconciliation: () => this.#lastReconciliation,
       isInitialized: () => this.initialized,
+      searchOptions: options.searchOptions,
       runReadyOperation: (name, operation) => this._runReadyOperation(name, operation),
       runAuthorityMutation: (input, operation) =>
         this._runAuthorityMutation(input, operation),

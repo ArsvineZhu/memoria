@@ -18,6 +18,7 @@ interface PhaseContext {
 class DerivedStateCoordinator {
   private readonly _reconcileTask: AsyncTask<void>;
   private readonly _mutationTails = new Map<string, Promise<void>>();
+  private readonly _maintenanceTails = new Map<string, Promise<void>>();
   private readonly _phaseContext = new AsyncLocalStorage<PhaseContext>();
   private _phase: ActivePhase = "idle";
   private _activeReaders = 0;
@@ -102,6 +103,41 @@ class DerivedStateCoordinator {
     void tail.then(() => {
       if (this._mutationTails.get(normalizedKey) === tail) {
         this._mutationTails.delete(normalizedKey);
+      }
+    });
+    return run;
+  }
+
+  /** Serialize derived-artifact maintenance without dirtying vector state. */
+  async runDerivedMaintenance<T>(key: string, task: AsyncTask<T>): Promise<T> {
+    this._assertNoConflictingReentry("mutation");
+    this._queuedMutations += 1;
+
+    const normalizedKey = `maintenance:${key || "__default__"}`;
+    const previous = this._maintenanceTails.get(normalizedKey) ?? Promise.resolve();
+    const run = previous.then(async () => {
+      let queueTicketConsumed = false;
+      try {
+        await this._ensureClean();
+        const release = await this._acquireMutation();
+        queueTicketConsumed = true;
+        try {
+          return await this._phaseContext.run({ phase: "mutation" }, task);
+        } finally {
+          release();
+        }
+      } finally {
+        if (!queueTicketConsumed) this._queuedMutations -= 1;
+      }
+    });
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this._maintenanceTails.set(normalizedKey, tail);
+    void tail.then(() => {
+      if (this._maintenanceTails.get(normalizedKey) === tail) {
+        this._maintenanceTails.delete(normalizedKey);
       }
     });
     return run;

@@ -124,6 +124,7 @@ struct PipelineConfig {
     extended_diffusion_tolerance: f64,
     local_support_mass_ratio: f64,
     extended_support_mass_ratio: f64,
+    support_selection_method: String,
     residual_max_steps: usize,
     tag_residual_decomposition_top_k: usize,
     residual_stop_energy_ratio: f64,
@@ -155,6 +156,7 @@ impl Default for PipelineConfig {
             extended_diffusion_tolerance: 1e-9,
             local_support_mass_ratio: 0.8,
             extended_support_mass_ratio: 0.9,
+            support_selection_method: "mass_ratio".to_string(),
             residual_max_steps: 3,
             tag_residual_decomposition_top_k: 10,
             residual_stop_energy_ratio: 0.1,
@@ -1103,6 +1105,7 @@ fn distribution_mass(distribution: &[f64]) -> f64 {
 fn effective_domain(
     artifact: &crate::propagation_structure_reranker::TagGraphArtifact,
     distribution: &[f64],
+    method: &str,
     ratio: f64,
 ) -> Vec<i64> {
     let total = distribution_mass(distribution);
@@ -1123,14 +1126,54 @@ fn effective_domain(
             .unwrap_or(Ordering::Equal)
             .then_with(|| left.0.cmp(&right.0))
     });
+
+    let normalized_method = method.to_ascii_lowercase();
+    let target_count = match normalized_method.as_str() {
+        "shannon" => {
+            let entropy = ranked
+                .iter()
+                .map(|(_, value)| {
+                    let probability = *value / total;
+                    -probability * probability.ln()
+                })
+                .sum::<f64>();
+            entropy.exp().ceil().max(1.0) as usize
+        }
+        "participation_ratio" => {
+            let square_mass = ranked.iter().map(|(_, value)| value * value).sum::<f64>();
+            if square_mass > 0.0 {
+                ((total * total) / square_mass).ceil().max(1.0) as usize
+            } else {
+                1
+            }
+        }
+        "largest_mass_gap" if ranked.len() > 1 => {
+            let mut largest_gap = f64::NEG_INFINITY;
+            let mut largest_gap_index = 0usize;
+            for index in 0..(ranked.len() - 1) {
+                let gap = ranked[index].1 - ranked[index + 1].1;
+                if gap > largest_gap {
+                    largest_gap = gap;
+                    largest_gap_index = index;
+                }
+            }
+            largest_gap_index + 1
+        }
+        _ => ranked.len(),
+    };
+
     let mut retained = Vec::new();
     let mut mass = 0.0;
-    for (id, value) in ranked {
-        retained.push(id);
-        mass += value;
-        if mass / total >= ratio.clamp(0.01, 1.0) {
-            break;
+    if matches!(normalized_method.as_str(), "mass_ratio" | "tail_budget") {
+        for (id, value) in ranked {
+            retained.push(id);
+            mass += value;
+            if mass / total >= ratio.clamp(0.01, 1.0) {
+                break;
+            }
         }
+    } else {
+        retained.extend(ranked.into_iter().take(target_count).map(|(id, _)| id));
     }
     retained
 }
@@ -1265,9 +1308,18 @@ fn solve_dual_distributions(
         .zip(transfer.iter().copied())
         .filter(|(_, mass)| *mass > 0.0)
         .collect();
-    let local_support_ids = effective_domain(artifact, &local, config.local_support_mass_ratio);
-    let extended_support_ids =
-        effective_domain(artifact, &transfer, config.extended_support_mass_ratio);
+    let local_support_ids = effective_domain(
+        artifact,
+        &local,
+        &config.support_selection_method,
+        config.local_support_mass_ratio,
+    );
+    let extended_support_ids = effective_domain(
+        artifact,
+        &transfer,
+        &config.support_selection_method,
+        config.extended_support_mass_ratio,
+    );
     let local_vector = project_distribution(index, artifact, &local, dimension)?;
     let extended_vector = project_distribution(index, artifact, &transfer, dimension)?;
     let local_mass = distribution_mass(&local);

@@ -1,6 +1,7 @@
 import type BetterSqlite3 from "better-sqlite3";
 
 import { relationDocumentAliases } from "../../retrieval/relation-graph.js";
+import { parseRetrievalDate } from "../../retrieval/retrieval-date.js";
 import type {
   IndexableChunkRow,
   RetrievalScopeFilters,
@@ -65,16 +66,6 @@ function matchesMetadataJson(
   });
 }
 
-function scopeEpochMilliseconds(value: number | string | undefined): number | null {
-  if (value === undefined) return null;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return null;
-    return value;
-  }
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 /** Read-only retrieval projections over the SQLite authority. */
 export default class SqliteRetrievalRepository {
   constructor(private readonly db: BetterSqlite3.Database) {}
@@ -125,8 +116,15 @@ export default class SqliteRetrievalRepository {
       where.push(`f.document_id IN (${filters.documentIds.map(() => "?").join(", ")})`);
       params.push(...filters.documentIds.map(String));
     }
-    const after = scopeEpochMilliseconds(filters.recordedAfter);
-    const before = scopeEpochMilliseconds(filters.recordedBefore);
+    const after = parseRetrievalDate(filters.recordedAfter);
+    const before = parseRetrievalDate(filters.recordedBefore);
+    if (
+      (filters.recordedAfter !== undefined && after === null) ||
+      (filters.recordedBefore !== undefined && before === null) ||
+      (after !== null && before !== null && after > before)
+    ) {
+      return { allowedChunkIds: [], allowedDocumentKeys: [] };
+    }
     if (after !== null) {
       where.push("f.recorded_at >= ?");
       params.push(after);

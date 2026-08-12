@@ -34,8 +34,18 @@ function propagate(options: ActivationOptions = {}): ActivationPropagationResult
     fin(config.baseRoutingBudget ?? config.routingBudget ?? 2.0, 2.0),
   );
   const activationThreshold = Math.max(0, fin(config.activationThreshold ?? 0.1, 0.1));
-  const baseDecay = Math.max(0, fin(config.baseDecay ?? 0.25, 0.25));
-  const shortcutDecay = Math.max(0, fin(config.shortcutDecay ?? 0.7, 0.7));
+  const baseDecay = Math.max(
+    0,
+    fin(config.standardEdgePropagationFactor ?? config.baseDecay ?? 0.25, 0.25),
+  );
+  const shortcutDecay = Math.max(
+    0,
+    fin(config.shortcutEdgePropagationFactor ?? config.shortcutDecay ?? 0.7, 0.7),
+  );
+  const minimumInjectedActivation = Math.max(
+    0,
+    fin(config.minimumInjectedActivation ?? 0.01, 0.01),
+  );
   const shortcutEdgeThreshold = Math.max(
     0,
     fin(config.shortcutEdgeThreshold ?? 1.0, 1.0),
@@ -127,7 +137,7 @@ function propagate(options: ActivationOptions = {}): ActivationPropagationResult
         if (isImmediateReturn) {
           diagnostics.returnFlowSuppressedMass += unpenalizedCurrent - injectedCurrent;
         }
-        if (injectedCurrent < 0.01) continue;
+        if (injectedCurrent < minimumInjectedActivation) continue;
 
         const sourceId = Number(state.nodeId);
         const targetId = Number(neighborId);
@@ -227,7 +237,7 @@ function propagate(options: ActivationOptions = {}): ActivationPropagationResult
         nodeId,
         (accumulatedActivation.get(nodeId) || 0) + activation * activationWeight,
       );
-      if (activation > 0.01) propagated = true;
+      if (activation > minimumInjectedActivation) propagated = true;
     }
     if (!propagated) break;
     iterations += 1;

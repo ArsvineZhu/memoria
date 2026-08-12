@@ -14,8 +14,6 @@ constraints only.
 - Keep one canonical owner for each important fact. Link summaries to the
   owner instead of copying full configuration tables, API inventories, or
   command lists.
-- Keep `superpowers/` as historical workflow context. Do not use unchecked
-  historical plan items as a task list or current policy.
 
 ## Language and boundaries
 

@@ -172,6 +172,7 @@ export interface PipelineContextOptions {
   tagBasisProjection?: TagBasisProjectionLike;
   propagationHistoryStore?: PropagationHistoryStore;
   tagAssociationGraph?: Map<number, Map<number, number>>;
+  loadTagAssociationGraph?: () => Promise<Map<number, Map<number, number>>>;
   reranker?: ExternalReranker;
   queryInterpreter?: {
     interpret(
@@ -195,6 +196,7 @@ export interface PipelineContextLike {
   tagBasisProjection?: TagBasisProjectionLike;
   propagationHistoryStore?: PropagationHistoryStore;
   tagAssociationGraph?: Map<number, Map<number, number>>;
+  loadTagAssociationGraph?: () => Promise<Map<number, Map<number, number>>>;
   checkpointState?: { fileCount: number; spaces: Set<string> };
   reranker?: ExternalReranker;
   queryInterpreter?: {

@@ -356,7 +356,7 @@ fn build_transport(
     let propagation = config.get("propagation").unwrap_or(&Value::Null);
     let outbound_mass = number(propagation, &["outboundMass"], 0.95).clamp(0.01, 0.999999);
     let reserve_mass =
-        number(propagation, &["associationReserveMass"], 0.05).clamp(0.0, outbound_mass);
+        number(propagation, &["shortcutEdgeReserveMass"], 0.05).clamp(0.0, outbound_mass);
     let evidence_compression = number(propagation, &["evidenceCompression"], 1.0).max(0.01);
     let shortcut_edge_gain = number(propagation, &["shortcutEdgeGain"], 1.35).max(1.0);
     let shortcut_edge_threshold = number(propagation, &["shortcutEdgeThreshold"], 1.0).max(0.0);

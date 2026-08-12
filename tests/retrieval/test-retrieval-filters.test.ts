@@ -71,6 +71,16 @@ test("retrieval filter resolver evaluates document, time and metadata filters", 
   assert.equal((out.retrievalFilter as { matchedChunks?: number })?.matchedChunks, 1);
 });
 
+test("retrieval filter resolver fails closed for invalid time filters", async () => {
+  const out = await new RetrievalFilterResolverStage().process(
+    { retrievalFilters: { recordedAfter: "not-a-date" } },
+    makeContext(),
+  );
+
+  assert.deepEqual([...(out.allowedChunkIds as Set<number>)], []);
+  assert.equal((out.retrievalFilter as { invalid?: boolean })?.invalid, true);
+});
+
 test("candidate filter removes postprocess additions outside the resolved set", async () => {
   const out = await new CandidateFilterStage().process(
     {

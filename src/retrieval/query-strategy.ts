@@ -1,6 +1,7 @@
 import {
   normalizeRetrievalPlan,
   type RetrievalPlan,
+  type RetrievalPlanInput,
   type RetrievalStrategy,
 } from "./retrieval-plan.js";
 import type {
@@ -113,7 +114,10 @@ export function chooseStrategy(
   return { strategy, scores, reasons };
 }
 
-function mergeAutoPlan(base: RetrievalPlan, overlay: RetrievalPlan): RetrievalPlan {
+function mergeAutoPlan(
+  base: RetrievalPlan,
+  overlay: RetrievalPlanInput,
+): RetrievalPlan {
   return normalizeRetrievalPlan({
     ...base,
     ...overlay,
@@ -142,7 +146,7 @@ export function planFromProfile(
   const automatic = automaticPlanFor(profile, decision.strategy);
   const plan =
     supplied && supplied.strategy === "auto"
-      ? mergeAutoPlan(automatic, normalized)
+      ? mergeAutoPlan(automatic, supplied)
       : supplied && supplied.strategy !== "auto"
         ? normalized
         : automatic;

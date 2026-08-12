@@ -452,6 +452,22 @@ test("ActivationPropagationStage: no graph and no seeds short-circuits with a sk
   assert.strictEqual(out.tagGraphPropagationSkipped, true);
 });
 
+test("ActivationPropagationStage projects canonical propagation config to the TS kernel", () => {
+  const projected = new ActivationPropagationStage()._propagateConfig({
+    routingBudget: 11,
+    standardEdgePropagationFactor: 0.31,
+    shortcutEdgePropagationFactor: 0.83,
+    minimumInjectedActivation: 0.0007,
+  });
+
+  assert.deepEqual(projected, {
+    routingBudget: 11,
+    standardEdgePropagationFactor: 0.31,
+    shortcutEdgePropagationFactor: 0.83,
+    minimumInjectedActivation: 0.0007,
+  });
+});
+
 // ── GraphDiffusionStage ────────────────────────────────────────────────────────
 
 test("GraphDiffusionStage: solves dual graph-diffusion distributions over activation output", async () => {
@@ -494,6 +510,37 @@ test("GraphDiffusionStage: solves dual graph-diffusion distributions over activa
     "ranked list from the diffusion distribution readout",
   );
   assert.ok(Number.isFinite(out.tagGraphPropagation!.seedDistribution![0][0]));
+});
+
+test("GraphDiffusionStage uses the extended diffusion tolerance for transfer convergence", async () => {
+  const { metaStore, c1 } = await seedTagGraphPropagationStore();
+  const ctx = new PipelineContext({
+    config: {
+      tagGraphPropagationEnabled: true,
+      dimension: dim,
+      diffusionMaxIterations: 1,
+      localDiffusionTolerance: 1,
+      extendedDiffusionTolerance: 1e-15,
+    },
+    metadataStore: metaStore,
+    tagAssociationGraph: miniGraph9(),
+  });
+  const activationOutput = await new ActivationPropagationStage().process(
+    {
+      queryVector: vec(1, 0, 0, 0),
+      tagResidualDecomposition: tagResidualDecompositionSeeds,
+      mergedCandidates: [{ chunkId: c1, score: 0.7 }],
+    },
+    ctx,
+  );
+  const out = await new GraphDiffusionStage().process(activationOutput, ctx);
+
+  assert.equal(out.tagGraphPropagation?.solverDiagnostics?.localConverged, true);
+  assert.equal(
+    out.tagGraphPropagation?.solverDiagnostics?.transferConverged,
+    false,
+    "a strict extended tolerance must not be replaced by the local tolerance",
+  );
 });
 
 test("GraphDiffusionStage reranks candidates with domain overlap boost", async () => {
@@ -736,6 +783,66 @@ test("PropagationStructureStage: disabled is a passthrough", async () => {
   const input = basePropagationInput();
   const out = await stage.process(input, ctx);
   assert.strictEqual(out.propagationStructureSkipped, true);
+});
+
+test("activation observation survives diffusion for history and structure consumers", async () => {
+  const { metaStore, c1 } = await seedTagGraphPropagationStore();
+  const activationContext = new PipelineContext({
+    config: { tagGraphPropagationEnabled: true, dimension: dim },
+    metadataStore: metaStore,
+    tagAssociationGraph: miniGraph9(),
+  });
+  const activationOutput = await new ActivationPropagationStage().process(
+    {
+      queryVector: vec(1, 0, 0, 0),
+      tagResidualDecomposition: tagResidualDecompositionSeeds,
+      mergedCandidates: [{ chunkId: c1, score: 0.7, tags: ["alpha"] }],
+    },
+    activationContext,
+  );
+  const diffusionOutput = await new GraphDiffusionStage().process(
+    activationOutput,
+    activationContext,
+  );
+
+  const trace = diffusionOutput.tagGraphPropagation?.propagationTrace;
+  assert.ok(trace, "diffusion must retain the activation propagation trace");
+  assert.ok(
+    Array.isArray(trace.edges) && trace.edges.length > 0,
+    "diffusion must retain activation edges for downstream consumers",
+  );
+  const observedTrace = (
+    diffusionOutput.tagRetrievalObservation as
+      { propagation?: { propagationTrace?: { edges?: unknown[] } } } | undefined
+  )?.propagation?.propagationTrace;
+  assert.ok(
+    Array.isArray(observedTrace?.edges) && observedTrace.edges.length > 0,
+    "canonical observation must retain activation edges",
+  );
+
+  const history = new InMemoryPropagationHistoryStore();
+  const historyOutput = await new PropagationHistoryStage().process(
+    diffusionOutput,
+    propagationContext(history),
+  );
+  assert.ok(
+    (historyOutput.propagationHistoryObservation?.edges.length || 0) > 0,
+    "history must observe the preserved activation edges",
+  );
+
+  const structureOutput = await new PropagationStructureStage().process(
+    diffusionOutput,
+    new PipelineContext({ config: { propagationStructureRerankEnabled: true } }),
+  );
+  assert.notEqual(
+    structureOutput.propagationStructure?.spreadClass,
+    "inactive",
+    "structure scoring must see the preserved activation graph",
+  );
+  assert.ok(
+    Number(structureOutput.propagationStructure?.activeEdges || 0) > 0,
+    "structure scoring must count activation edges",
+  );
 });
 
 test("PropagationHistoryStage never overwrites history after a read failure", async () => {

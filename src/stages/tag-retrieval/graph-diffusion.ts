@@ -74,8 +74,25 @@ class GraphDiffusionStage extends Stage {
       return { ...info, tagGraphPropagationNative: true };
     }
 
-    const tagAssociationGraph =
-      ctx.tagAssociationGraph instanceof Map ? ctx.tagAssociationGraph : new Map();
+    let tagAssociationGraph = ctx.tagAssociationGraph;
+    if (!(tagAssociationGraph instanceof Map)) {
+      const loadTagAssociationGraph =
+        ctx.loadTagAssociationGraph ||
+        ctx.metadataStore?.buildCooccurrenceMatrix?.bind(ctx.metadataStore);
+      if (loadTagAssociationGraph) {
+        try {
+          tagAssociationGraph = await loadTagAssociationGraph();
+        } catch (error) {
+          return {
+            ...info,
+            graphDiffusionSkipped: true,
+            tagAssociationGraphLoadError:
+              error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+    }
+    if (!(tagAssociationGraph instanceof Map)) tagAssociationGraph = new Map();
     if (tagAssociationGraph.size === 0) {
       return { ...info, graphDiffusionSkipped: true };
     }
@@ -108,7 +125,7 @@ class GraphDiffusionStage extends Stage {
           alpha: config.extendedDiffusionAlpha ?? 0.55,
           maxIterations:
             config.diffusionMaxIterations ?? config.diffusionMaxIterations ?? 200,
-          tolerance: config.localDiffusionTolerance ?? 1e-9,
+          tolerance: config.extendedDiffusionTolerance ?? 1e-9,
         },
         support: {
           method: config.supportSelectionMethod || "mass_ratio",
@@ -155,7 +172,12 @@ class GraphDiffusionStage extends Stage {
       ctx,
     );
 
+    const previousPropagation = info.tagGraphPropagation;
+    const previousTrace =
+      previousPropagation?.propagationTrace ??
+      info.tagRetrievalObservation?.propagation?.propagationTrace;
     const tagGraphPropagation: TagGraphPropagationData = {
+      ...(previousPropagation || {}),
       schema: "tag-graph-diffusion-v1",
       algorithmVersion: "tag-graph-diffusion",
       seedDistribution,
@@ -170,6 +192,7 @@ class GraphDiffusionStage extends Stage {
       ),
       pruneSkipped: true,
       prunedDistributionEntries: 0,
+      ...(previousTrace ? { propagationTrace: previousTrace } : {}),
     };
 
     if (pruneConfig.enabled) {

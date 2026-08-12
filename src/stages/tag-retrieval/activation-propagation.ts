@@ -61,8 +61,25 @@ class ActivationPropagationStage extends Stage {
       return { ...info, tagGraphPropagationNative: true };
     }
 
-    const tagAssociationGraph =
-      ctx.tagAssociationGraph instanceof Map ? ctx.tagAssociationGraph : new Map();
+    let tagAssociationGraph = ctx.tagAssociationGraph;
+    if (!(tagAssociationGraph instanceof Map)) {
+      const loadTagAssociationGraph =
+        ctx.loadTagAssociationGraph ||
+        ctx.metadataStore?.buildCooccurrenceMatrix?.bind(ctx.metadataStore);
+      if (loadTagAssociationGraph) {
+        try {
+          tagAssociationGraph = await loadTagAssociationGraph();
+        } catch (error) {
+          return {
+            ...info,
+            tagGraphPropagationSkipped: true,
+            tagAssociationGraphLoadError:
+              error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+    }
+    if (!(tagAssociationGraph instanceof Map)) tagAssociationGraph = new Map();
 
     const seeds = this._tagResidualDecompositionSeeds(info);
     const fallbackSeeds = seeds.length === 0;
@@ -225,16 +242,17 @@ class ActivationPropagationStage extends Stage {
     const source = config as unknown as Record<string, unknown>;
     for (const key of [
       "propagationMaxHops",
+      "routingBudget",
       "shortcutEdgeThreshold",
       "activationThreshold",
-      "baseDecay",
-      "shortcutDecay",
-      "baseRoutingBudget",
+      "standardEdgePropagationFactor",
+      "shortcutEdgePropagationFactor",
       "maxNeighborsPerNode",
       "returnActivationFactor",
       "hopReadoutGamma",
       "pruneAbove",
       "maxPropagationStates",
+      "minimumInjectedActivation",
     ]) {
       if (source[key] !== undefined) passthrough[key] = source[key];
     }

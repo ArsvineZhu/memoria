@@ -122,6 +122,35 @@ test("NativeTagRetrievalStage uses the canonical artifact and pipeline ABI", asy
   assert.equal(native.artifactBuildCount, 1);
 });
 
+test("NativeTagRetrievalStage reuses an artifact for one generation and rebuilds after invalidation", async () => {
+  const native = makeNative();
+  const ctx = makeContext(native);
+  let metadataGeneration = "1";
+  ctx.metadataStore = {
+    async getKv(key: string) {
+      return key === "metadata_generation" ? metadataGeneration : "0";
+    },
+  } as never;
+  const stage = new NativeTagRetrievalStage();
+  const input: PipelineData = {
+    query: "semantic",
+    queryVector: new Float32Array([1, 0]),
+    queries: [{ text: "semantic", vector: new Float32Array([1, 0]) }],
+  };
+
+  await stage.process(input, ctx);
+  await stage.process(input, ctx);
+  assert.equal(native.artifactBuildCount, 1);
+
+  metadataGeneration = "2";
+  await stage.process(input, ctx);
+  assert.equal(native.artifactBuildCount, 2);
+
+  ctx.config.routingBudget = 9;
+  await stage.process(input, ctx);
+  assert.equal(native.artifactBuildCount, 3);
+});
+
 test("NativeTagRetrievalStage fails closed for in-memory databases", async () => {
   const output = await new NativeTagRetrievalStage().process(
     { queryVector: new Float32Array([1, 0]) },

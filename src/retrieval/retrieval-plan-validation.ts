@@ -1,4 +1,5 @@
 import type { RetrievalPlanInput } from "./retrieval-plan-types.js";
+import { parseRetrievalDate } from "./retrieval-date.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -104,7 +105,32 @@ function assertStrategy(value: unknown): void {
   }
 }
 
-/** Validate only the stable plan shape; normalization intentionally remains range-tolerant. */
+/** Validate date syntax and ordering without applying range clamping. */
+export function assertRetrievalPlanDateRange(input: RetrievalPlanInput): void {
+  const source = input as unknown as Record<string, unknown>;
+  if (source.filters === undefined) return;
+  const filters = assertRecord(source.filters, "filters");
+  for (const key of ["recordedAfter", "recordedBefore"]) {
+    const value = filters[key];
+    if (value !== undefined && parseRetrievalDate(value as number | string) === null) {
+      invalidPlanParameter(`filters.${key}`, "expected a valid date");
+    }
+  }
+  const after = parseRetrievalDate(
+    filters.recordedAfter as number | string | undefined,
+  );
+  const before = parseRetrievalDate(
+    filters.recordedBefore as number | string | undefined,
+  );
+  if (after !== null && before !== null && after > before) {
+    invalidPlanParameter(
+      "filters",
+      "recordedAfter must not be later than recordedBefore",
+    );
+  }
+}
+
+/** Validate the stable plan shape independently from numeric normalization. */
 export function assertRetrievalPlanShape(input: RetrievalPlanInput): void {
   const source = assertRecord(input, "plan");
   assertKnownKeys(source, "plan", [
@@ -126,6 +152,7 @@ export function assertRetrievalPlanShape(input: RetrievalPlanInput): void {
 export function assertValidRetrievalPlanInput(input?: RetrievalPlanInput | null): void {
   if (input == null) return;
   assertRetrievalPlanShape(input);
+  assertRetrievalPlanDateRange(input);
   const source = input as unknown as Record<string, unknown>;
 
   if (source.propagationHistory !== undefined) {
@@ -144,18 +171,6 @@ export function assertValidRetrievalPlanInput(input?: RetrievalPlanInput | null)
     ]);
     assertStringList(filters.spaces, "filters.spaces");
     assertStringList(filters.documentIds, "filters.documentIds");
-    for (const key of ["recordedAfter", "recordedBefore"]) {
-      const value = filters[key];
-      if (
-        value !== undefined &&
-        !(
-          (typeof value === "number" && Number.isFinite(value)) ||
-          typeof value === "string"
-        )
-      ) {
-        invalidPlanParameter(`filters.${key}`, "expected a finite number or string");
-      }
-    }
     if (filters.metadata !== undefined) {
       assertRecord(filters.metadata, "filters.metadata");
     }

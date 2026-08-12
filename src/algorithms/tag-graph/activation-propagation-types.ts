@@ -27,7 +27,9 @@ export interface ActivationConfig extends UnknownRecord {
   routingBudget?: number;
   activationThreshold?: number;
   baseDecay?: number;
+  standardEdgePropagationFactor?: number;
   shortcutDecay?: number;
+  shortcutEdgePropagationFactor?: number;
   shortcutEdgeThreshold?: number;
   maxNeighborsPerNode?: number;
   branchLimit?: number;
@@ -37,6 +39,7 @@ export interface ActivationConfig extends UnknownRecord {
   hopReadoutGamma?: number;
   maxPropagationStates?: number;
   pruneAbove?: number;
+  minimumInjectedActivation?: number;
 }
 
 export interface ActivationOptions {

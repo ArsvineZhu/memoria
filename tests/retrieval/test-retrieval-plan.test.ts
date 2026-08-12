@@ -97,6 +97,33 @@ test("normalizeRetrievalPlan preserves empty scopes and clamps bounded values", 
   assert.equal(plan.postprocess?.maxContentLength, 0);
 });
 
+test("retrieval plan normalizes valid dates and rejects invalid or reversed ranges", () => {
+  const plan = normalizeRetrievalPlan({
+    strategy: "semantic",
+    filters: {
+      recordedAfter: "2024-01-01T00:00:00Z",
+      recordedBefore: "2024-02-01T00:00:00Z",
+    },
+  });
+
+  assert.equal(plan.filters?.recordedAfter, Date.parse("2024-01-01T00:00:00Z"));
+  assert.equal(plan.filters?.recordedBefore, Date.parse("2024-02-01T00:00:00Z"));
+  assert.throws(
+    () => normalizeRetrievalPlan({ filters: { recordedAfter: "not-a-date" } }),
+    /filters\.recordedAfter/,
+  );
+  assert.throws(
+    () =>
+      normalizeRetrievalPlan({
+        filters: {
+          recordedAfter: "2024-03-01T00:00:00Z",
+          recordedBefore: "2024-02-01T00:00:00Z",
+        },
+      }),
+    /recordedAfter.*recordedBefore|date range/i,
+  );
+});
+
 test("normalizeRetrievalPlan rejects removed strategies and sections", () => {
   assert.throws(
     () =>

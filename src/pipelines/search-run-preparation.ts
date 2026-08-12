@@ -28,20 +28,15 @@ export async function prepareSearchRun(
 ): Promise<PreparedSearchRun> {
   const { source, options, ctx, runConfig, resolution, defaultRetrievalPlan } = input;
   let tagAssociationGraph = ctx.tagAssociationGraph;
-  let tagAssociationGraphLoadError: string | undefined;
-  if (
-    !(tagAssociationGraph instanceof Map) &&
-    runConfig.tagGraphPropagationEnabled === true &&
-    typeof ctx.metadataStore?.buildCooccurrenceMatrix === "function"
-  ) {
-    try {
-      tagAssociationGraph = await ctx.metadataStore.buildCooccurrenceMatrix();
-    } catch (error) {
-      tagAssociationGraph = new Map();
-      tagAssociationGraphLoadError =
-        error instanceof Error ? error.message : String(error);
-    }
-  }
+  const loadTagAssociationGraph =
+    ctx.loadTagAssociationGraph ||
+    (typeof ctx.metadataStore?.buildCooccurrenceMatrix === "function"
+      ? async () => {
+          if (tagAssociationGraph instanceof Map) return tagAssociationGraph;
+          tagAssociationGraph = await ctx.metadataStore!.buildCooccurrenceMatrix!();
+          return tagAssociationGraph;
+        }
+      : undefined);
   const propagationHistoryStore =
     ctx.propagationHistoryStore ||
     (typeof ctx.metadataStore?.readPropagationHistory === "function" &&
@@ -58,6 +53,7 @@ export async function prepareSearchRun(
     ...ctx,
     config: runConfig as MemoryConfig,
     tagAssociationGraph,
+    loadTagAssociationGraph,
     propagationHistoryStore,
   };
 
@@ -81,10 +77,7 @@ export async function prepareSearchRun(
       queryOverrideApplied: resolution.queryOverrideApplied,
     },
   });
-  if (tagAssociationGraphLoadError) {
-    payload.tagAssociationGraphLoadError = tagAssociationGraphLoadError;
-  }
-  return { payload, context, tagAssociationGraphLoadError };
+  return { payload, context };
 }
 
 export function mergeRunOptions(

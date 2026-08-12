@@ -5,7 +5,7 @@ rules for their own scopes; current nested scopes include
 [docs/AGENTS.md](docs/AGENTS.md),
 [tutorials/AGENTS.md](tutorials/AGENTS.md), [scripts/AGENTS.md](scripts/AGENTS.md),
 [tests/AGENTS.md](tests/AGENTS.md), [rust-vexus-lite/AGENTS.md](rust-vexus-lite/AGENTS.md),
-and [docs/superpowers/AGENTS.md](docs/superpowers/AGENTS.md).
+and the repository's nested scope instructions.
 
 ## Mission and boundaries
 

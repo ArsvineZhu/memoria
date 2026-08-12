@@ -31,6 +31,10 @@ interface PlannedOutput extends PipelineData {
     truncateMinScore?: number;
     timeDecayEnabled?: boolean;
     indexNames?: unknown;
+    queryExpansion?: number;
+    queryEpsilon?: number | null;
+    externalRerankEnabled?: boolean;
+    retrievalFilters?: unknown;
   };
   retrieval?: RetrievalDiagnostics;
 }
@@ -65,6 +69,10 @@ class CaptureRetrievalPlanStage extends Stage {
         truncateMinScore: ctx.config.truncateMinScore,
         timeDecayEnabled: ctx.config.timeDecayEnabled,
         indexNames: ctx.config.indexNames,
+        queryExpansion: ctx.config.queryExpansion,
+        queryEpsilon: ctx.config.queryEpsilon,
+        externalRerankEnabled: ctx.config.externalRerankEnabled,
+        retrievalFilters: ctx.config.retrievalFilters,
       },
     };
   }
@@ -182,6 +190,67 @@ test("automatic strategy keeps typed outer expansion and truncation controls", a
   assert.equal(planned.captured?.truncateMinScore, 0.4);
 });
 
+test("SearchPipeline projects per-call operational options and plan-owned filters", async () => {
+  const pipeline = new SearchPipeline(
+    { queryExpansion: 1, queryEpsilon: null, externalRerankEnabled: false },
+    { stages: [new CaptureRetrievalPlanStage()] },
+  );
+  const out = (await pipeline.run(
+    {
+      query: "找实验记录",
+      options: {
+        queryExpansion: 3,
+        queryEpsilon: 0.2,
+        retrievalPlan: {
+          strategy: "semantic",
+          filters: { spaces: ["research"] },
+          externalRerank: { enabled: true, mode: "rrf", alpha: 0.8 },
+        },
+      },
+    },
+    { config: {} },
+  )) as PlannedOutput;
+
+  assert.equal(out.captured?.queryExpansion, 3);
+  assert.equal(out.captured?.queryEpsilon, 0.2);
+  assert.equal(out.captured?.externalRerankEnabled, true);
+  assert.deepEqual(
+    (out.captured?.retrievalFilters as { spaces?: string[] } | undefined)?.spaces,
+    ["research"],
+  );
+
+  const stageNames = SearchPipeline.defaultStages({
+    retrievalFilters: { spaces: ["research"] },
+  }).map((stage) => stage.name);
+  assert.ok(
+    stageNames.includes("retrievalFilterResolver"),
+    "plan filters must activate the filter resolver stage",
+  );
+});
+
+test("legacy per-call filter and rerank options are projected into the retrieval plan", async () => {
+  const pipeline = new SearchPipeline(
+    {},
+    { stages: [new CaptureRetrievalPlanStage()] },
+  );
+  const out = (await pipeline.run(
+    {
+      query: "普通查询",
+      options: {
+        retrievalFilters: { spaces: ["legacy"] },
+        externalRerank: true,
+      },
+    },
+    { config: {} },
+  )) as PlannedOutput;
+
+  assert.equal(out.captured?.externalRerankEnabled, true);
+  assert.deepEqual(
+    (out.captured?.retrievalFilters as { spaces?: string[] } | undefined)?.spaces,
+    ["legacy"],
+  );
+});
+
 test("native tag retrieval uses one runtime stage per search", () => {
   const stages = SearchPipeline.defaultStages(
     applyRetrievalPlan({ strategy: "structural" }),
@@ -201,7 +270,7 @@ test("SearchPipeline exposes stable strategy diagnostics without raw stage names
   assert.equal("retrievalTrace" in out, false);
 });
 
-test("SearchPipeline preserves explicit config gates when no typed default plan is configured", async () => {
+test("SearchPipeline does not reopen planner-controlled gates from base config", async () => {
   const pipeline = new SearchPipeline(
     { propagationStructureRerankEnabled: true },
     { stages: [new CaptureRetrievalPlanStage()] },
@@ -213,7 +282,7 @@ test("SearchPipeline preserves explicit config gates when no typed default plan 
 
   assert.equal(out.retrieval?.plan.strategy, "semantic");
   assert.equal(out.retrieval?.strategySource, "auto");
-  assert.equal(out.captured?.propagationStructureRerankEnabled, true);
+  assert.equal(out.captured?.propagationStructureRerankEnabled, false);
 });
 
 test("SearchPipeline applies a fixed default plan and traces its source", async () => {

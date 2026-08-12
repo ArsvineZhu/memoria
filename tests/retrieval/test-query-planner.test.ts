@@ -80,6 +80,25 @@ test("explicit plan wins over natural-language auto selection", () => {
   assert.equal(decision.explicit, true);
 });
 
+test("auto partial overrides do not materialize false gates over the selected strategy", () => {
+  const decision = planRetrieval("这份记忆和上次实验记录有什么关联，沿着路径展开？", {
+    plan: {
+      strategy: "auto",
+      postprocess: { timeDecay: true },
+    },
+  });
+
+  assert.equal(decision.plan.strategy, "structural");
+  assert.equal(decision.plan.structural?.enabled, true);
+  assert.equal(decision.plan.structural?.propagationStructure, true);
+  assert.equal(
+    decision.plan.associative?.tagGraphPropagation,
+    true,
+    "structural automatic retrieval still uses its associative graph input",
+  );
+  assert.equal(decision.plan.postprocess?.timeDecay, true);
+});
+
 test("async query interpreter can add intent without query syntax", async () => {
   const decision = await planRetrievalAsync("找实验记录", {
     interpreter: {

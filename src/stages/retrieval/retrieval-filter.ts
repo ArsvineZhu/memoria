@@ -6,6 +6,7 @@ import type { UnknownRecord } from "../../types/common.js";
 import Stage from "../../core/stage.js";
 import { asMemoriaError } from "../../errors.js";
 import { relationDocumentKey } from "../../retrieval/relation-graph.js";
+import { parseRetrievalDate } from "../../retrieval/retrieval-date.js";
 
 interface RetrievalFilters {
   spaces?: readonly string[];
@@ -29,14 +30,28 @@ function parseMetadata(value: unknown): UnknownRecord {
   }
 }
 
-function epochMilliseconds(value: number | string | undefined): number | null {
-  if (value === undefined) return null;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return null;
-    return value;
+function normalizeFilterDates(filters: RetrievalFilters | null): {
+  filters: RetrievalFilters | null;
+  invalid: boolean;
+} {
+  if (!filters) return { filters: null, invalid: false };
+  const after = parseRetrievalDate(filters.recordedAfter);
+  const before = parseRetrievalDate(filters.recordedBefore);
+  if (
+    (filters.recordedAfter !== undefined && after === null) ||
+    (filters.recordedBefore !== undefined && before === null) ||
+    (after !== null && before !== null && after > before)
+  ) {
+    return { filters: null, invalid: true };
   }
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return {
+    filters: {
+      ...filters,
+      recordedAfter: after === null ? undefined : after,
+      recordedBefore: before === null ? undefined : before,
+    },
+    invalid: false,
+  };
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {
@@ -101,7 +116,18 @@ class RetrievalFilterResolverStage extends Stage {
     ctx: PipelineContextLike,
   ): Promise<PipelineData> {
     const info = input || {};
-    const filters = resolveFilters(info, ctx.config || {});
+    const rawFilters = resolveFilters(info, ctx.config || {});
+    const normalized = normalizeFilterDates(rawFilters);
+    if (normalized.invalid) {
+      return {
+        ...info,
+        retrievalFilters: rawFilters || undefined,
+        allowedChunkIds: new Set<number>(),
+        allowedDocumentKeys: new Set<string>(),
+        retrievalFilter: { matchedChunks: 0, invalid: true },
+      };
+    }
+    const filters = normalized.filters;
     const needsChunkResolution = !!(
       filters &&
       (filters.spaces !== undefined ||
@@ -178,8 +204,8 @@ class RetrievalFilterResolverStage extends Stage {
         retrievalFilter: { matchedChunks: 0, unavailable: true },
       };
     }
-    const after = epochMilliseconds(filters?.recordedAfter);
-    const before = epochMilliseconds(filters?.recordedBefore);
+    const after = parseRetrievalDate(filters?.recordedAfter);
+    const before = parseRetrievalDate(filters?.recordedBefore);
     const allowed = new Set<number>();
     const allowedDocumentKeys = new Set<string>();
     let chunks;

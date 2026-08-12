@@ -73,14 +73,6 @@
 - `NATIVE-MATRIX.md`、`RELEASE-CHECKLIST.md`：原生分发和发布检查。
 - `CHANGELOG.md`：版本历史和未发布变更。
 
-## 工作流记录
-
-`superpowers/` 保存技术英语设计和执行记录，仅用于审计和上下文，不是当前操作指令。
-当前 Agent 规则以仓库根目录的 `AGENTS.md` 及最近的嵌套指令文件为准，记录中的
-方案和清单不能覆盖实际代码、测试或 CI 状态。详见
-[superpowers/README.md](superpowers/README.md) 和
-[superpowers/AGENTS.md](superpowers/AGENTS.md)。
-
 ## 范围说明
 
 本项目没有项目内的 `SKILL.md` 或 `Skills/` 目录；系统级技能不复制到这里。

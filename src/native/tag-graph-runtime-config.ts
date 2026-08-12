@@ -64,7 +64,7 @@ export function nativePipelineConfig(config: MemoryConfigOverrides): UnknownReco
     tagBasisPerCandidateAnalysis: boolean(config.tagBasisPerCandidateAnalysis, false),
     strictOrthogonalization: boolean(config.strictOrthogonalization, true),
     residualMaxSteps: number(config.residualMaxSteps, 3),
-    residualTagTopK: number(config.residualTagTopK, 5),
+    tagResidualDecompositionTopK: number(config.residualTagTopK, 5),
     residualStopEnergyRatio: number(config.residualStopEnergyRatio, 0.1),
     localDiffusionAlpha: number(config.localDiffusionAlpha, 0.15),
     extendedDiffusionAlpha: number(config.extendedDiffusionAlpha, 0.55),

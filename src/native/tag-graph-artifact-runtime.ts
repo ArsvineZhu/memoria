@@ -44,6 +44,27 @@ export {
   readRecord,
 } from "./tag-graph-runtime-serialization.js";
 
+interface CachedNativeArtifact {
+  metadataGeneration?: string;
+  state: NativeArtifactState;
+}
+
+const nativeArtifactCache = new WeakMap<object, Map<string, CachedNativeArtifact>>();
+
+async function metadataGeneration(
+  ctx: PipelineContextLike,
+): Promise<string | undefined> {
+  const store = ctx.metadataStore as
+    { getKv?: (key: string) => Promise<string | null | undefined> } | null | undefined;
+  if (typeof store?.getKv !== "function") return undefined;
+  try {
+    const value = await store.getKv("metadata_generation");
+    return value == null ? undefined : String(value);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function ensureTagRetrievalArtifact(
   ctx: PipelineContextLike,
   index: TagRetrievalIndex,
@@ -55,6 +76,18 @@ export async function ensureTagRetrievalArtifact(
       reason: "TagRetrievalRuntime requires a file-backed SQLite database",
       failure: "backend_unavailable",
     };
+  }
+
+  const modelSig = String(ctx.config.modelSig || "memoria-default");
+  const effectiveConfig = buildNativeArtifactConfig(ctx.config);
+  const cacheKey = [dbPath, modelSig, JSON.stringify(effectiveConfig)].join("\u0000");
+  const currentMetadataGeneration = await metadataGeneration(ctx);
+  const cache =
+    nativeArtifactCache.get(index as object) || new Map<string, CachedNativeArtifact>();
+  nativeArtifactCache.set(index as object, cache);
+  const cached = cache.get(cacheKey);
+  if (cached && cached.metadataGeneration === currentMetadataGeneration) {
+    return { state: cached.state };
   }
 
   let runtime;
@@ -71,8 +104,8 @@ export async function ensureTagRetrievalArtifact(
   try {
     const result = await runtime.rebuildTagGraphArtifact(
       JSON.stringify({
-        modelSig: String(ctx.config.modelSig || "memoria-default"),
-        effectiveConfig: buildNativeArtifactConfig(ctx.config),
+        modelSig,
+        effectiveConfig,
       }),
     );
     const artifactSig = result && String(result.artifactSig || "");
@@ -95,6 +128,14 @@ export async function ensureTagRetrievalArtifact(
       nodeCount: typeof result.nodeCount === "number" ? result.nodeCount : undefined,
       edgeCount: typeof result.edgeCount === "number" ? result.edgeCount : undefined,
     };
+    const cachePrefix = `${dbPath}\u0000${modelSig}\u0000`;
+    for (const key of cache.keys()) {
+      if (key.startsWith(cachePrefix) && key !== cacheKey) cache.delete(key);
+    }
+    cache.set(cacheKey, {
+      metadataGeneration: currentMetadataGeneration,
+      state,
+    });
     return { state };
   } catch {
     return {

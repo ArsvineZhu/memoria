@@ -15,6 +15,7 @@ class PipelineContext {
   tagBasisProjection?: PipelineContextOptions["tagBasisProjection"];
   readonly propagationHistoryStore?: PipelineContextOptions["propagationHistoryStore"];
   readonly tagAssociationGraph?: Map<number, Map<number, number>>;
+  readonly loadTagAssociationGraph?: PipelineContextOptions["loadTagAssociationGraph"];
   reranker?: PipelineContextOptions["reranker"];
   readonly queryInterpreter?: PipelineContextOptions["queryInterpreter"];
   checkpointState?: { fileCount: number; spaces: Set<string> };
@@ -39,6 +40,7 @@ class PipelineContext {
     tagBasisProjection,
     propagationHistoryStore,
     tagAssociationGraph,
+    loadTagAssociationGraph,
     reranker,
     queryInterpreter,
   }: PipelineContextOptions) {
@@ -50,6 +52,7 @@ class PipelineContext {
     this.tagBasisProjection = tagBasisProjection;
     this.propagationHistoryStore = propagationHistoryStore;
     this.tagAssociationGraph = tagAssociationGraph;
+    this.loadTagAssociationGraph = loadTagAssociationGraph;
     this.reranker = reranker;
     this.queryInterpreter = queryInterpreter;
   }

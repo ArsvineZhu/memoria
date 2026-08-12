@@ -51,6 +51,11 @@ await engine.close();
 `embeddingProvider`、`reranker`、`vectorStore`、`metadataStore`、`searchOptions` 和
 `onReady` 注入。不存在开放式 option bag、上下文逃生口或外部配置文件 loader。
 
+`searchOptions` 提供 engine 级默认的 query expansion 参数；单次 `search()` 传入的
+`queryExpansion` 和 `queryEpsilon` 会覆盖这些默认值。检索过滤与 external rerank
+属于 canonical `retrievalPlan.filters` 和 `retrievalPlan.externalRerank`；旧的单次
+查询 aliases 仍会被投影到这两个计划字段，以保持兼容并实际生效。
+
 模型 rerank provider 通过 `reranker` 注入，配置 gate 必须显式开启：
 
 ```ts

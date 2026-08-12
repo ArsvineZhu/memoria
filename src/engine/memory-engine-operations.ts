@@ -22,6 +22,10 @@ import { isRecord, normalizeFiles } from "./input-normalization.js";
 import type { RuntimeMetadataStore, RuntimeVectorStore } from "./runtime-types.js";
 import { logicalDocumentPath, normalizeDocumentId } from "../utils/logical-document.js";
 import { projectSearchEnvelope } from "../pipelines/search-public-envelope.js";
+import {
+  ensureTagRetrievalArtifact,
+  getTagRetrievalIndex,
+} from "../native/tag-graph-artifact-runtime.js";
 
 type ReadyOperation = <T>(name: string, operation: () => Promise<T>) => Promise<T>;
 type AuthorityInput = { path: string; relPath?: string; documentId?: string };
@@ -43,6 +47,7 @@ export interface MemoryEngineOperationsOptions {
   setLastIndexedAt: (value: number | null) => void;
   getLastReconciliation: () => ReconciliationReport | null;
   isInitialized: () => boolean;
+  searchOptions?: SearchOptions;
   runReadyOperation: ReadyOperation;
   runAuthorityMutation: AuthorityMutation;
 }
@@ -134,7 +139,11 @@ export default class MemoryEngineOperations {
   explain(query: string, options: SearchOptions = {}) {
     return this.options.runReadyOperation("explain", () =>
       this.options.vectorCoordinator.runStableRead(() =>
-        this.options.searchPipeline.explain(query, options, this.options.getContext()),
+        this.options.searchPipeline.explain(
+          query,
+          { ...(this.options.searchOptions || {}), ...options },
+          this.options.getContext(),
+        ),
       ),
     );
   }
@@ -308,14 +317,35 @@ export default class MemoryEngineOperations {
   ): Promise<SearchEnvelope> {
     const input: PipelineData = { ...(isRecord(query) ? query : { query }) };
     if (!input.query && typeof query === "string") input.query = query;
-    input.options = { ...options, ...(input.options || {}) };
+    input.options = {
+      ...(this.options.searchOptions || {}),
+      ...options,
+      ...(input.options || {}),
+    };
     try {
+      const context = this.options.getContext();
+      const explanation = await this.options.searchPipeline.explain(
+        String(input.query || ""),
+        input.options as SearchOptions,
+        context,
+      );
+      const plan = explanation.plan;
+      const nativeRequired =
+        plan.structural?.enabled === true ||
+        plan.associative?.nativeTagRetrieval === true;
+      if (nativeRequired) {
+        const index = getTagRetrievalIndex(context);
+        if (index) {
+          const artifact = await this.options.vectorCoordinator.runDerivedMaintenance(
+            "tag-retrieval-artifact",
+            () => ensureTagRetrievalArtifact(context, index),
+          );
+          if (artifact.state) input.tagGraphArtifact = artifact.state;
+        }
+      }
       const output = await this.options.vectorCoordinator.runStableRead(
         async () =>
-          (await this.options.searchPipeline.run(
-            input,
-            this.options.getContext(),
-          )) as PipelineData,
+          (await this.options.searchPipeline.run(input, context)) as PipelineData,
       );
       const observation = output.propagationHistoryObservation;
       const store = this.options.getMetadataStore();

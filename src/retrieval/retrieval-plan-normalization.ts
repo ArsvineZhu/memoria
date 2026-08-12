@@ -2,8 +2,10 @@ import type { MemoryConfigOverrides } from "../types/config.js";
 import type { RetrievalPlan, RetrievalPlanInput } from "./retrieval-plan-types.js";
 import {
   assertRetrievalPlanShape,
+  assertRetrievalPlanDateRange,
   assertValidRetrievalPlanInput,
 } from "./retrieval-plan-validation.js";
+import { normalizeRetrievalDate } from "./retrieval-date.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -137,6 +139,7 @@ export function normalizeRetrievalPlan(
 ): RetrievalPlan {
   if (input != null) {
     assertRetrievalPlanShape(input);
+    assertRetrievalPlanDateRange(input);
   }
   const source = input ?? { strategy: "auto" as const };
   const strategy = source.strategy ?? "auto";
@@ -176,8 +179,14 @@ export function normalizeRetrievalPlan(
       ? {
           spaces: cloneStringList(filters.spaces),
           documentIds: cloneStringList(filters.documentIds),
-          recordedAfter: filters.recordedAfter,
-          recordedBefore: filters.recordedBefore,
+          recordedAfter: normalizeRetrievalDate(
+            filters.recordedAfter,
+            "filters.recordedAfter",
+          ),
+          recordedBefore: normalizeRetrievalDate(
+            filters.recordedBefore,
+            "filters.recordedBefore",
+          ),
           metadata: cloneMetadata(filters.metadata),
         }
       : undefined,

@@ -10,11 +10,13 @@ import Stage from "../../core/stage.js";
 import {
   ensureTagRetrievalArtifact,
   getTagRetrievalIndex,
+  nativeDatabasePath,
   readRecord,
   readNumberList,
   runTagRetrievalPipeline,
   toTagGraphPropagation,
 } from "../../native/tag-graph-artifact-runtime.js";
+import type { NativeArtifactState } from "../../native/tag-graph-artifact-runtime.js";
 import { mergeTagRetrievalObservation } from "./tag-retrieval-observation.js";
 
 /**
@@ -48,7 +50,19 @@ class NativeTagRetrievalStage extends Stage {
       };
     }
 
-    const artifact = await ensureTagRetrievalArtifact(ctx, index);
+    const suppliedArtifact = info.tagGraphArtifact as
+      Partial<NativeArtifactState> | undefined;
+    const prebuiltArtifact =
+      suppliedArtifact &&
+      typeof suppliedArtifact.dbPath === "string" &&
+      suppliedArtifact.dbPath === nativeDatabasePath(ctx) &&
+      typeof suppliedArtifact.artifactSig === "string" &&
+      suppliedArtifact.artifactSig.length > 0
+        ? (suppliedArtifact as NativeArtifactState)
+        : null;
+    const artifact = prebuiltArtifact
+      ? { state: prebuiltArtifact }
+      : await ensureTagRetrievalArtifact(ctx, index);
     if (!artifact.state) {
       return {
         ...info,

@@ -15,9 +15,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify:docs
       - run: pnpm format:check
+      - run: pnpm build
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm build
       - run: pnpm typecheck:public
       - run: pnpm test
       - run: pnpm verify:pack
@@ -61,6 +61,7 @@ jobs:
           node-version: 24.18.1
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: pnpm test:native
   native-build:
     name: Build N-API ${{ matrix.target }}
@@ -108,7 +109,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
       - name: Install N-API CLI
-        run: npm ci
+        run: npm install --no-package-lock
         working-directory: rust-vexus-lite
       - name: Build target artifact
         run: npx napi build --platform --release --target ${{ matrix.target }}
@@ -214,7 +215,7 @@ jobs:
           name: native-generic
           path: rust-vexus-lite
       - name: Install N-API CLI
-        run: npm ci
+        run: npm install --no-package-lock
         working-directory: rust-vexus-lite
       - name: Assemble packages with napi artifacts
         run: npx napi artifacts --dir artifacts --dist npm

@@ -8,9 +8,17 @@ test("published package declares an ESM public boundary and CJS native scope", a
   const packageJson = JSON.parse(
     await readFile(resolve(process.cwd(), "package.json"), "utf8"),
   ) as {
+    name?: string;
     type?: string;
     main?: string;
     types?: string;
+    repository?: {
+      type?: string;
+      url?: string;
+    };
+    publishConfig?: {
+      registry?: string;
+    };
     exports?: {
       ".": {
         types?: string;
@@ -33,7 +41,15 @@ test("published package declares an ESM public boundary and CJS native scope", a
     files?: string[];
   };
 
+  assert.equal(packageJson.name, "@arsvinezhu/memoria");
   assert.equal(packageJson.type, "module");
+  assert.deepEqual(packageJson.repository, {
+    type: "git",
+    url: "https://github.com/ArsvineZhu/memoria.git",
+  });
+  assert.deepEqual(packageJson.publishConfig, {
+    registry: "https://npm.pkg.github.com",
+  });
   assert.deepEqual(packageJson.exports?.["."], {
     types: "./dist/index.d.ts",
     import: "./dist/index.js",
@@ -85,9 +101,15 @@ test("published package does not expose internal implementation paths", async ()
   const isNotExported = (error: unknown): boolean =>
     error instanceof Error &&
     (error as NodeJS.ErrnoException).code === "ERR_PACKAGE_PATH_NOT_EXPORTED";
-  await assert.rejects(importUnexported("memoria/dist/engine.js"), isNotExported);
+  const packageName = JSON.parse(
+    await readFile(resolve(process.cwd(), "package.json"), "utf8"),
+  ).name as string;
   await assert.rejects(
-    importUnexported("memoria/rust-vexus-lite/index.js"),
+    importUnexported(`${packageName}/dist/engine.js`),
+    isNotExported,
+  );
+  await assert.rejects(
+    importUnexported(`${packageName}/rust-vexus-lite/index.js`),
     isNotExported,
   );
 });

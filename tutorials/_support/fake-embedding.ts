@@ -1,4 +1,4 @@
-import type { EmbeddingProviderContract, VectorLike } from "memoria";
+import type { EmbeddingProviderContract, VectorLike } from "@arsvinezhu/memoria";
 
 function hash(value: string): number {
   let result = 2166136261;

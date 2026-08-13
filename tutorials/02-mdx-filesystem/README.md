@@ -24,7 +24,7 @@ filesystem adapter 负责读取文件、解析 MDX front matter、检查路径�
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import FilesystemIngestionAdapter from "memoria/adapters/filesystem";
+import FilesystemIngestionAdapter from "@arsvinezhu/memoria/adapters/filesystem";
 
 import { createTutorialEngine } from "../_support/provider-config.js";
 import { prepareTutorialRuntime, SHARED_CONTENT_ROOT } from "../_support/paths.js";

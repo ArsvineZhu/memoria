@@ -12,7 +12,7 @@ graph artifacts 和 propagation history 是 derived retrieval state。
 <dataPath>/memoria/indexes/      vector indexes
 ```
 
-`memoria/adapters/filesystem` 读取文件快照、解析允许的 front matter 和静态 links，
+`@arsvinezhu/memoria/adapters/filesystem` 读取文件快照、解析允许的 front matter 和静态 links，
 再交给 `MemoryEngine.flushBatch()`。它不会把检索结果写回源文件。
 
 逻辑文档使用 `MemoryEngine.ingest({ id, content, metadata })`，不需要 filesystem path。

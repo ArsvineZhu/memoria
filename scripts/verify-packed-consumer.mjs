@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const packageName = JSON.parse(
+  readFileSync(join(repositoryRoot, "package.json"), "utf8"),
+).name;
 const temporaryRoot = mkdtempSync(join(tmpdir(), "memoria-packed-consumer-"));
 const packDirectory = join(temporaryRoot, "pack");
 const consumerDirectory = join(temporaryRoot, "consumer");
@@ -62,19 +72,19 @@ import { createRequire } from 'node:module';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createMemoryEngine, TDBEngine } from 'memoria';
-import FilesystemIngestionAdapter from 'memoria/adapters/filesystem';
-import { MemoriaError } from 'memoria/errors';
+import { createMemoryEngine, TDBEngine } from '${packageName}';
+import FilesystemIngestionAdapter from '${packageName}/adapters/filesystem';
+import { MemoriaError } from '${packageName}/errors';
 import OpenAICompatibleEmbeddingProvider, {
   createOpenAICompatibleReranker,
-} from 'memoria/providers/openai-compatible';
+} from '${packageName}/providers/openai-compatible';
 
 const isNotExported = (error) =>
   error instanceof Error && error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED';
 
 const require = createRequire(import.meta.url);
-const cjs = require('memoria');
-const esm = await import('memoria');
+const cjs = require('${packageName}');
+const esm = await import('${packageName}');
 assert.deepEqual(Object.keys(cjs).sort(), Object.keys(esm).sort());
 const rootExports = [
   'createMemoryEngine',
@@ -98,8 +108,8 @@ assert.equal(typeof MemoriaError, 'function');
 assert.equal(typeof OpenAICompatibleEmbeddingProvider, 'function');
 assert.equal(typeof createOpenAICompatibleReranker, 'function');
 for (const removedProvider of [
-  ['memoria', 'providers', 'openai'].join('/'),
-  ['memoria', 'providers', ['dash', 'scope'].join('')].join('/'),
+  ['${packageName}', 'providers', 'openai'].join('/'),
+  ['${packageName}', 'providers', ['dash', 'scope'].join('')].join('/'),
 ]) {
   await assert.rejects(() => import(removedProvider), isNotExported);
 }
@@ -204,7 +214,7 @@ assert.ok(reopenedTdbSearch.results.length >= 1);
 assert.equal(reopenedTdbSearch.results[0]?.library, 'facts');
 await reopenedTdb.close();
 
-const packageRoot = dirname(dirname(require.resolve('memoria')));
+const packageRoot = dirname(dirname(require.resolve('${packageName}')));
 const native = require(join(packageRoot, 'rust-vexus-lite'));
 assert.equal(typeof native.VexusIndex, 'function');
 const index = new native.VexusIndex(dimension, 4);
@@ -215,11 +225,11 @@ assert.equal(typeof index.stats, 'function');
   writeFileSync(
     join(consumerDirectory, "consumer-types.ts"),
     `
-import type { EmbeddingProvider } from 'memoria';
+import type { EmbeddingProvider } from '${packageName}';
 import OpenAICompatibleEmbeddingProvider, {
   createOpenAICompatibleReranker,
   type OpenAICompatibleRerankerOptions,
-} from 'memoria/providers/openai-compatible';
+} from '${packageName}/providers/openai-compatible';
 
 const compatibleProvider = new OpenAICompatibleEmbeddingProvider({
   apiKey: 'type-only-test',

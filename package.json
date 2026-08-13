@@ -1,6 +1,6 @@
 {
-  "name": "memoria",
-  "version": "0.1.0",
+  "name": "@arsvinezhu/memoria",
+  "version": "0.2.0",
   "description": "Canonical AI memory engine with semantic, associative, and structural retrieval backed by SQLite and optional Rust acceleration",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
@@ -36,6 +36,13 @@
     "CHANGELOG.md"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ArsvineZhu/memoria.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",

@@ -23,10 +23,10 @@ class EmbeddingProvider {
 
 ## 2. 当前实现
 
-| 实现                  | 源码                                                                                                      | 协议/网络                                                                 | 默认维度 |
-| --------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------: |
-| OpenAI-compatible     | `src/providers/openai-compatible-embedding-provider.ts`，公共子路径 `memoria/providers/openai-compatible` | `POST {apiUrl}/v1/embeddings`，请求体 `{ model, input }`，Bearer `apiKey` |   `1024` |
-| FakeEmbeddingProvider | `tutorials/_support/fake-embedding.ts`                                                                    | 无网络，确定性输出                                                        |    `128` |
+| 实现                  | 源码                                                                                                                  | 协议/网络                                                                 | 默认维度 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------: |
+| OpenAI-compatible     | `src/providers/openai-compatible-embedding-provider.ts`，公共子路径 `@arsvinezhu/memoria/providers/openai-compatible` | `POST {apiUrl}/v1/embeddings`，请求体 `{ model, input }`，Bearer `apiKey` |   `1024` |
+| FakeEmbeddingProvider | `tutorials/_support/fake-embedding.ts`                                                                                | 无网络，确定性输出                                                        |    `128` |
 
 OpenAI-compatible provider 不绑定具体服务商、endpoint、模型或密钥。`apiUrl`、
 `apiKey`、`model` 和 `dimension` 应由调用方显式配置；库的默认配置对 endpoint、
@@ -74,7 +74,7 @@ new OpenAICompatibleEmbeddingProvider({
 通过公共子路径使用兼容 provider：
 
 ```ts
-import CompatibleEmbeddingProvider from "memoria/providers/openai-compatible";
+import CompatibleEmbeddingProvider from "@arsvinezhu/memoria/providers/openai-compatible";
 
 const embeddingProvider = new CompatibleEmbeddingProvider({
   apiUrl: "https://provider.example",
@@ -94,8 +94,8 @@ const embeddingProvider = new CompatibleEmbeddingProvider({
 `ExternalReranker` 注入 `MemoryEngineOptions`：
 
 ```ts
-import { createMemoryEngine } from "memoria";
-import { createOpenAICompatibleReranker } from "memoria/providers/openai-compatible";
+import { createMemoryEngine } from "@arsvinezhu/memoria";
+import { createOpenAICompatibleReranker } from "@arsvinezhu/memoria/providers/openai-compatible";
 
 const engine = createMemoryEngine({
   embeddingProvider,

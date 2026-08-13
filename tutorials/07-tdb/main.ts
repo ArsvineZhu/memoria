@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { TDBEngine, TDBStore, TriviumDBAdapter } from "memoria";
+import { TDBEngine, TDBStore, TriviumDBAdapter } from "@arsvinezhu/memoria";
 
 import { selectTutorialProviders } from "../_support/provider-config.js";
 import {

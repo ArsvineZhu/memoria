@@ -38,7 +38,7 @@ candidate retrieval
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import FilesystemIngestionAdapter from "memoria/adapters/filesystem";
+import FilesystemIngestionAdapter from "@arsvinezhu/memoria/adapters/filesystem";
 
 import { createTutorialEngine } from "../_support/provider-config.js";
 import { prepareTutorialRuntime, SHARED_CONTENT_ROOT } from "../_support/paths.js";

@@ -15,25 +15,25 @@ TDBStore
 TriviumDBAdapter
 <!-- runtime-exports:end -->
 
-`Object.keys(import("memoria"))` 和 `Object.keys(require("memoria"))` 只应包含上面
+`Object.keys(import("@arsvinezhu/memoria"))` 和 `Object.keys(require("@arsvinezhu/memoria"))` 只应包含上面
 六个运行时名称。根类型声明另外提供正式的 options/config、retrieval plan/explanation、
 search/result/document、provider/store injection、relation/data/error 和 TDB contracts；
 这些类型不会把内部 stage graph 或 native payload 暴露给消费者。
 
 ## 子路径
 
-| 子路径                                | 用途                                                 |
-| ------------------------------------- | ---------------------------------------------------- |
-| `memoria/adapters/filesystem`         | 扫描、读取和监听文件源；写入仍由 `MemoryEngine` 负责 |
-| `memoria/errors`                      | `MemoriaError`、错误码和 `asMemoriaError`            |
-| `memoria/providers/openai-compatible` | OpenAI-compatible embedding 和 reranker provider     |
+| 子路径                                            | 用途                                                 |
+| ------------------------------------------------- | ---------------------------------------------------- |
+| `@arsvinezhu/memoria/adapters/filesystem`         | 扫描、读取和监听文件源；写入仍由 `MemoryEngine` 负责 |
+| `@arsvinezhu/memoria/errors`                      | `MemoriaError`、错误码和 `asMemoriaError`            |
+| `@arsvinezhu/memoria/providers/openai-compatible` | OpenAI-compatible embedding 和 reranker provider     |
 
 filesystem adapter 和错误契约是正式 subpath，不会回收到根运行时导出。
 
 ## MemoryEngine
 
 ```ts
-import { createMemoryEngine } from "memoria";
+import { createMemoryEngine } from "@arsvinezhu/memoria";
 
 const engine = createMemoryEngine({
   config: { dataPath: "./data", dimension: 128, topK: 5 },
@@ -59,8 +59,8 @@ await engine.close();
 模型 rerank provider 通过 `reranker` 注入，并由本次查询的 `RetrievalPlan` 显式开启：
 
 ```ts
-import { createMemoryEngine } from "memoria";
-import { createOpenAICompatibleReranker } from "memoria/providers/openai-compatible";
+import { createMemoryEngine } from "@arsvinezhu/memoria";
+import { createOpenAICompatibleReranker } from "@arsvinezhu/memoria/providers/openai-compatible";
 
 const engine = createMemoryEngine({
   embeddingProvider,
@@ -84,7 +84,7 @@ selection authority。
 `remove()`、`search()`、`query()`、`explain()`、`flush()`、`flushBatch()`、
 `reconcile()`、`getStats()`、`listFiles()`、`handleDelete()`、`deleteFile()` 和
 `close()`。
-文件源需要使用 `memoria/adapters/filesystem`；逻辑文档直接使用 `ingest`/`remove`。
+文件源需要使用 `@arsvinezhu/memoria/adapters/filesystem`；逻辑文档直接使用 `ingest`/`remove`。
 
 ## RetrievalPlan
 
@@ -136,7 +136,7 @@ Rust/N-API 只通过由 `VexusVectorStore` 内部解析的 tag-retrieval runtime
 ## Errors
 
 ```ts
-import { MemoriaError, asMemoriaError } from "memoria/errors";
+import { MemoriaError, asMemoriaError } from "@arsvinezhu/memoria/errors";
 ```
 
 持久化错误使用 `MemoriaError("persistence", ...)`。canonical SQLite schema 不匹配时，

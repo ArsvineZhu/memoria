@@ -43,8 +43,8 @@ corepack pnpm tutorials:run
 
 ```ts
 // 这是调用形状示例；运行时请替换为应用自己的嵌入 Provider。
-import { createMemoryEngine } from "memoria";
-import type { EmbeddingProviderContract } from "memoria";
+import { createMemoryEngine } from "@arsvinezhu/memoria";
+import type { EmbeddingProviderContract } from "@arsvinezhu/memoria";
 
 declare const embeddingProvider: EmbeddingProviderContract;
 
@@ -78,7 +78,7 @@ await engine.close();
 摄入全部文档。
 
 默认搜索只做向量/BM25 基础融合。若要启用模型重排，应从
-`memoria/providers/openai-compatible` 创建 reranker，传入 `MemoryEngineOptions.reranker`，
+`@arsvinezhu/memoria/providers/openai-compatible` 创建 reranker，传入 `MemoryEngineOptions.reranker`，
 并在 `retrievalPlan.externalRerank.enabled` 中显式开启；详见 [API.md](API.md)。
 
 ## 3. 从文件摄入
@@ -120,7 +120,7 @@ recordedAt: 2026-08-08T09:30:00-06:00
 - 没有 front matter 的 `.md` 仍可读取；
 - 只修改 front matter 时，正文向量可以复用。
 
-需要扫描目录或监听文件变化时，使用 `memoria/adapters/filesystem`。适配器负责
+需要扫描目录或监听文件变化时，使用 `@arsvinezhu/memoria/adapters/filesystem`。适配器负责
 读取和报告文件变化，真正的内容写入仍由 `MemoryEngine` 完成。文件适配器的完整
 参数以 [API.md](API.md) 和 `src/adapters/filesystem-ingestion-adapter.ts` 为准。
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 (2026-08-13)
+
 - 完成 canonical naming hard reset：根运行时只保留
   `createMemoryEngine`、`MemoryEngine`、`QueryBuilder`、`TDBEngine`、`TDBStore` 和
   `TriviumDBAdapter`，ESM/CJS 与 public declarations 保持 exact parity。
@@ -17,8 +19,13 @@
   未构建的平台 binary 必须在发布验收中单独标记未验证。
 - 删除旧 adapter、旧配置 loader、旧 retrieval naming 和旧 native forwarding path；
   filesystem adapter 与 TDB 正式 subpath 保留。
+- package identity 迁移为 `@arsvinezhu/memoria`，通过 GitHub Packages 发布；公开
+  subpath 改为 `@arsvinezhu/memoria/...`，ESM/CJS exports 结构保持不变。
+- 升级提示：安装名、根 import 和公开 subpath import 都必须改用
+  `@arsvinezhu/memoria`；GitHub Packages 安装需要具备 `read:packages` 的 GitHub
+  classic PAT，运行时 API 和 exports/subpaths 不变。
 - 发布前必须重新创建 SQLite、vector indexes、tag association graph artifacts 和 propagation history；
-  本次变更不包含 publish、release、tag 或远端分支删除。
+  本版本发布包与 GitHub Release 使用同一个已审计 tarball。
 
 ## 0.1.0 (2026-08-08)
 

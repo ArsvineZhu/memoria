@@ -183,7 +183,7 @@ TDB 使用 `libraries` 和 TDB 专属 config，不使用主 engine 的 `spaces` 
 ## Filesystem 与 errors subpaths
 
 ```ts
-import FilesystemIngestionAdapter from "memoria/adapters/filesystem";
+import FilesystemIngestionAdapter from "@arsvinezhu/memoria/adapters/filesystem";
 
 const adapter = new FilesystemIngestionAdapter(engine, {
   rootPath: "./content",
@@ -196,13 +196,13 @@ await adapter.close();
 ```
 
 `scan` 读取源，`sync` 将变化提交给 engine，`removeFile` 删除 authority 中对应文件，
-`close` 停止 watcher。错误从 `memoria/errors` 导入；持久化 schema、provider、维度和
+`close` 停止 watcher。错误从 `@arsvinezhu/memoria/errors` 导入；持久化 schema、provider、维度和
 lifecycle 错误都应按错误 code 处理，而不是依赖 message 文本。
 
 ## 正式 subpaths
 
-- memoria/adapters/filesystem：MDX/文件快照读取、scan、sync、watch 和删除。
-- memoria/errors：MemoriaError 及稳定错误 code。
-- memoria/providers/openai-compatible：协议兼容 embedding provider、reranker factory 和 reranker error types。
+- @arsvinezhu/memoria/adapters/filesystem：MDX/文件快照读取、scan、sync、watch 和删除。
+- @arsvinezhu/memoria/errors：MemoriaError 及稳定错误 code。
+- @arsvinezhu/memoria/providers/openai-compatible：协议兼容 embedding provider、reranker factory 和 reranker error types。
 
 其他源码路径不是 package contract。教程和消费者测试只使用 root 或上述 subpaths。

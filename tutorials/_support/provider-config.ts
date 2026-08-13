@@ -4,13 +4,13 @@ import { join } from "node:path";
 import {
   OpenAICompatibleEmbeddingProvider,
   createOpenAICompatibleReranker,
-} from "memoria/providers/openai-compatible";
-import { createMemoryEngine } from "memoria";
+} from "@arsvinezhu/memoria/providers/openai-compatible";
+import { createMemoryEngine } from "@arsvinezhu/memoria";
 import type {
   EmbeddingProviderContract,
   ExternalReranker,
   MemoryConfigOverrides,
-} from "memoria";
+} from "@arsvinezhu/memoria";
 
 import { FakeEmbeddingProvider } from "./fake-embedding.js";
 import { createFakeReranker } from "./fake-reranker.js";

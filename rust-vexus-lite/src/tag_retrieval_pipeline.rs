@@ -147,20 +147,15 @@ struct PipelineConfig {
     activation_propagation: ActivationPropagationConfig,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum SupportSelectionMethod {
+    #[default]
     MassRatio,
     TailBudget,
     Shannon,
     ParticipationRatio,
     LargestMassGap,
-}
-
-impl Default for SupportSelectionMethod {
-    fn default() -> Self {
-        Self::MassRatio
-    }
 }
 
 impl Default for PipelineConfig {

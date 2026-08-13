@@ -18,7 +18,7 @@ derived vector indexes，并将引擎置为 `ready`。初始化失败不会伪�
 
 ## 2. 文件和空间
 
-`memoria/adapters/filesystem` 只负责扫描、读取和报告变更。文件快照使用 `space` 标识
+`@arsvinezhu/memoria/adapters/filesystem` 只负责扫描、读取和报告变更。文件快照使用 `space` 标识
 检索空间；`MemoryEngine` 负责实际摄入。front matter 的 `tags`、metadata、revision 和
 正文 chunk 行为见 [GUIDE.md](GUIDE.md)。
 

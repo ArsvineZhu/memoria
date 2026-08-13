@@ -36,8 +36,8 @@ pipeline 类型。
 注入方式：
 
 ```ts
-import { createMemoryEngine } from "memoria";
-import { createOpenAICompatibleReranker } from "memoria/providers/openai-compatible";
+import { createMemoryEngine } from "@arsvinezhu/memoria";
+import { createOpenAICompatibleReranker } from "@arsvinezhu/memoria/providers/openai-compatible";
 
 const engine = createMemoryEngine({
   reranker: createOpenAICompatibleReranker({ apiUrl, apiKey, model }),

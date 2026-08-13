@@ -27,7 +27,7 @@ SearchPipeline
 ```
 
 `src/pipelines/`、`src/stages/`、`src/algorithms/`、`src/native/` 和内部 helper 不属于
-根 runtime export。`memoria/adapters/filesystem` 与 `memoria/errors` 保持独立 subpath。
+根 runtime export。`@arsvinezhu/memoria/adapters/filesystem` 与 `@arsvinezhu/memoria/errors` 保持独立 subpath。
 
 ## 生命周期
 

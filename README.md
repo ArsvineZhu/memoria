@@ -4,6 +4,18 @@
 原文、标签和向量，关闭程序后数据仍可恢复。调用方未指定 `dataPath` 时，库会在
 调用方工作目录使用 `data/`；这不是仓库随包的数据。
 
+## 安装已发布包
+
+`0.2.0` 发布为 scoped package `@arsvinezhu/memoria`，registry 为 GitHub Packages。
+安装前需要一个具备 `read:packages` 权限的 GitHub classic PAT；凭据只写入本机 npm
+配置，不要提交 `.npmrc` 或 token：
+
+```powershell
+npm config set @arsvinezhu:registry https://npm.pkg.github.com
+npm login --scope=@arsvinezhu --auth-type=legacy --registry=https://npm.pkg.github.com
+npm install @arsvinezhu/memoria@0.2.0
+```
+
 ## 你可以用它做什么
 
 - 用关键词和语义一起搜索，减少“换一种说法就找不到”的情况；
@@ -36,8 +48,8 @@ node dist-test/tutorials/01-first-memory/main.js
 provider 只属于教程支持代码，不是库的隐式 fallback。
 
 ```ts
-import { createMemoryEngine } from "memoria";
-import type { EmbeddingProviderContract } from "memoria";
+import { createMemoryEngine } from "@arsvinezhu/memoria";
+import type { EmbeddingProviderContract } from "@arsvinezhu/memoria";
 
 declare const embeddingProvider: EmbeddingProviderContract;
 
@@ -85,8 +97,8 @@ embedding cosine、传播支持和传播结构是可选的本地重排阶段；�
 endpoint、密钥和模型：
 
 ```ts
-import { createMemoryEngine } from "memoria";
-import { createOpenAICompatibleReranker } from "memoria/providers/openai-compatible";
+import { createMemoryEngine } from "@arsvinezhu/memoria";
+import { createOpenAICompatibleReranker } from "@arsvinezhu/memoria/providers/openai-compatible";
 
 const engine = createMemoryEngine({
   embeddingProvider,
@@ -134,7 +146,7 @@ const result = await engine
 决策会出现在结果的 `retrieval` 诊断中。查询文本仍是普通字符串，不解析额外标签语法、
 placeholder 或 query MDX。
 
-如果你的数据已经是文件，可以使用 `memoria/adapters/filesystem`。文件适配器负责
+如果你的数据已经是文件，可以使用 `@arsvinezhu/memoria/adapters/filesystem`。文件适配器负责
 扫描、读取和监听文件；`MemoryEngine` 负责实际摄入和检索。推荐的文件位置是
 调用方自己管理的 `<dataPath>/content/<分类>/<文件名>.mdx`。
 

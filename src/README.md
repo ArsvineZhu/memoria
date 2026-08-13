@@ -7,10 +7,10 @@
 
 - [`index.ts`](index.ts)：ESM 根入口和公开类型导出。
 - [`index.cts`](index.cts)：与 ESM 根入口保持 exact runtime export parity 的 CommonJS facade。
-- [`errors.ts`](errors.ts)：`memoria/errors` 子路径的结构化错误契约。
+- [`errors.ts`](errors.ts)：`@arsvinezhu/memoria/errors` 子路径的结构化错误契约。
 - [`adapters/filesystem-ingestion-adapter.ts`](adapters/filesystem-ingestion-adapter.ts)：文件系统子路径入口。
 - `providers/` 下的 OpenAI-compatible embedding 和 reranker Provider 通过 `package.json` 子路径
-  `memoria/providers/openai-compatible` 发布。
+  `@arsvinezhu/memoria/providers/openai-compatible` 发布。
 
 ## 稳定边界
 

@@ -1,4 +1,4 @@
-import type { ExternalReranker } from "memoria";
+import type { ExternalReranker } from "@arsvinezhu/memoria";
 
 type CandidateList = Parameters<ExternalReranker>[1];
 

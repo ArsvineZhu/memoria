@@ -152,15 +152,15 @@ test("FileReaderStage detects content change via checksum mismatch", async (t) =
 
 test("FileReaderStage supports fallbackRead (content provided by caller)", async () => {
   const stage = new FileReaderStage();
-  const ctx = makeCtx({ rootPath: "C:\\virtual" });
+  const rootPath = path.resolve("virtual");
   const out = await stage.process(
     {
-      path: "C:\\virtual\\space\\archived.md",
+      path: path.join(rootPath, "space", "archived.md"),
       content: "fallback content",
       sourceUpdatedAt: 123456,
       size: 15,
     },
-    ctx,
+    makeCtx({ rootPath }),
   );
 
   assert.strictEqual(out.content, "fallback content");

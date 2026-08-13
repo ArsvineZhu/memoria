@@ -129,7 +129,12 @@ jobs:
         run: npm install --no-package-lock
         working-directory: rust-vexus-lite
       - name: Build target artifact
+        if: ${{ !matrix.musl }}
         run: npx napi build --platform --release --target ${{ matrix.target }}
+        working-directory: rust-vexus-lite
+      - name: Build musl target artifact without optional SIMD features
+        if: ${{ matrix.musl }}
+        run: npx napi build --platform --release --target ${{ matrix.target }} --cargo-flags "--no-default-features"
         working-directory: rust-vexus-lite
       - name: Build generic artifact
         if: matrix.target == 'x86_64-pc-windows-msvc'

@@ -6,6 +6,11 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = ["usearch-simsimd", "usearch-fp16lib"]
+usearch-simsimd = ["usearch/simsimd"]
+usearch-fp16lib = ["usearch/fp16lib"]
+
 [dependencies]
 # NAPI-RS核心依赖
 napi = { version = "2.16", features = ["napi4"] }
@@ -23,7 +28,7 @@ sha2 = "0.10"
 flate2 = "1.0"
 
 # HNSW向量索引
-usearch = "2.8"
+usearch = { version = "2.8", default-features = false }
 
 # 哈希Map优化
 hashbrown = "0.14"
